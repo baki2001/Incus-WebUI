@@ -51,7 +51,7 @@ Everyone who signs in can do everything on every connected server. Per-user perm
 
 ## Development
 
-You need Go 1.24 and Node 22.
+You need Go 1.26 and Node 22.
 
 ```sh
 make build                       # builds the UI and the binary

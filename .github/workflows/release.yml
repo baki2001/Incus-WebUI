@@ -42,6 +42,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/* install/incus-instance.sh --clobber
+            exit 0
+          fi
           gh release create "$VERSION" dist/* install/incus-instance.sh \
             --title "$VERSION" --generate-notes --target "$GITHUB_SHA" \
             $([[ "$VERSION" == *-* ]] && echo --prerelease)

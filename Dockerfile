@@ -6,7 +6,7 @@ RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.24-alpine AS bin
+FROM golang:1.26-alpine AS bin
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
