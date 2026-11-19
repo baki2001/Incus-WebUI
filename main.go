@@ -29,6 +29,7 @@ type App struct {
 	loginLimit *limiter
 	oidc       oidcState
 	setupToken string
+	updater    *updater
 }
 
 func main() {
@@ -60,6 +61,7 @@ func main() {
 		store:      store,
 		backends:   &Backends{clientCert: clientCert, transports: map[string]*backend{}},
 		loginLimit: &limiter{hits: map[string][]time.Time{}},
+		updater:    &updater{},
 	}
 
 	// Running on the Incus host itself: use the local socket automatically.
@@ -191,6 +193,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
 
+	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
+	mux.Handle("POST /api/ui/update", auth(a.handleUpdateApply))
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })

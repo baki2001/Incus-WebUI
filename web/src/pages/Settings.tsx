@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
-import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { accentPair, contrast, invalidate, useApp, useData, type Mode, type Theme } from "../state";
 import { confirmDialog, CopyBtn, Field, Seg } from "../ui";
@@ -11,7 +10,7 @@ const sections: { v: Section; l: string }[] = [
   { v: "appearance", l: "Appearance" },
   { v: "servers", l: "Servers" },
   { v: "users", l: "Users and sign-in" },
-  { v: "about", l: "About" },
+  { v: "about", l: "Updates and about" },
 ];
 
 export function Settings() {
@@ -354,19 +353,107 @@ function Users() {
   );
 }
 
+export type UpdateInfo = {
+  current: string;
+  can_update: boolean;
+  reason?: string;
+  updating?: boolean;
+  error?: string;
+  newer?: boolean;
+  latest?: { tag: string; url: string; notes: string; published: string };
+};
+
 function About() {
-  const v = useData<{ version: string }>("ui-version", () => ui("/version"));
+  const app = useApp();
+  const q = useData<UpdateInfo>("ui-update", () => ui("/update"));
+  const [busy, setBusy] = useState<"" | "check" | "update" | "restart">("");
+  const u = q.data;
+
+  const check = async () => {
+    setBusy("check");
+    try {
+      const d = await ui<UpdateInfo>("/update?refresh=1");
+      invalidate("ui-update");
+      if (!d.error && !d.newer) app.toast(`You're on the newest version (${d.current}).`);
+    } catch (e: any) {
+      app.toast(e.message);
+    }
+    setBusy("");
+  };
+
+  const update = async () => {
+    if (!u?.latest) return;
+    const ok = await confirmDialog({
+      title: `Update to ${u.latest.tag}?`,
+      body: "The UI downloads the new version, checks it and restarts. Open terminals and consoles disconnect for a few seconds.",
+      confirm: "Update",
+    });
+    if (!ok) return;
+    setBusy("update");
+    try {
+      const r = await ui<{ version: string }>("/update", { method: "POST" });
+      setBusy("restart");
+      // Wait for the new binary to answer, then load its UI.
+      for (let i = 0; i < 60; i++) {
+        await new Promise((res) => setTimeout(res, 1000));
+        try {
+          const v = await ui<{ version: string }>("/version");
+          if (v.version === r.version) {
+            location.reload();
+            return;
+          }
+        } catch {
+          /* still restarting */
+        }
+      }
+      app.toast("The update was installed, but the UI didn't come back within a minute. Check the service log.");
+    } catch (e: any) {
+      app.toast(e.message);
+    }
+    setBusy("");
+  };
+
   return (
-    <section className="set-sec">
-      <h2>Incus WebUI {v.data?.version}</h2>
-      <p>
-        An open source web interface for Incus and IncusOS. Report problems on{" "}
-        <a href="https://github.com/baki2001/Incus-WebUI/issues" target="_blank" rel="noreferrer">
-          GitHub
-        </a>
-        .
-      </p>
-      <span style={{ display: "none" }}>{ic.x}</span>
-    </section>
+    <>
+      <section className="set-sec">
+        <h2>Updates</h2>
+        <p>
+          This is version {u?.current || "…"}.{" "}
+          {u?.error
+            ? u.error
+            : u?.newer
+              ? `Version ${u.latest!.tag} is available.`
+              : u?.latest
+                ? "It's the newest release."
+                : ""}
+        </p>
+        <div className="upd-row">
+          {u?.newer && u.can_update && (
+            <button className="btn btn-p press" disabled={!!busy || u.updating} onClick={update}>
+              {busy === "update" ? "Downloading…" : busy === "restart" ? "Restarting…" : `Update to ${u.latest!.tag}`}
+            </button>
+          )}
+          <button className="btn btn-s press" disabled={!!busy} onClick={check}>
+            {busy === "check" ? "Checking…" : "Check now"}
+          </button>
+          {u?.latest && (
+            <a className="btn btn-s" href={u.latest.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+              Release notes
+            </a>
+          )}
+        </div>
+        {u?.newer && !u.can_update && <p className="upd-note">{u.reason}</p>}
+      </section>
+      <section className="set-sec">
+        <h2>About</h2>
+        <p>
+          An open source web interface for Incus and IncusOS. Report problems on{" "}
+          <a href="https://github.com/baki2001/Incus-WebUI/issues" target="_blank" rel="noreferrer">
+            GitHub
+          </a>
+          .
+        </p>
+      </section>
+    </>
   );
 }

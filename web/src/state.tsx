@@ -16,6 +16,9 @@ export function invalidate(prefix: string) {
     notify(k);
   }
 }
+export function cacheGet<T>(key: string): T | undefined {
+  return cache.get(key)?.data as T | undefined;
+}
 export function mutateCache(key: string, fn: (d: any) => any) {
   const e = cache.get(key);
   if (e && e.data !== undefined) {

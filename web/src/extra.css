@@ -62,3 +62,14 @@ tbody tr td .qa{min-height:28px}
 .dlg textarea.yaml{min-height:40vh;border-top:1px solid var(--line)}
 .hsec .field select{min-width:120px}
 @media (max-width:560px){.radios span.dim{display:none}}
+
+.badge-dot.upd{background:var(--accent)}
+.upd-row{display:flex;flex-wrap:wrap;gap:8px}
+.upd-note{margin:10px 0 0;color:var(--ink-3);font-size:13px;max-width:62ch}
+.upd-body{padding:0 0 16px;display:flex;flex-direction:column;gap:12px}
+.upd-body>p,.upd-body>.upd-row,.upd-body>.cmd{margin:0 16px}
+.upd-body>p{color:var(--ink-2);font-size:13.5px;max-width:62ch}
+.upd-wait{align-self:center;color:var(--ink-3);font-size:13px}
+.cmd{display:flex;align-items:flex-start;gap:8px;padding:8px 8px 8px 12px;border-radius:var(--r-sm);background:var(--s2)}
+.cmd code{flex:1;min-width:0;font-size:12.5px;line-height:1.5;word-break:break-all}
+.upd-body>p:first-child{margin-top:12px}

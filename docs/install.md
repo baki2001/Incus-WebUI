@@ -33,9 +33,10 @@ You can read the script first: [install/incus-instance.sh](../install/incus-inst
 1. Downloads the latest release for your CPU from GitHub and checks its SHA-256 sum.
 2. Sets `core.https_address` if it is empty, so the UI can reach Incus over HTTPS. It uses the address of the default bridge (for example `10.12.34.1:8443`), which only the host and its containers can reach. If you already set an address, the script leaves it alone.
 3. Creates a Debian 13 container named `incus-webui` that starts with the server.
-4. Copies the binary into it and adds a systemd service that runs as its own user.
+4. Copies the binary to `/opt/incus-webui` inside it and adds a systemd service that runs as its own user. That user owns the folder, so the UI can update itself.
 5. Creates a one-time trust token with `incus config trust add incus-webui` and hands it to the UI, which uses it to get its certificate trusted.
 6. Adds a proxy device so port 9443 on the host reaches the UI.
+7. If Incus comes from apt on this host, installs a small helper so the UI can update Incus too. See [Update Incus from the UI](#update-incus-from-the-ui).
 
 You can change the defaults with environment variables:
 
@@ -50,10 +51,15 @@ curl -fsSL https://raw.githubusercontent.com/baki2001/Incus-WebUI/main/install/i
 | `PORT` | `9443` | Port on the host |
 | `IMAGE` | `images:debian/13` | Image for the container. It needs systemd. |
 | `VERSION` | `latest` | A release tag such as `v0.1.0` |
+| `HOST_UPDATES` | `1` | Set to `0` to skip the Incus update helper |
 
 ### Update
 
-Run the install command again. It sees that the container exists, replaces the binary and restarts the service. Your users and servers stay.
+Open Settings, Updates and about. When a newer release exists, press Update. The UI downloads it, checks its SHA-256 sum, swaps the binary and restarts. A dot on Settings in the sidebar tells you when an update is out.
+
+Running the install command again does the same from the shell. Your users and servers stay either way.
+
+Installs from v0.1.0 kept the binary in `/usr/local/bin`, where the UI can't write. Run the install command once to move it; after that, updates work from the UI.
 
 ### Remove
 
@@ -61,6 +67,7 @@ Run the install command again. It sees that the container exists, replaces the b
 incus delete --force incus-webui
 incus config trust list            # find the incus-webui entry
 incus config trust remove <fingerprint>
+incus-webui-host-updates uninstall # only if the update helper was installed
 ```
 
 ### The same steps by hand
@@ -74,15 +81,17 @@ incus config set core.https_address "$(incus network get incusbr0 ipv4.address |
 # 2. Container and binary
 incus launch images:debian/13 incus-webui -c boot.autostart=true
 curl -fsSLO https://github.com/baki2001/Incus-WebUI/releases/latest/download/incus-webui-linux-amd64
-incus file push incus-webui-linux-amd64 incus-webui/usr/local/bin/incus-webui --mode 0755
 
-# 3. Service user and data folder
+# 3. Service user, data folder and binary
 incus exec incus-webui -- useradd --system --home-dir /var/lib/incus-webui --shell /usr/sbin/nologin incus-webui
 incus exec incus-webui -- install -d -m 0700 -o incus-webui -g incus-webui /var/lib/incus-webui
+incus exec incus-webui -- install -d -m 0755 -o incus-webui -g incus-webui /opt/incus-webui
+incus file push incus-webui-linux-amd64 incus-webui/opt/incus-webui/incus-webui --mode 0755 --uid 0 --gid 0
+incus exec incus-webui -- chown incus-webui: /opt/incus-webui/incus-webui
 
 # 4. Connect it to this server
 TOKEN="$(incus config trust add incus-webui --quiet)"
-incus exec incus-webui -- runuser -u incus-webui -- incus-webui add-server "$(hostname -s)" "$TOKEN"
+incus exec incus-webui -- runuser -u incus-webui -- /opt/incus-webui/incus-webui add-server "$(hostname -s)" "$TOKEN"
 ```
 
 Then save the [service file](#systemd-service) as `incus-webui.service` and finish:
@@ -101,10 +110,11 @@ incus exec incus-webui -- journalctl -u incus-webui | grep "setup code"
 Use this when the UI should live outside the servers it manages, or on a machine without Incus.
 
 ```sh
-sudo curl -fsSL https://github.com/baki2001/Incus-WebUI/releases/latest/download/incus-webui-linux-amd64 \
-  -o /usr/local/bin/incus-webui
-sudo chmod 0755 /usr/local/bin/incus-webui
 sudo useradd --system --home-dir /var/lib/incus-webui --shell /usr/sbin/nologin incus-webui
+sudo install -d -m 0755 -o incus-webui -g incus-webui /opt/incus-webui
+sudo -u incus-webui curl -fsSL https://github.com/baki2001/Incus-WebUI/releases/latest/download/incus-webui-linux-amd64 \
+  -o /opt/incus-webui/incus-webui
+sudo chmod 0755 /opt/incus-webui/incus-webui
 ```
 
 Save the [service file](#systemd-service) as `/etc/systemd/system/incus-webui.service`, then:
@@ -129,9 +139,10 @@ Wants=network-online.target
 [Service]
 User=incus-webui
 Group=incus-webui
-ExecStart=/usr/local/bin/incus-webui --data /var/lib/incus-webui
+ExecStart=/opt/incus-webui/incus-webui --data /var/lib/incus-webui
 StateDirectory=incus-webui
 StateDirectoryMode=0700
+ReadWritePaths=/opt/incus-webui
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -163,6 +174,24 @@ incus console incus-webui --show-log | grep "setup code"
 ```
 
 Then add your servers under Settings, Servers.
+
+The image can't update itself. Pull the new image and recreate the container to update; the data volume keeps your settings.
+
+## Update Incus from the UI
+
+Each host page has an Updates panel.
+
+On IncusOS it shows the running version, the update channel and when IncusOS last checked. Check now asks IncusOS to look for updates right away. IncusOS installs them on its own, and when one needs a restart, the panel shows a button for it.
+
+On Debian or Ubuntu, Incus comes from apt and the UI runs in a container, so it needs a helper on the host. The install script adds it. On other servers, run this once:
+
+```sh
+curl -fsSL https://github.com/baki2001/Incus-WebUI/releases/latest/download/host-updates.sh | sudo bash
+```
+
+The helper is a systemd timer that runs every minute and does one thing: when the UI asks, it upgrades the Incus packages that are already installed (`apt-get install --only-upgrade`). It talks to the UI through two server settings, `user.incus-webui.update-request` and `user.incus-webui.updates`, so it opens no port. It also runs `apt-get update` every 6 hours to see what's available. Read it first if you like: [install/host-updates.sh](../install/host-updates.sh).
+
+Incus restarts during the upgrade. Instances keep running, and the UI reconnects after a few seconds. Remove the helper with `sudo incus-webui-host-updates uninstall`.
 
 ## Connect more servers
 

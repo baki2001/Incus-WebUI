@@ -28,6 +28,7 @@
 - Hardware settings as a form (CPU, memory, disks, network cards, autostart, snapshot schedule), with a YAML view and a diff to review before anything is applied.
 - Several Incus servers in one place. Connect a server by pasting a trust token.
 - Sign in with a password, with single sign-on (OIDC), or both.
+- Updates from the UI, for the UI itself and for Incus (IncusOS, or Debian and Ubuntu with a small helper).
 - Light and dark mode, plus a server-wide theme with your own accent colour.
 - A command menu on <kbd>Ctrl</kbd> <kbd>K</kbd> to jump to any instance or action.
 
@@ -39,7 +40,7 @@ On a Debian or Ubuntu machine that runs Incus, this sets the UI up as a containe
 curl -fsSL https://raw.githubusercontent.com/baki2001/Incus-WebUI/main/install/incus-instance.sh | sudo bash
 ```
 
-It prints the address and a one-time setup code. Open the address, enter the code and pick a username and password. Run the same command again later to update.
+It prints the address and a one-time setup code. Open the address, enter the code and pick a username and password. Updates install from Settings, Updates and about.
 
 The [install guide](docs/install.md) explains each step, how to do it by hand, and the other ways to run it: as a plain binary on any Linux machine, or as an OCI image.
 

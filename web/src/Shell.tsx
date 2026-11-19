@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ui } from "./api";
 import { ic, Mark } from "./icons";
-import { useApp, type Mode } from "./state";
+import { useApp, useData, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside } from "./ui";
 import { recentInstances, useInstances, useProjects } from "./data";
 
@@ -174,6 +174,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const { data: rows } = useInstances();
   const loc = useLocation();
   const online = app.servers.filter((s) => s.online && s.trusted).length;
+  const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"));
   const recent = recentInstances().filter((r) => app.servers.some((s) => s.name === r.server));
   const stateOf = (r: { server: string; name: string }) => rows?.find((x) => x.server === r.server && x.name === r.name)?.status || "";
   const modes: Mode[] = ["auto", "light", "dark"];
@@ -238,6 +239,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         <NavLink to="/settings" className="ni" title="Settings">
           {ic.gear}
           {lbl("Settings")}
+          {upd.data?.newer && <span className="badge-dot upd" title="Update available" />}
         </NavLink>
         <div className="theme-seg" role="group" aria-label="Colour mode">
           {modes.map((m) => (

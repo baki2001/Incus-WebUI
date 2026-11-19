@@ -1,14 +1,16 @@
 import { useParams } from "react-router-dom";
 import { bytes, incus } from "../api";
 import { useCrumbs } from "../Shell";
-import { useApp, useData } from "../state";
+import { useApp, useData, cacheGet } from "../state";
+import { hostBusy, HostUpdates } from "./HostUpdates";
 
 export function Host() {
   const { server = "" } = useParams();
   useCrumbs([{ label: "Hosts" }, { label: server }]);
   const s = useApp().servers.find((x) => x.name === server);
   const ok = !!s?.online && !!s.trusted;
-  const info = useData<any>(ok ? `hostinfo:${server}` : null, () => incus(server, "/1.0"));
+  const prev = cacheGet<any>(`hostinfo:${server}`);
+  const info = useData<any>(ok ? `hostinfo:${server}` : null, () => incus(server, "/1.0"), hostBusy(prev?.config) ? 3000 : 0);
   const res = useData<any>(ok ? `res:full:${server}` : null, () => incus(server, "/1.0/resources"), 15000);
   if (!s) return <div className="dim">Unknown server.</div>;
   const env = info.data?.environment || {};
@@ -74,11 +76,7 @@ export function Host() {
                 <dd>{r?.network?.cards?.flatMap((c: any) => c.ports?.map((p: any) => p.id) || []).join(", ") || "–"}</dd>
               </dl>
             </div>
-            {s.incus_os && (
-              <div className="panel" style={{ padding: 16 }}>
-                This host runs IncusOS. Updates and system settings for IncusOS come in a later version of this UI.
-              </div>
-            )}
+            {info.data && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
           </div>
         </div>
       )}
