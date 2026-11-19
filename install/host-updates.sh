@@ -12,7 +12,9 @@
 #     where the UI reads them.
 #
 # Remove it with: sudo incus-webui-host-updates uninstall
-set -euo pipefail
+set -Eeuo pipefail
+# Name the command that failed, so the journal shows more than an exit code.
+trap 'rc=$?; echo "incus-webui-host-updates: line $LINENO: \"$BASH_COMMAND\" failed with exit code $rc" >&2' ERR
 
 BIN=/usr/local/sbin/incus-webui-host-updates
 UNIT=incus-webui-host-updates
@@ -27,7 +29,11 @@ packages() {
 }
 
 field() { # field PACKAGE Installed|Candidate
-  apt-cache policy "$1" 2>/dev/null | awk -v f="$2:" '$1 == f {print $2; exit}'
+  # Read apt-cache's whole output before parsing it. Closing the pipe early
+  # makes apt fail with a write error when SIGPIPE is ignored, as under systemd.
+  local out
+  out="$(apt-cache policy "$1")" || { echo "apt-cache policy $1 failed" >&2; return 0; }
+  printf '%s\n' "$out" | awk -v f="$2:" '$1 == f && !done {print $2; done = 1}'
 }
 
 json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r'; }
@@ -44,7 +50,14 @@ write_status() { # write_status STATE MESSAGE
 
 apt_update() {
   mkdir -p "$(dirname "$STAMP")"
-  apt-get update -qq >/dev/null && touch "$STAMP"
+  if apt-get update -q >/tmp/incus-webui-apt-update.log 2>&1; then
+    touch "$STAMP"
+  else
+    local rc=$?
+    echo "apt-get update failed with exit code $rc:" >&2
+    tail -n 20 /tmp/incus-webui-apt-update.log >&2
+    return "$rc"
+  fi
 }
 
 run_once() {
@@ -129,8 +142,13 @@ AccuracySec=5s
 WantedBy=timers.target
 EOF
   systemctl daemon-reload
+  # Do a first run now and only report success if it worked.
+  if ! systemctl start $UNIT.service; then
+    echo >&2
+    journalctl -u $UNIT.service -n 20 --no-pager -o cat >&2 || true
+    die "the first run failed (see above). Nothing is scheduled yet. Send this output to the Incus WebUI issues page."
+  fi
   systemctl enable --now $UNIT.timer >/dev/null 2>&1
-  systemctl start $UNIT.service || true
   echo "Incus updates from the web UI are on. The host page shows the versions within a minute."
 }
 
