@@ -1,0 +1,64 @@
+/* Additions on top of the approved mockup styles. */
+html,body,#root{height:100%}
+.app>.side a.ni{text-decoration:none}
+.ni.active{background:var(--s1);color:var(--ink);box-shadow:var(--shadow)}
+.ni.active svg{color:var(--accent)}
+.ni.active .lbl>span{font-weight:600}
+:root[data-brand="harbor"] .side .ni.active{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:#fff}
+:root[data-brand="harbor"] .side .ni.active svg{color:#7fd3e3}
+.sub .ni.active{font-weight:600}
+.st-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--idle)}
+.st-dot[data-s="Running"]{background:var(--ok)}
+.st-dot[data-s="Error"]{background:var(--err)}
+.st-dot[data-s="Frozen"]{background:var(--info)}
+.lbl-t{overflow:hidden;text-overflow:ellipsis}
+.rail .sub,.rail .lbl-t{display:none}
+.acct .collapse{margin-left:auto}
+.rail .acct .collapse{display:none}
+.menu button:disabled{opacity:.45;pointer-events:none}
+.menu .st{font-size:0}
+.ring.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.crumbs a{color:inherit}
+
+/* login */
+.login{min-height:100%;display:grid;place-items:center;padding:24px 16px;background:var(--bg)}
+.login-card{width:min(380px,100%);padding:28px;display:flex;flex-direction:column;gap:14px}
+.login-brand{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.login h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.login p{margin:0;font-size:13.5px}
+.login-form{display:flex;flex-direction:column;gap:12px}
+.login-form .fl .hint{min-height:0}
+.login-err{color:var(--err);font-size:13px}
+.login-or{text-align:center;color:var(--ink-3);font-size:12.5px}
+
+/* terminal + console */
+.term{min-height:max(440px,calc(100vh - 290px))}
+.term:fullscreen{border-radius:0}
+.term-h .on[data-s="connecting"]{background:var(--warn);animation:pulse .9s ease-in-out infinite}
+.term-h .on[data-s="closed"],.term-h .on[data-s="error"]{background:var(--idle)}
+.xterm-box{flex:1;min-height:0;padding:10px 4px 6px 12px;background:var(--s1)}
+.xterm-box .xterm{height:100%}
+.xterm .xterm-viewport{background:transparent!important}
+.spice-box{flex:1;min-height:0;display:flex;justify-content:center;align-items:flex-start;background:#000;overflow:auto}
+.spice-screen{outline:0;max-width:100%}
+.spice-screen canvas{display:block;max-width:100%;height:auto!important;cursor:default}
+.radios{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.radios label{display:flex;align-items:center;gap:8px;cursor:pointer}
+.radios input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+
+/* file explorer */
+.pathbar{flex:1;display:flex;align-items:center;flex-wrap:wrap;gap:2px;min-height:32px;padding:0 6px;border-radius:var(--r-sm);background:var(--s1);box-shadow:inset 0 0 0 1px var(--line-2);font:12.5px var(--f-mono);min-width:0}
+.pathbar button{border:0;background:none;padding:3px 5px;border-radius:5px;color:var(--ink-2)}
+.pathbar button:hover{background:var(--s2);color:var(--ink)}
+.pathbar .pathedit{margin-left:auto;font:12px var(--f-ui);color:var(--ink-3)}
+.fname{display:flex;align-items:center;gap:10px}
+.fic{color:var(--ink-3);display:inline-flex}
+.dropping{box-shadow:inset 0 0 0 2px var(--accent)}
+tbody tr td .qa{min-height:28px}
+
+.empty{padding:24px;display:flex;flex-direction:column;gap:4px}
+.dlg .ptitle h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlg textarea.yaml{min-height:40vh;border-top:1px solid var(--line)}
+.hsec .field select{min-width:120px}
+@media (max-width:560px){.radios span.dim{display:none}}
