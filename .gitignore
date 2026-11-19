@@ -1,6 +1,5 @@
 /web/node_modules/
-/web/dist/*
-!/web/dist/.keep
+/web/dist/
 /incus-webui
 /dist/
 *.tmp
