@@ -17,6 +17,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
  && mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.source=https://github.com/baki2001/Incus-WebUI \
+      org.opencontainers.image.description="Web interface for Incus and IncusOS" \
+      org.opencontainers.image.licenses=Apache-2.0
 COPY --from=bin /out/incus-webui /usr/local/bin/incus-webui
 COPY --from=bin --chown=65532:65532 /out/data /data
 ENV INCUS_WEBUI_DATA=/data

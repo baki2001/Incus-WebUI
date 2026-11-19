@@ -2,6 +2,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to create, like v0.1.0"
+        required: true
+
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: write
@@ -26,7 +34,7 @@ jobs:
           mkdir -p dist
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X main.version=${VERSION}" \
               -o dist/incus-webui-linux-$arch .
           done
           cd dist && sha256sum incus-webui-* > SHA256SUMS
@@ -34,9 +42,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* install/incus-instance.sh \
-            --title "$GITHUB_REF_NAME" --generate-notes \
-            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+          gh release create "$VERSION" dist/* install/incus-instance.sh \
+            --title "$VERSION" --generate-notes --target "$GITHUB_SHA" \
+            $([[ "$VERSION" == *-* ]] && echo --prerelease)
 
   image:
     runs-on: ubuntu-latest
@@ -57,7 +65,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ env.VERSION }}
           tags: |
-            ${{ steps.img.outputs.name }}:${{ github.ref_name }}
+            ${{ steps.img.outputs.name }}:${{ env.VERSION }}
             ${{ steps.img.outputs.name }}:latest
