@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { bytes, dateTime, imageLabel, incus, incusOp, incusRaw, parseBytes, since, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, mutateCache, useApp, useData } from "../state";
 import { confirmDialog, CopyBtn, Menu, Seg, Status, Tabs } from "../ui";
-import { pushRecent, type Row } from "../data";
+import { isPinned, togglePin, usePins, type Row } from "../data";
 import { deleteInstance, stateAction } from "./Instances";
 import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
@@ -18,8 +18,10 @@ export function InstancePage() {
   const { server = "", name = "", tab = "overview" } = useParams();
   const app = useApp();
   const nav = useNavigate();
-  const project = app.project === "*" ? undefined : app.project;
-  const key = `instance:${server}:${name}:${app.project}`;
+  const [params] = useSearchParams();
+  const loc = useLocation();
+  const project = params.get("project") || (app.project === "*" ? undefined : app.project);
+  const key = `instance:${server}:${name}:${project || "*"}`;
   const { data: inst, error, reload } = useData<Instance & { server: string }>(
     key,
     async () => {
@@ -36,11 +38,11 @@ export function InstancePage() {
   );
   const [prevTab, setPrevTab] = useState<Tab>(tab as Tab);
   useEffect(() => {
-    if (inst) pushRecent({ server, name, project: inst.project });
     if (inst) app.touch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inst]);
   useCrumbs([{ label: "Instances", to: "/instances" }, { label: name }]);
+  usePins();
 
   if (error && !inst)
     return (
@@ -63,7 +65,7 @@ export function InstancePage() {
   const row = inst as Row;
   const go = (t: Tab) => {
     setPrevTab(tab as Tab);
-    nav(`/instances/${server}/${name}${t === "overview" ? "" : "/" + t}`);
+    nav(`/instances/${server}/${name}${t === "overview" ? "" : "/" + t}${loc.search}`);
   };
   const dir = tabOrder.indexOf(tab as Tab) >= tabOrder.indexOf(prevTab) ? "fromR" : "fromL";
   const act = (a: "start" | "stop" | "restart" | "freeze" | "unfreeze", force = false) => {
@@ -77,6 +79,7 @@ export function InstancePage() {
         <div style={{ minWidth: 0 }}>
           <h1>
             {inst.name} <Status status={inst.status} />
+            <PinButton pin={{ server, name, project: inst.project }} />
           </h1>
           <p>
             {isVM ? "Virtual machine" : "Container"}
@@ -492,3 +495,21 @@ function LogsTab({ inst }: { inst: Instance & { server: string } }) {
 }
 
 export { invalidate };
+
+export function PinButton({ pin }: { pin: { server: string; name: string; project: string } }) {
+  const on = isPinned(pin);
+  return (
+    <button
+      className="btn btn-q ib btn-sm pin-btn"
+      aria-pressed={on}
+      title={on ? "Unpin from the sidebar" : "Pin to the sidebar"}
+      aria-label={on ? "Unpin from the sidebar" : "Pin to the sidebar"}
+      onClick={(e) => {
+        e.stopPropagation();
+        togglePin(pin);
+      }}
+    >
+      {on ? ic.starOn : ic.star}
+    </button>
+  );
+}

@@ -52,6 +52,17 @@ export const ic = {
   trash: sv(<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9" />, 14),
   screen: sv(<><rect x="1.5" y="2.5" width="13" height="9" rx="1.5" /><path d="M5.5 14h5" /></>, 14),
   kbd: sv(<><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.5h6" /></>, 14),
+  pulse: sv(<path d="M1.5 8.5h3l2-5 3 9 2-4h3" />),
+  warn: sv(<><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3M8 11.2h.01" /></>),
+  star: sv(<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" />, 14),
+  starOn: (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+      <path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" />
+    </svg>
+  ),
+  edit: sv(<path d="M10.5 2.5 13.5 5.5 5.5 13.5H2.5v-3z" />, 14),
+  cloud: sv(<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.7-.9 3.4 3.4 0 0 1 .7 6.9z" />, 14),
+  shield: sv(<path d="M8 1.8 13 3.7v4c0 3.2-2.2 5.4-5 6.5-2.8-1.1-5-3.3-5-6.5v-4z" />, 14),
   full: sv(<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />, 14),
 };
 

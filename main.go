@@ -30,6 +30,7 @@ type App struct {
 	oidc       oidcState
 	setupToken string
 	updater    *updater
+	dataDir    string
 }
 
 func main() {
@@ -49,6 +50,7 @@ func main() {
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
+	handoff(*dataDir)
 	store, err := loadStore(*dataDir)
 	if err != nil {
 		log.Fatal(err)
@@ -62,6 +64,7 @@ func main() {
 		backends:   &Backends{clientCert: clientCert, transports: map[string]*backend{}},
 		loginLimit: &limiter{hits: map[string][]time.Time{}},
 		updater:    &updater{},
+		dataDir:    *dataDir,
 	}
 
 	// Running on the Incus host itself: use the local socket automatically.
@@ -193,6 +196,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
 
+	mux.Handle("GET /api/ui/image-servers", auth(a.handleImageServers))
+	mux.Handle("GET /api/ui/remote-images", auth(a.handleRemoteImages))
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
 	mux.Handle("POST /api/ui/update", auth(a.handleUpdateApply))
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))

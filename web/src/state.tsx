@@ -88,7 +88,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 export type Mode = "auto" | "light" | "dark";
 export type Theme = { name: "graphite" | "harbor" | "custom"; accent?: string };
 type Toast = { id: number; msg: string; action?: { label: string; fn: () => void }; out?: boolean };
-type Task = { id: number; label: string };
+type Task = { id: number; label: string; detail?: string };
 
 type Ctx = {
   user: string;
@@ -106,7 +106,7 @@ type Ctx = {
   setTheme: (t: Theme) => void;
   toast: (msg: string, action?: Toast["action"]) => void;
   tasks: Task[];
-  run: <T>(label: string, fn: () => Promise<T>, done?: string) => Promise<T | undefined>;
+  run: <T>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => Promise<T | undefined>;
   lastUpdate: number;
   touch: () => void;
 };
@@ -214,11 +214,12 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   }, []);
 
   const run = useCallback(
-    async <T,>(label: string, fn: () => Promise<T>, done?: string) => {
+    async <T,>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => {
       const id = seq.current++;
       setTasks((t) => [...t, { id, label }]);
+      const progress = (detail: string) => setTasks((t) => t.map((x) => (x.id === id ? { ...x, detail } : x)));
       try {
-        const r = await fn();
+        const r = await fn(progress);
         if (done) toast(done);
         return r;
       } catch (e) {

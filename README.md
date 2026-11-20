@@ -20,7 +20,11 @@
 
 ## Features
 
-- Instances: create, start, stop, pause, snapshot, restore and delete, with filters that show counts per value.
+- Instances: create, start, stop, pause, snapshot, restore and delete, with filters that show counts per value. Pin the ones you use most to the sidebar.
+- Create instances from an image server, an image already on the server, an OCI registry, or an ISO you uploaded.
+- Images: pull from an image server or OCI registry and keep them cached, with aliases and auto update.
+- Networks, ACLs and IPAM; storage pools, volumes, buckets and custom ISOs; profiles and projects with limits. Each one can be created, edited as a form or YAML, and deleted.
+- Operations and warnings, so you can see what Incus is doing and what it noticed.
 - Terminal, console and files for every instance, each on its own tab:
   - Terminal opens a new shell inside the instance, the same as `incus exec`.
   - Console shows the instance's own screen, the same as `incus console`. VMs get a graphic mode (SPICE) and a text mode. Use it when the network or the OS inside is broken.

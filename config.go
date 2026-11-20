@@ -25,6 +25,8 @@ type Config struct {
 	Users   []User         `yaml:"users"`
 	OIDC    *OIDCConfig    `yaml:"oidc,omitempty"`
 	Servers []ServerConfig `yaml:"servers"`
+	// ImageServers are the simplestreams servers the UI offers images from.
+	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
 }
 
 type Theme struct {
