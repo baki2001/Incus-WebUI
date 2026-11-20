@@ -74,24 +74,62 @@ export type Operation = {
 };
 
 // incusOp sends a request that may start an async operation and waits for it.
-export async function incusOp(server: string, path: string, o: ReqOpts = {}, onStart?: (op: Operation) => void): Promise<Operation | any> {
+// onProgress gets a short text like "Downloading 45%" while it runs.
+export async function incusOp(server: string, path: string, o: ReqOpts = {}, onProgress?: (detail: string) => void): Promise<Operation | any> {
   const res = await incusRaw(server, path, o);
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.type === "error") throw new ApiError(res.status, data.error || res.statusText);
   if (data.type !== "async") return data.metadata;
   const op = data.metadata as Operation;
-  onStart?.(op);
-  return waitOp(server, op.id, o.project);
+  return waitOp(server, op.id, o.project, onProgress);
 }
 
-export async function waitOp(server: string, id: string, project?: string): Promise<Operation> {
+export async function waitOp(server: string, id: string, project?: string, onProgress?: (detail: string) => void): Promise<Operation> {
   for (;;) {
-    const op = await incus<Operation>(server, `/1.0/operations/${id}/wait?timeout=30`, { project });
+    const op = await incus<Operation>(server, `/1.0/operations/${id}/wait?timeout=${onProgress ? 1 : 30}`, { project });
     if (op.status_code >= 200) {
       if (op.status_code !== 200) throw new ApiError(400, op.err || op.status);
       return op;
     }
+    const p = opProgress(op);
+    if (p && onProgress) onProgress(p);
   }
+}
+
+// opProgress turns Incus' progress metadata into a short text.
+export function opProgress(op: Operation): string {
+  const m = op.metadata || {};
+  if (m.progress?.stage) {
+    const st = String(m.progress.stage).replace(/_/g, " ");
+    return m.progress.percent ? `${st} ${m.progress.percent}%` : st;
+  }
+  for (const [k, v] of Object.entries(m)) {
+    if (typeof v === "string" && /_progress$/.test(k)) return v.replace(/^(\w)/, (c) => c.toUpperCase());
+  }
+  return "";
+}
+
+// upload sends a file with XMLHttpRequest, which reports upload progress.
+export function upload(url: string, file: Blob, headers: Record<string, string>, onProgress: (frac: number) => void): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", url);
+    x.setRequestHeader("X-Incus-UI", "1");
+    for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => {
+      let d: any = {};
+      try {
+        d = JSON.parse(x.responseText);
+      } catch {
+        /* not JSON */
+      }
+      if (x.status >= 300 || d.type === "error") reject(new ApiError(x.status, d.error || x.statusText));
+      else resolve(d);
+    };
+    x.onerror = () => reject(new ApiError(0, "The upload failed."));
+    x.send(file);
+  });
 }
 
 export function wsURL(server: string, opID: string, secret: string, project?: string) {

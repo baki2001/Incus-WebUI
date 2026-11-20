@@ -33,12 +33,14 @@ html,body,#root{height:100%}
 .login-or{text-align:center;color:var(--ink-3);font-size:12.5px}
 
 /* terminal + console */
-.term{min-height:max(440px,calc(100vh - 290px))}
+.term{min-height:0;height:max(440px,calc(100dvh - 290px))}
 .term:fullscreen{border-radius:0}
 .term-h .on[data-s="connecting"]{background:var(--warn);animation:pulse .9s ease-in-out infinite}
 .term-h .on[data-s="closed"],.term-h .on[data-s="error"]{background:var(--idle)}
-.xterm-box{flex:1;min-height:0;padding:10px 4px 6px 12px;background:var(--s1)}
-.xterm-box .xterm{height:100%}
+/* The terminal is placed absolutely so its own size never pushes the box
+   bigger; the fit addon then measures the box and picks rows and columns. */
+.xterm-box{position:relative;flex:1;min-height:0;background:var(--s1)}
+.xterm-box .xterm{position:absolute;inset:0;padding:10px 4px 6px 12px}
 .xterm .xterm-viewport{background:transparent!important}
 .spice-box{flex:1;min-height:0;display:flex;justify-content:center;align-items:flex-start;background:#000;overflow:auto}
 .spice-screen{outline:0;max-width:100%}
@@ -73,3 +75,87 @@ tbody tr td .qa{min-height:28px}
 .cmd{display:flex;align-items:flex-start;gap:8px;padding:8px 8px 8px 12px;border-radius:var(--r-sm);background:var(--s2)}
 .cmd code{flex:1;min-width:0;font-size:12.5px;line-height:1.5;word-break:break-all}
 .upd-body>p:first-child{margin-top:12px}
+
+/* ---------- v0.3 additions ---------- */
+/* sort arrows: always after the label; unsorted columns show it on hover */
+th .sortb{flex-direction:row!important}
+th .arr{opacity:0;transition:opacity var(--t1)}
+th .sortb:hover .arr{opacity:.45}
+th .sortb.on .arr{opacity:1}
+th.right .sortb{justify-content:flex-end}
+/* sidebar groups */
+.ngrp{display:flex;align-items:center;gap:10px}
+.ngrp .chev2{margin-left:auto;color:var(--ink-3);display:inline-flex;transition:transform var(--t2) var(--spring)}
+.ngrp[aria-expanded="false"] .chev2{transform:rotate(-90deg)}
+.nsub{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--t3) var(--spring)}
+.nsub.shut{grid-template-rows:0fr}
+.nsub>.sub{overflow:hidden;min-height:0;margin-top:0;margin-bottom:0}
+.nsub:not(.shut)>.sub{margin-top:2px;margin-bottom:4px}
+.rail .nsub{display:none}
+.sub .ni .star{margin-left:auto;color:var(--ink-3);opacity:0}
+.side .count.warn{color:var(--warn)}
+.side .pin-empty{font-size:12.5px;color:var(--ink-3);padding:4px 10px 6px;white-space:normal;line-height:1.4}
+#side{position:relative}
+/* key/value editor */
+.kved{display:flex;flex-direction:column;gap:6px}
+.kvr{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+.kvr .field{height:30px}
+.kvr .field input{font-size:12.5px}
+/* sheets: wider variant for forms */
+.sheet.wide{width:min(560px,100vw)}
+.sheet-b .seg{align-self:flex-start}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.fl>.seg{display:inline-grid}
+.sheet-f .l{margin-right:auto}
+.ss .dl{background:var(--s1)}
+/* image picker */
+.ipick{display:flex;flex-direction:column;border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px var(--line-2);overflow:hidden}
+.ipick .field{border-radius:0;box-shadow:none;border-bottom:1px solid var(--line)}
+.ilist{max-height:260px;overflow:auto;padding:4px}
+.iopt{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:4px 8px;border:0;border-radius:var(--r-xs);background:none;text-align:left;color:var(--ink)}
+.iopt:hover{background:var(--s2)}
+.iopt[aria-selected="true"]{background:var(--accent-soft)}
+.iopt .os{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iopt .os small{color:var(--ink-3);margin-left:6px}
+.iopt .tags{display:flex;gap:4px;flex:none}
+.iopt .tag{height:18px;font-size:11.5px}
+.picked{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 12px;border-radius:var(--r-sm);background:var(--s2)}
+.picked .mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.picked .btn{margin-left:auto}
+/* progress of a running pull or upload */
+.prog{height:4px;border-radius:2px;background:var(--s3);overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);transform-origin:left;transition:transform var(--t2) var(--ease)}
+.prog.ind i{width:30%;animation:ind 1.2s var(--ease) infinite}
+@keyframes ind{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+/* subnav for grouped pages (Networking, Storage) */
+.subtabs{margin-top:-8px}
+.tglgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.tglgrid{grid-template-columns:minmax(0,1fr)}}
+.rules{display:flex;flex-direction:column;gap:6px}
+.rule{display:grid;grid-template-columns:90px 80px minmax(0,1fr) minmax(0,1fr) 70px 80px auto;gap:6px;align-items:center}
+.rule .field{height:30px;padding:0 8px}
+.rule .field input,.rule .field select{font-size:12.5px}
+.rule.hdr{font-size:12px;color:var(--ink-3)}
+@media (max-width:860px){.rule{grid-template-columns:repeat(3,minmax(0,1fr))}.rule.hdr{display:none}}
+.usage{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;padding:14px 16px}
+.usage label{font-size:12.5px;color:var(--ink-3)}
+.usage .v{font-size:14px;margin:4px 0 8px}
+.pin-btn[aria-pressed="true"]{color:var(--accent)}
+.st-txt{font-size:12.5px;color:var(--ink-3)}
+td .tag+.tag{margin-left:4px}
+.wrap-cell{white-space:normal;min-width:220px;max-width:480px}
+.op-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;align-items:center}
+.seg button{display:inline-flex;align-items:center;gap:6px}
+.seg button svg{color:var(--ink-3)}
+.seg button[aria-pressed="true"] svg{color:var(--ink)}
+.sheet-h h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-h .btn:first-of-type{margin-left:auto}
+.sheet-h .btn+.btn{margin-left:0}
+/* The sort arrow hangs outside the label so it never shifts the alignment
+   of right-aligned number columns. Same place in every column. */
+th .sortb{position:relative}
+th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
+.nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
+.side-foot{flex:none}

@@ -10,7 +10,12 @@ import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Instances } from "./pages/Instances";
 import { InstancePage } from "./pages/Instance";
-import { Images, Networks, Profiles, Storage } from "./pages/Infra";
+import { Images } from "./pages/Images";
+import { Acls, Ipam, Networks } from "./pages/Networks";
+import { Buckets, Isos, Pools, Volumes } from "./pages/Storage";
+import { Profiles } from "./pages/Profiles";
+import { Projects } from "./pages/Projects";
+import { Operations, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
 
@@ -45,9 +50,17 @@ function Root() {
             <Route path="/instances" element={<Instances />} />
             <Route path="/instances/:server/:name/:tab?" element={<InstancePage />} />
             <Route path="/images" element={<Images />} />
-            <Route path="/storage" element={<Storage />} />
+            <Route path="/storage" element={<Pools />} />
+            <Route path="/storage/volumes" element={<Volumes />} />
+            <Route path="/storage/buckets" element={<Buckets />} />
+            <Route path="/storage/isos" element={<Isos />} />
             <Route path="/networks" element={<Networks />} />
+            <Route path="/networks/acls" element={<Acls />} />
+            <Route path="/networks/ipam" element={<Ipam />} />
             <Route path="/profiles" element={<Profiles />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/operations" element={<Operations />} />
+            <Route path="/warnings" element={<Warnings />} />
             <Route path="/hosts/:server" element={<Host />} />
             <Route path="/settings/:section?" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

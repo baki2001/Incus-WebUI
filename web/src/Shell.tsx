@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ui } from "./api";
+import { incus, ui } from "./api";
 import { ic, Mark } from "./icons";
-import { useApp, useData, type Mode } from "./state";
-import { ConfirmHost, Dialog, useOutside } from "./ui";
-import { recentInstances, useInstances, useProjects } from "./data";
+import { useApp, useData, useScopedServers, type Mode } from "./state";
+import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
+import { usePins, useInstances, useProjects } from "./data";
 
 // ---------- breadcrumbs, set by each page ----------
 type Crumb = { label: string; to?: string };
@@ -160,12 +160,89 @@ function Tasks() {
           {tasks.map((t) => (
             <div className="op" key={t.id}>
               <span>{t.label}</span>
-              <small>working</small>
+              <small>{t.detail || "working"}</small>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean };
+type NavGroup = { key: string; label: string; icon: ReactNode; items: NavItem[] };
+const groups: NavGroup[] = [
+  {
+    key: "net",
+    label: "Networking",
+    icon: ic.net,
+    items: [
+      { to: "/networks", label: "Networks", end: true },
+      { to: "/networks/acls", label: "ACLs" },
+      { to: "/networks/ipam", label: "IPAM" },
+    ],
+  },
+  {
+    key: "storage",
+    label: "Storage",
+    icon: ic.disk,
+    items: [
+      { to: "/storage", label: "Pools", end: true },
+      { to: "/storage/volumes", label: "Volumes" },
+      { to: "/storage/buckets", label: "Buckets" },
+      { to: "/storage/isos", label: "Custom ISOs" },
+    ],
+  },
+];
+
+function useOpenGroups() {
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("iwui.groups") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const toggle = (k: string, v?: boolean) =>
+    setOpen((o) => {
+      const n = { ...o, [k]: v ?? !(o[k] ?? true) };
+      try {
+        localStorage.setItem("iwui.groups", JSON.stringify(n));
+      } catch {
+        /* ignore */
+      }
+      return n;
+    });
+  return [open, toggle] as const;
+}
+
+function Group({ g, open, toggle, rail }: { g: NavGroup; open: boolean; toggle: () => void; rail: boolean }) {
+  const loc = useLocation();
+  const nav = useNavigate();
+  const inside = g.items.some((i) => (i.end ? loc.pathname === i.to : loc.pathname.startsWith(i.to)));
+  return (
+    <>
+      <button
+        className="ni ngrp"
+        title={g.label}
+        aria-expanded={open}
+        aria-current={inside && (rail || !open) ? "page" : undefined}
+        onClick={() => (rail ? nav(g.items[0].to) : toggle())}
+      >
+        {g.icon}
+        {lbl(g.label)}
+        <span className="chev2">{ic.down}</span>
+      </button>
+      <div className={"nsub" + (open ? "" : " shut")}>
+        <div className="sub">
+          {g.items.map((i) => (
+            <NavLink key={i.to} to={i.to} end={i.end} className="ni" tabIndex={open ? undefined : -1}>
+              <span className="lbl-t">{i.label}</span>
+            </NavLink>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -175,9 +252,15 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const loc = useLocation();
   const online = app.servers.filter((s) => s.online && s.trusted).length;
   const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"));
-  const recent = recentInstances().filter((r) => app.servers.some((s) => s.name === r.server));
+  const warnings = useWarningCount();
+  // Hide pins of instances that are gone; pins in other projects stay.
+  const inScope = (p: { project: string }) => app.project === "*" || app.project === p.project;
+  const pinned = usePins().filter((p) => app.servers.some((s) => s.name === p.server) && (!rows || !inScope(p) || rows.some((r) => r.server === p.server && r.name === p.name)));
   const stateOf = (r: { server: string; name: string }) => rows?.find((x) => x.server === r.server && x.name === r.name)?.status || "";
   const modes: Mode[] = ["auto", "light", "dark"];
+  const [openG, toggleG] = useOpenGroups();
+  const seg = useRef<HTMLDivElement>(null);
+  useThumb(seg, 'button[aria-pressed="true"]', [app.mode, rail]);
 
   return (
     <aside className={"side" + (rail ? " rail" : "")} aria-label="Sidebar">
@@ -199,32 +282,30 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {lbl("Instances")}
           <span className="count">{rows?.length ?? ""}</span>
         </NavLink>
-        {recent.length > 0 && (
+        {pinned.length > 0 && (
           <div className="sub">
-            {recent.map((r) => (
-              <NavLink key={r.server + r.name} to={`/instances/${r.server}/${r.name}`} className="ni" title={r.name}>
+            {pinned.map((r) => (
+              <NavLink key={r.server + r.project + r.name} to={`/instances/${r.server}/${r.name}?project=${encodeURIComponent(r.project)}`} className="ni" title={r.name}>
                 <span className="st-dot" data-s={stateOf(r)} />
                 <span className="lbl-t">{r.name}</span>
               </NavLink>
             ))}
           </div>
         )}
-        <div className="grp">Infrastructure</div>
+        <NavLink to="/profiles" className="ni" title="Profiles">
+          {ic.prof}
+          {lbl("Profiles")}
+        </NavLink>
+        {groups.map((g) => (
+          <Group key={g.key} g={g} open={openG[g.key] ?? true} toggle={() => toggleG(g.key)} rail={rail} />
+        ))}
         <NavLink to="/images" className="ni" title="Images">
           {ic.img}
           {lbl("Images")}
         </NavLink>
-        <NavLink to="/storage" className="ni" title="Storage">
-          {ic.disk}
-          {lbl("Storage")}
-        </NavLink>
-        <NavLink to="/networks" className="ni" title="Networks">
-          {ic.net}
-          {lbl("Networks")}
-        </NavLink>
-        <NavLink to="/profiles" className="ni" title="Profiles">
-          {ic.prof}
-          {lbl("Profiles")}
+        <NavLink to="/projects" className="ni" title="Projects">
+          {ic.folder}
+          {lbl("Projects")}
         </NavLink>
         {app.servers.length > 0 && <div className="grp">Hosts</div>}
         {app.servers.map((s) => (
@@ -234,6 +315,17 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
             {!(s.online && s.trusted) && <span className="badge-dot" />}
           </NavLink>
         ))}
+        <div className="grp">Activity</div>
+        <NavLink to="/operations" className="ni" title="Operations">
+          {ic.pulse}
+          {lbl("Operations")}
+          {app.tasks.length > 0 && <span className="count">{app.tasks.length}</span>}
+        </NavLink>
+        <NavLink to="/warnings" className="ni" title="Warnings">
+          {ic.warn}
+          {lbl("Warnings")}
+          {warnings > 0 && <span className="count warn">{warnings}</span>}
+        </NavLink>
       </nav>
       <div className="side-foot">
         <NavLink to="/settings" className="ni" title="Settings">
@@ -241,7 +333,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {lbl("Settings")}
           {upd.data?.newer && <span className="badge-dot upd" title="Update available" />}
         </NavLink>
-        <div className="theme-seg" role="group" aria-label="Colour mode">
+        <div className="theme-seg" role="group" aria-label="Colour mode" ref={seg}>
           {modes.map((m) => (
             <button key={m} aria-pressed={app.mode === m} onClick={() => app.setMode(m)}>
               {m[0].toUpperCase() + m.slice(1)}
@@ -252,6 +344,21 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
       </div>
     </aside>
   );
+}
+
+// New warnings across the servers in scope, for the sidebar badge.
+function useWarningCount() {
+  const servers = useScopedServers();
+  const names = servers.map((s) => s.name).join(",");
+  const q = useData<number>(
+    names ? `warnings-count:${names}` : null,
+    async () => {
+      const all = await Promise.all(servers.map((s) => incus<any[]>(s.name, "/1.0/warnings?recursion=1").catch(() => [])));
+      return all.flat().filter((w) => w.status === "new").length;
+    },
+    60000,
+  );
+  return q.data || 0;
 }
 
 function Account() {
@@ -356,18 +463,27 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Overview", icon: ic.home, run: go("/") },
       { group: "Go to", label: "Instances", icon: ic.inst, run: go("/instances") },
       { group: "Go to", label: "Images", icon: ic.img, run: go("/images") },
-      { group: "Go to", label: "Storage", icon: ic.disk, run: go("/storage") },
-      { group: "Go to", label: "Networks", icon: ic.net, run: go("/networks") },
       { group: "Go to", label: "Profiles", icon: ic.prof, run: go("/profiles") },
+      { group: "Go to", label: "Networks", icon: ic.net, run: go("/networks") },
+      { group: "Go to", label: "Network ACLs", icon: ic.shield, run: go("/networks/acls") },
+      { group: "Go to", label: "IPAM, addresses in use", icon: ic.net, run: go("/networks/ipam") },
+      { group: "Go to", label: "Storage pools", icon: ic.disk, run: go("/storage") },
+      { group: "Go to", label: "Storage volumes", icon: ic.disk, run: go("/storage/volumes") },
+      { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
+      { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
+      { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
+      { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
+      { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
       { group: "Go to", label: "Settings", icon: ic.gear, run: go("/settings") },
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
+      { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
       { group: "Actions", label: "Switch to dark mode", icon: ic.screen, run: () => (app.setMode("dark"), onClose()) },
       { group: "Actions", label: "Switch to light mode", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
     ];
     for (const r of rows || []) {
-      list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${r.server}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(`/instances/${r.server}/${r.name}`) });
-      if (r.status === "Running") list.push({ group: "Instances", label: `Open terminal in ${r.name}`, icon: ic.term, run: go(`/instances/${r.server}/${r.name}/terminal`) });
+      list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${r.server}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(`/instances/${r.server}/${r.name}?project=${encodeURIComponent(r.project)}`) });
+      if (r.status === "Running") list.push({ group: "Instances", label: `Open terminal in ${r.name}`, icon: ic.term, run: go(`/instances/${r.server}/${r.name}/terminal?project=${encodeURIComponent(r.project)}`) });
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps

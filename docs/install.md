@@ -175,7 +175,19 @@ incus console incus-webui --show-log | grep "setup code"
 
 Then add your servers under Settings, Servers.
 
-The image can't update itself. Pull the new image and recreate the container to update; the data volume keeps your settings.
+The UI updates itself from Settings, Updates and about. The image's own binary is read-only, so the new version goes to `/data/bin` and takes over on every start after that. Pulling a newer image and recreating the container also works; the data volume keeps your settings.
+
+Installs from v0.2.x and older can't do this yet. Update them once by hand, and the button works from then on:
+
+```sh
+curl -fsSLo incus-webui https://github.com/baki2001/Incus-WebUI/releases/latest/download/incus-webui-linux-amd64
+chmod +x incus-webui
+incus stop incus-webui
+incus file push incus-webui incus-webui/data/bin/incus-webui --create-dirs --mode 0755 --uid 65532 --gid 65532
+incus start incus-webui
+```
+
+Use `incus-webui-linux-arm64` on ARM64.
 
 ## Update Incus from the UI
 
@@ -192,6 +204,20 @@ curl -fsSL https://github.com/baki2001/Incus-WebUI/releases/latest/download/host
 The helper is a systemd timer that runs every minute and does one thing: when the UI asks, it upgrades the Incus packages that are already installed (`apt-get install --only-upgrade`). It talks to the UI through two server settings, `user.incus-webui.update-request` and `user.incus-webui.updates`, so it opens no port. It also runs `apt-get update` every 6 hours to see what's available. Read it first if you like: [install/host-updates.sh](../install/host-updates.sh).
 
 Incus restarts during the upgrade. Instances keep running, and the UI reconnects after a few seconds. Remove the helper with `sudo incus-webui-host-updates uninstall`.
+
+## Image servers
+
+The image picker lists images from [images.linuxcontainers.org](https://images.linuxcontainers.org). To use your own simplestreams mirror, or add more, list them in `config.yaml` and restart:
+
+```yaml
+image_servers:
+  - name: Linux Containers
+    url: https://images.linuxcontainers.org
+  - name: Our mirror
+    url: https://images.example.com
+```
+
+The list replaces the default. Pulls from OCI registries (Docker Hub, GitHub, Quay) don't need this.
 
 ## Connect more servers
 

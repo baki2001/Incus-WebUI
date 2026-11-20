@@ -1,7 +1,12 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { ic } from "../icons";
+import { incusOp } from "../api";
+import { Field, Input, KVEditor, SheetSec } from "../ui";
+import { EditSheet } from "./Resource";
 import { bytes, incus } from "../api";
 import { useCrumbs } from "../Shell";
-import { useApp, useData, cacheGet } from "../state";
+import { useApp, useData, cacheGet, invalidate } from "../state";
 import { hostBusy, HostUpdates } from "./HostUpdates";
 
 export function Host() {
@@ -77,9 +82,97 @@ export function Host() {
               </dl>
             </div>
             {info.data && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
+            {info.data && <ServerConfig server={server} config={info.data.config || {}} onSaved={() => info.reload()} />}
           </div>
         </div>
       )}
     </>
+  );
+}
+
+const serverKeys = [
+  "core.https_address", "core.storage_buckets_address", "core.metrics_address", "core.proxy_https", "core.proxy_http", "core.proxy_ignore_hosts", "core.trust_password",
+  "images.auto_update_interval", "images.auto_update_cached", "images.remote_cache_expiry", "images.compression_algorithm", "storage.backups_volume", "storage.images_volume",
+  "network.ovn.northbound_connection", "instances.placement.scriptlet", "logging.loki.target.address",
+];
+
+// Server settings (incus config), with the common ones as fields.
+function ServerConfig({ server, config, onSaved }: { server: string; config: Record<string, string>; onSaved: () => void }) {
+  const app = useApp();
+  const [open, setOpen] = useState(false);
+  const shown = Object.entries(config).filter(([k]) => !k.startsWith("user.incus-webui.") && !k.startsWith("volatile."));
+  const save = async (d: { config: Record<string, string> }) => {
+    // PUT replaces the whole config: keep the UI's own keys as they are.
+    const next: Record<string, string> = {};
+    for (const [k, v] of Object.entries(config)) if (k.startsWith("user.incus-webui.")) next[k] = v;
+    for (const [k, v] of Object.entries(d.config)) if (k && v !== "") next[k] = v;
+    const ok = await app.run("Saving server settings", () => incusOp(server, "/1.0", { method: "PUT", body: { config: next } }).then(() => true), "Server settings saved");
+    if (ok) {
+      invalidate(`server-info:${server}`);
+      onSaved();
+    }
+    return ok;
+  };
+  return (
+    <div className="panel">
+      <div className="ptitle">
+        <h2>Configuration</h2>
+        <span className="r">
+          <button className="btn btn-q btn-sm" onClick={() => setOpen(true)}>
+            {ic.edit}Edit
+          </button>
+        </span>
+      </div>
+      {shown.length ? (
+        <dl className="kv">
+          {shown.map(([k, v]) => (
+            <div key={k} style={{ display: "contents" }}>
+              <dt className="mono" style={{ fontSize: 12 }}>
+                {k}
+              </dt>
+              <dd className="mono" style={{ fontSize: 12.5 }}>
+                {k.includes("password") ? "••••••" : v}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <div className="pfoot" style={{ borderTop: 0 }}>
+          Everything is at its default.
+        </div>
+      )}
+      <EditSheet<{ config: Record<string, string> }>
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Settings for ${server}`}
+        value={{ config: Object.fromEntries(shown) }}
+        onSave={save}
+        form={(d, set) => {
+          const f = (k: string) => d.config[k] || "";
+          const setK = (k: string, v: string) => set((x) => (v ? (x.config[k] = v) : delete x.config[k]));
+          return (
+            <>
+              <div className="two">
+                <Field label="API address" hint="Where Incus listens, like :8443. The UI needs it when it runs in a container.">
+                  <Input mono value={f("core.https_address")} onChange={(v) => setK("core.https_address", v)} />
+                </Field>
+                <Field label="Bucket address" hint="For S3 buckets on local pools, like :8555.">
+                  <Input mono value={f("core.storage_buckets_address")} onChange={(v) => setK("core.storage_buckets_address", v)} />
+                </Field>
+                <Field label="Image refresh, hours" hint="How often cached images update. 0 turns it off.">
+                  <Input mono value={f("images.auto_update_interval")} onChange={(v) => setK("images.auto_update_interval", v.replace(/\D/g, ""))} placeholder="6" />
+                </Field>
+                <Field label="Unused cache kept, days" hint="Cached images nothing uses are removed after this.">
+                  <Input mono value={f("images.remote_cache_expiry")} onChange={(v) => setK("images.remote_cache_expiry", v.replace(/\D/g, ""))} placeholder="10" />
+                </Field>
+              </div>
+              <SheetSec title="All settings">
+                <KVEditor value={d.config} onChange={(c) => set((x) => void (x.config = c))} keys={serverKeys} />
+              </SheetSec>
+            </>
+          );
+        }}
+      />
+    </div>
   );
 }

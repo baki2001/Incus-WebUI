@@ -80,8 +80,11 @@ func (u *updater) latestRelease(ctx context.Context, force bool) (*releaseInfo, 
 	return u.latest, u.err
 }
 
-// selfPath returns the running binary and whether this process may replace it.
-func selfPath() (string, string) {
+// updateTarget returns where a new binary goes and whether that is possible.
+// The binary is replaced in place when its folder is writable. Otherwise, as in
+// the OCI image where the binary lives in a read-only /usr/local/bin, the new
+// binary goes to <data>/bin, and handoff starts it on every later start.
+func updateTarget(dataDir string) (string, string) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", "can't find the running binary"
@@ -89,20 +92,59 @@ func selfPath() (string, string) {
 	if p, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = p
 	}
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return exe, "This copy runs from an OCI image. Pull the new image to update."
+	if writable(filepath.Dir(exe)) {
+		return exe, ""
 	}
-	f, err := os.CreateTemp(filepath.Dir(exe), ".update-test-*")
+	dir := filepath.Join(dataDir, "bin")
+	if err := os.MkdirAll(dir, 0o700); err == nil && writable(dir) {
+		return filepath.Join(dir, "incus-webui"), ""
+	}
+	return "", fmt.Sprintf("The UI can't write to %s or to its data folder %s, so it can't update itself.", filepath.Dir(exe), dataDir)
+}
+
+func writable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".update-test-*")
 	if err != nil {
-		return exe, fmt.Sprintf("The UI can't write to %s. Move the binary somewhere its user can write, or update it by hand.", filepath.Dir(exe))
+		return false
 	}
 	f.Close()
 	os.Remove(f.Name())
-	return exe, ""
+	return true
+}
+
+// handoff runs <data>/bin/incus-webui instead of this binary when an update
+// put a newer version there. A newer image or package wins over an older copy.
+func handoff(dataDir string) {
+	if os.Getenv("INCUS_WEBUI_HANDOFF") != "" {
+		return
+	}
+	bin := filepath.Join(dataDir, "bin", "incus-webui")
+	exe, _ := os.Executable()
+	if p, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = p
+	}
+	if exe == bin {
+		return
+	}
+	if _, err := os.Stat(bin); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	out, err := exec.CommandContext(ctx, bin, "--version").Output()
+	cancel()
+	v := strings.TrimSpace(string(out))
+	if err != nil || !newerVersion(v, version) {
+		return
+	}
+	log.Printf("Starting %s from %s, which is newer than this %s", v, bin, version)
+	os.Setenv("INCUS_WEBUI_HANDOFF", "1")
+	if err := syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), os.Environ()); err != nil {
+		log.Printf("Can't start %s, staying on %s: %v", bin, version, err)
+	}
 }
 
 func (a *App) handleUpdateInfo(w http.ResponseWriter, r *http.Request) {
-	_, reason := selfPath()
+	_, reason := updateTarget(a.dataDir)
 	out := map[string]any{"current": version, "can_update": reason == "", "reason": reason, "updating": a.updater.isRunning()}
 	rel, err := a.updater.latestRelease(r.Context(), r.URL.Query().Get("refresh") == "1")
 	if err != nil {
@@ -121,7 +163,7 @@ func (u *updater) isRunning() bool {
 }
 
 func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
-	exe, reason := selfPath()
+	exe, reason := updateTarget(a.dataDir)
 	if reason != "" {
 		jsonError(w, http.StatusConflict, reason)
 		return
@@ -157,7 +199,8 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Restarting into %s", rel.Tag)
 		// Replace this process with the new binary. The PID stays the same, so
 		// systemd and other supervisors keep tracking it.
-		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+		os.Setenv("INCUS_WEBUI_HANDOFF", "1")
+		if err := syscall.Exec(exe, append([]string{exe}, os.Args[1:]...), os.Environ()); err != nil {
 			log.Fatalf("restart failed, exiting so the service manager starts the new binary: %v", err)
 		}
 	}()

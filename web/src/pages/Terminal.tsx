@@ -15,7 +15,7 @@ function makeTerm(el: HTMLElement) {
   const term = new Terminal({
     fontFamily: '"Geist Mono Variable","Geist Mono",ui-monospace,Menlo,Consolas,monospace',
     fontSize: 13,
-    lineHeight: 1.25,
+    lineHeight: 1.15,
     cursorBlink: true,
     allowProposedApi: false,
     scrollback: 5000,
@@ -29,11 +29,30 @@ function makeTerm(el: HTMLElement) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  try {
-    fit.fit();
-  } catch {
-    /* not visible yet */
-  }
+  const refit = () => {
+    try {
+      fit.fit();
+    } catch {
+      /* not visible yet */
+    }
+  };
+  refit();
+  // The cell size changes once the web font has loaded.
+  document.fonts?.ready.then(refit);
+  // Ctrl+Shift+C copies (Ctrl+C too while text is selected); Ctrl+Shift+V and
+  // Cmd+V paste through the browser. Without this, the browser's own shortcut
+  // for Ctrl+Shift+C (developer tools) wins.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown") return true;
+    const k = e.key.toLowerCase();
+    if (e.ctrlKey && !e.altKey && k === "c" && (e.shiftKey || term.hasSelection())) {
+      if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+      e.preventDefault();
+      return false;
+    }
+    if (e.ctrlKey && e.shiftKey && k === "v") return false; // let the paste event through
+    return true;
+  });
   return { term, fit };
 }
 
@@ -154,7 +173,7 @@ export function TerminalTab({ inst, onStart }: { inst: Inst; onStart: () => void
         <span>Started {started.current.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
         <span>{size}</span>
         <span>UTF-8</span>
-        <span>{isMac ? "Copy with ⌘C, paste with ⌘V" : "Copy with Ctrl+Shift+C, paste with Ctrl+Shift+V"}</span>
+        <span>{isMac ? "Copy with ⌘C, paste with ⌘V" : "Select to copy with Ctrl+C or Ctrl+Shift+C, paste with Ctrl+Shift+V"}</span>
       </div>
     </div>
   );

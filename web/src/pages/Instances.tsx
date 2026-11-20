@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { bytes, imageLabel, incus, incusOp, ipv4, since, type Instance } from "../api";
+import { bytes, imageLabel, incusOp, ipv4, since, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
-import { invalidate, mutateCache, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Field, Seg, Sheet, SkRows, Status, useOutside } from "../ui";
-import { projectFor, useInstances, type Row } from "../data";
+import { invalidate, mutateCache, useApp } from "../state";
+import { confirmDialog, Seg, SkRows, SortTh, Status, useOutside } from "../ui";
+import { PinButton } from "./Instance";
+import { CreateInstance } from "./CreateInstance";
+import { projectFor, useInstances, usePins, type Row } from "../data";
 
 type SortKey = "name" | "status" | "server" | "ip" | "cpu" | "mem" | "up";
 
@@ -64,6 +66,7 @@ export function Instances() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const { data, loading, key, at } = useInstances(5000);
+  usePins();
   const [q, setQ] = useState("");
   const [state, setState] = useState<"all" | "running" | "stopped">("all");
   const [types, setTypes] = useState<string[]>([]);
@@ -136,14 +139,7 @@ export function Instances() {
   const id = (r: Row) => r.server + "/" + r.name;
   const selected = shown.filter((r) => sel.has(id(r)));
 
-  const th = (k: SortKey, label: string, cls = "") => (
-    <th className={cls}>
-      <button className={"sortb" + (sort.k === k ? " on" : "")} onClick={() => setSort((s) => ({ k, asc: s.k === k ? !s.asc : true }))}>
-        {label}
-        <span className="arr">{sort.k === k ? (sort.asc ? "↑" : "↓") : "↕"}</span>
-      </button>
-    </th>
-  );
+  const th = (k: SortKey, label: string, cls = "") => <SortTh k={k} label={label} cls={cls} sort={sort} setSort={(s) => setSort(s as { k: SortKey; asc: boolean })} />;
 
   const chips: { label: string; clear: () => void }[] = [];
   if (q) chips.push({ label: `“${q}”`, clear: () => setQ("") });
@@ -242,7 +238,7 @@ export function Instances() {
             {shown.map((r) => {
               const c = cpu[id(r)];
               return (
-                <tr key={id(r)} className={sel.has(id(r)) ? "sel" : ""} onClick={() => nav(`/instances/${r.server}/${r.name}`)}>
+                <tr key={id(r)} className={sel.has(id(r)) ? "sel" : ""} onClick={() => nav(`/instances/${r.server}/${r.name}?project=${encodeURIComponent(r.project)}`)}>
                   <td className="chk" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -273,9 +269,10 @@ export function Instances() {
                   <td className="dim hide-m">{r.status === "Running" ? since(r.last_used_at) : "–"}</td>
                   <td onClick={(e) => e.stopPropagation()}>
                     <div className="qa">
+                      <PinButton pin={{ server: r.server, name: r.name, project: r.project }} />
                       {r.status === "Running" ? (
                         <>
-                          <button className="btn btn-q ib btn-sm" title="Terminal" aria-label="Terminal" onClick={() => nav(`/instances/${r.server}/${r.name}/terminal`)}>
+                          <button className="btn btn-q ib btn-sm" title="Terminal" aria-label="Terminal" onClick={() => nav(`/instances/${r.server}/${r.name}/terminal?project=${encodeURIComponent(r.project)}`)}>
                             {ic.term}
                           </button>
                           <button className="btn btn-q ib btn-sm" title="Stop" aria-label="Stop" onClick={() => stateAction(app, key, r, "stop")}>
@@ -320,7 +317,11 @@ export function Instances() {
           </button>
         </div>
       )}
-      <CreateInstance open={params.get("create") === "1"} onClose={() => setParams({})} />
+      <CreateInstance
+        open={params.get("create") === "1"}
+        onClose={() => setParams({})}
+        preset={{ image: params.get("image") || undefined, server: params.get("server") || undefined, iso: params.get("iso") || undefined }}
+      />
     </>
   );
 }
@@ -366,178 +367,6 @@ function MultiFilter({ label, value, onChange, options }: { label: string; value
         </div>
       )}
     </div>
-  );
-}
-
-// ---------- create ----------
-
-const suggestions = ["debian/13", "debian/13/cloud", "ubuntu/24.04", "ubuntu/24.04/cloud", "alpine/3.22", "archlinux", "fedora/43", "rockylinux/9"];
-const nameRe = /^[a-zA-Z][a-zA-Z0-9-]{0,62}$/;
-
-function CreateInstance({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const app = useApp();
-  const nav = useNavigate();
-  const servers = useScopedServers();
-  const [server, setServer] = useState("");
-  const [name, setName] = useState("");
-  const [source, setSource] = useState<"remote" | "local">("remote");
-  const [alias, setAlias] = useState("debian/13");
-  const [fp, setFp] = useState("");
-  const [type, setType] = useState<"container" | "virtual-machine">("container");
-  const [cpu, setCpu] = useState("");
-  const [mem, setMem] = useState("");
-  const [profiles, setProfiles] = useState<string[]>(["default"]);
-  const [start, setStart] = useState(true);
-  const [tried, setTried] = useState(false);
-  const srv = server || servers[0]?.name || "";
-  const project = app.project === "*" ? "default" : app.project;
-  const local = useData<any[]>(open && srv ? `images:${srv}:${project}` : null, () => incus(srv, "/1.0/images?recursion=1", { project }));
-  const profs = useData<string[]>(open && srv ? `profiles-names:${srv}:${project}` : null, async () => (await incus<string[]>(srv, "/1.0/profiles", { project })).map((p) => p.split("/").pop()!.split("?")[0]));
-
-  useEffect(() => {
-    if (open) {
-      setName("");
-      setTried(false);
-    }
-  }, [open]);
-
-  const nameBad = !nameRe.test(name);
-  const submit = async () => {
-    setTried(true);
-    if (nameBad || (source === "local" && !fp)) return;
-    const config: Record<string, string> = {};
-    if (cpu) config["limits.cpu"] = cpu;
-    if (mem) config["limits.memory"] = mem + "GiB";
-    const body = {
-      name,
-      type,
-      profiles,
-      config,
-      start,
-      source:
-        source === "remote"
-          ? { type: "image", alias, server: "https://images.linuxcontainers.org", protocol: "simplestreams", mode: "pull" }
-          : { type: "image", fingerprint: fp },
-    };
-    onClose();
-    const ok = await app.run(
-      `Creating ${name}`,
-      async () => {
-        await incusOp(srv, "/1.0/instances", { method: "POST", project, body });
-        invalidate("instances:");
-        return true;
-      },
-      `${name} created`,
-    );
-    if (ok) nav(`/instances/${srv}/${name}`);
-  };
-
-  return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title="Create instance"
-      footer={
-        <>
-          <button className="btn btn-s press" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-p press" onClick={submit}>
-            Create{start ? " and start" : ""}
-          </button>
-        </>
-      }
-    >
-      <Field label="Name" hint={tried && nameBad ? "Start with a letter; use letters, numbers and dashes." : ""} bad={tried && nameBad}>
-        <div className={"field" + (tried && nameBad ? " bad" : "")}>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="web-01" />
-        </div>
-      </Field>
-      {servers.length > 1 && (
-        <Field label="Server">
-          <div className="field">
-            <select value={srv} onChange={(e) => setServer(e.target.value)}>
-              {servers.map((s) => (
-                <option key={s.name}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-        </Field>
-      )}
-      <Field label="Type">
-        <Seg
-          value={type}
-          onChange={setType}
-          options={[
-            { v: "container", l: "Container" },
-            { v: "virtual-machine", l: "Virtual machine" },
-          ]}
-        />
-      </Field>
-      <Field label="Image" hint={source === "remote" ? "From images.linuxcontainers.org. Cloud variants include cloud-init." : ""}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Seg
-            value={source}
-            onChange={setSource}
-            options={[
-              { v: "remote", l: "Image server" },
-              { v: "local", l: `On this server${local.data ? ` (${local.data.length})` : ""}` },
-            ]}
-          />
-          {source === "remote" ? (
-            <>
-              <div className="field">
-                <input className="mono" list="img-sugg" value={alias} onChange={(e) => setAlias(e.target.value)} />
-                <datalist id="img-sugg">
-                  {suggestions.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-              </div>
-            </>
-          ) : (
-            <div className="field">
-              <select value={fp} onChange={(e) => setFp(e.target.value)}>
-                <option value="">Choose an image</option>
-                {(local.data || [])
-                  .filter((i) => (type === "container" ? i.type === "container" : i.type === "virtual-machine"))
-                  .map((i) => (
-                    <option key={i.fingerprint} value={i.fingerprint}>
-                      {i.aliases?.[0]?.name || i.properties?.description || i.fingerprint.slice(0, 12)}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
-        </div>
-      </Field>
-      <Field label="Profiles">
-        <div className="pt">
-          {(profs.data || ["default"]).map((p) => (
-            <label key={p}>
-              <input type="checkbox" checked={profiles.includes(p)} onChange={(e) => setProfiles(e.target.checked ? [...profiles, p] : profiles.filter((x) => x !== p))} />
-              {p}
-            </label>
-          ))}
-        </div>
-      </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="CPU cores" hint="Empty uses the profile.">
-          <div className="field">
-            <input inputMode="numeric" className="mono" value={cpu} onChange={(e) => setCpu(e.target.value.replace(/\D/g, ""))} placeholder="–" />
-          </div>
-        </Field>
-        <Field label="Memory (GiB)" hint="Empty uses the profile.">
-          <div className="field">
-            <input inputMode="decimal" className="mono" value={mem} onChange={(e) => setMem(e.target.value.replace(/[^\d.]/g, ""))} placeholder="–" />
-          </div>
-        </Field>
-      </div>
-      <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <button type="button" className="toggle" role="switch" aria-checked={start} onClick={() => setStart(!start)} />
-        Start after creating
-      </label>
-    </Sheet>
   );
 }
 
