@@ -183,7 +183,7 @@ Installs from v0.2.x and older can't do this yet. Update them once by hand, and 
 curl -fsSLo incus-webui https://github.com/baki2001/Incus-WebUI/releases/latest/download/incus-webui-linux-amd64
 chmod +x incus-webui
 incus stop incus-webui
-incus file push incus-webui incus-webui/data/bin/incus-webui --create-dirs --mode 0755 --uid 65532 --gid 65532
+incus file push incus-webui incus-webui/usr/local/bin/incus-webui --mode 0755 --uid 0 --gid 0
 incus start incus-webui
 ```
 
