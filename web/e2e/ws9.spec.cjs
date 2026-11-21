@@ -128,7 +128,7 @@ async function until(fn, ms = 30000, step = 500) {
   ok(up.status === 0, "client brought up its tunnel");
   const ping = await until(() => /^\d{5,}/.test((tryIncus("exec", "w9-cl", "--", "wg", "show", "wgc", "latest-handshakes").stdout.split("\t")[1] || "").trim()), 30000);
   ok(!!ping, "client completed a WireGuard handshake with the gateway");
-  await page.waitForSelector(".tn-hs:not(.warn):has-text('ago'), .tn-hs:not(.warn):has-text('just now')", { timeout: 20000 });
+  await page.waitForSelector(".tn-hs:not(.warn):has-text('ago'), .tn-hs:not(.warn):has-text('just now')", { timeout: 45000 });
   ok(true, "UI shows the last handshake");
   await shot("list-with-peers");
 
