@@ -24,6 +24,17 @@ export function sizeParts(value: string, defUnit: Unit): { text: string; unit: U
   const u = (m?.[2] || "").toLowerCase();
   return { text: m?.[1] ?? "", unit: u === "mib" || u === "mb" ? "MiB" : u === "gib" || u === "gb" ? "GiB" : defUnit };
 }
+// Show a value in the unit the user picked when that reads exactly (1.5 GiB
+// stays 1.5 GiB, not 1536 MiB); otherwise pick the best unit.
+function inUnit(value: string, unit: Unit): { text: string; unit: Unit } {
+  const b = memBytes(value);
+  if (b != null && b > 0) {
+    const f = unit === "GiB" ? GiB : MiB;
+    const t = Math.round((b / f) * 100) / 100;
+    if (t > 0 && Math.round(t * f) === b) return { text: String(t), unit };
+  }
+  return sizeParts(value, unit);
+}
 function sizeOut(text: string, unit: Unit): string {
   const t = text.trim();
   if (!t) return "";
@@ -40,12 +51,22 @@ export function SizeField({ value, onChange, defUnit = "GiB", placeholder, bad, 
   useEffect(() => {
     if (value !== last.current) {
       last.current = value;
-      setP((old) => (value ? sizeParts(value, old.unit) : { text: "", unit: old.unit }));
+      setP((old) => (value ? inUnit(value, old.unit) : { text: "", unit: old.unit }));
     }
   }, [value]);
   const emit = (text: string, unit: Unit) => {
     setP({ text, unit });
     const out = sizeOut(text, unit);
+    last.current = out;
+    onChange(out);
+  };
+  // Changing the unit keeps the size: 256 MiB becomes 0.25 GiB.
+  const switchUnit = (unit: Unit) => {
+    const t = p.text.trim();
+    if (unit === p.unit || !/^(\d+\.?\d*|\.\d+)$/.test(t) || Number(t) <= 0) return emit(p.text, unit);
+    const bytes = Math.round(Number(t) * (p.unit === "GiB" ? GiB : MiB));
+    setP({ text: String(Math.round((bytes / (unit === "GiB" ? GiB : MiB)) * 10000) / 10000), unit });
+    const out = memStr(bytes);
     last.current = out;
     onChange(out);
   };
@@ -55,7 +76,7 @@ export function SizeField({ value, onChange, defUnit = "GiB", placeholder, bad, 
         <input inputMode="decimal" aria-label={label} value={p.text} placeholder={placeholder} onChange={(e) => emit(e.target.value, p.unit)} />
       </div>
       <div className="field" style={{ width: 84 }}>
-        <select aria-label={(label || "Size") + " unit"} value={p.unit} onChange={(e) => emit(p.text, e.target.value as Unit)}>
+        <select aria-label={(label || "Size") + " unit"} value={p.unit} onChange={(e) => switchUnit(e.target.value as Unit)}>
           <option>MiB</option>
           <option>GiB</option>
         </select>

@@ -4,24 +4,24 @@ import { useApp } from "../../state";
 import { limits } from "./model";
 import { Nothing, Skel, splitBytes, type D } from "./parts";
 
-type RulerProps = { label: string; title?: string; v: string; u: string; of: string; used: number; lim?: number; note?: string; hot?: boolean };
+type RulerProps = { label: string; title?: string; v: string; u: string; of: string; used: number; lim?: number; note?: string; hot?: boolean; nobar?: boolean };
 
-function Ruler({ label, title, v, u, of, used, lim, note, hot }: RulerProps) {
+function Ruler({ label, title, v, u, of, used, lim, note, hot, nobar }: RulerProps) {
   return (
     <div className="ruler">
       <span className="ru-l" title={title || label}>
         {label}
       </span>
       <div className="ru-b">
-        <div className="ru-track">
+        {!nobar && <div className="ru-track">
           <i className={"ru-fill" + (hot ? " hot" : "")} style={{ width: `${Math.min(1, used) * 100}%` }} />
           {lim != null && <i className="ru-lim" style={{ left: `${Math.min(1, lim) * 100}%` }} />}
-        </div>
-        <div className="ru-scale">
+        </div>}
+        {!nobar && <div className="ru-scale">
           {[0, 25, 50, 75, 100].map((t) => (
             <span key={t} style={{ left: `${t}%` }} />
           ))}
-        </div>
+        </div>}
         {note && (
           <small className="ru-note" style={lim != null && lim <= 0.8 ? { left: `${lim * 100}%` } : { right: 0 }}>
             {note}
@@ -103,8 +103,9 @@ export function Capacity({ d }: { d: D }) {
                     <Ruler
                       label="CPU"
                       v={lim.cpu > 0 ? String(lim.cpu) : String(c.threads)}
-                      u={lim.cpu > 0 ? "vCPU" : "threads"}
-                      of={lim.cpu > 0 ? `allocated of ${c.threads} threads` : "no limits set"}
+                      u={lim.cpu > 0 ? "vCPU" : "threads,"}
+                      of={lim.cpu > 0 ? `allocated of ${c.threads} threads` : "no CPU limits set"}
+                      nobar={lim.cpu <= 0}
                       used={lim.cpu / c.threads}
                       note={lim.cpu > c.threads ? "over 100 %" : undefined}
                     />
@@ -126,11 +127,12 @@ export function Capacity({ d }: { d: D }) {
                     return (
                       <Ruler
                         key={p.names.join(",")}
-                        label={p.names[0] + (p.names.length > 1 ? ` +${p.names.length - 1}` : "")}
+                        label={p.names[0]}
                         title={p.names.join(", ") + (p.names.length > 1 ? " (same disk)" : "")}
                         v={u[0]}
                         u={u[1]}
                         of={`of ${bytes(p.total, 0)}`}
+                        note={p.names.length > 1 ? `same disk as ${p.names.slice(1).join(", ")}` : undefined}
                         used={p.used / p.total}
                         hot={p.used / p.total > 0.9}
                       />

@@ -58,7 +58,7 @@ export function Snapshots({ d, size }: { d: D; size: "s" | "m" }) {
       ) : bad.length > 0 ? (
         <small className="snwarn">{bad.length} need a look</small>
       ) : (
-        <small className="dim">{scheduled ? "All on schedule" : "No schedules set"}</small>
+        <small className="dim">{!scheduled ? "No schedules set" : scheduled === list.length ? "All on schedule" : `${scheduled} of ${list.length} instances have a schedule`}</small>
       )}
     </>
   );
@@ -116,7 +116,7 @@ export function Timeline({ d }: { d: D }) {
         <Skel lines={2} />
       ) : (
         <div className="tl">
-          <div className="tl-ev">
+          <div className="tl-ev" style={{ height: tl.groups.length ? Math.min(4, Math.max(...tl.groups.map((g) => g.lines.length))) * 19 + 12 : 28 }}>
             {tl.groups.length === 0 && <span className="b-none tl-none">Nothing scheduled</span>}
             {tl.groups.map((g: TlGroup, i) => {
               const p = pct(g.at);

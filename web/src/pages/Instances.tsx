@@ -7,7 +7,7 @@ import { invalidate, mutateCache, useApp } from "../state";
 import { confirmDialog, Menu, Seg, SkRows, SortTh, Status, useOutside } from "../ui";
 import { PinButton } from "./Instance";
 import { CreateInstance } from "./CreateInstance";
-import { askStop, StopHost } from "./InstanceDialogs";
+import { askStop } from "./InstanceDialogs";
 import { isPinned, projectFor, togglePin, useInstances, usePins, type Row } from "../data";
 
 type SortKey = "name" | "project" | "status" | "server" | "ip" | "cpu" | "mem" | "up";
@@ -262,6 +262,9 @@ export function Instances() {
 
   const opts = (vals: string[], k: string, get: (r: Row, v: string) => boolean, label = (v: string) => v) => vals.map((v) => ({ v, l: label(v), n: except(k).filter((r) => get(r, v)).length }));
 
+  // what a filter will show once applied: rows matching any picked value (a row with two profiles counts once)
+  const pv = (k: string, get: (r: Row, v: string) => boolean) => (d: string[]) => except(k).filter((r) => !d.length || d.some((v) => get(r, v))).length;
+
   // bulk
   const n = (a: Act) => selected.filter((r) => canDo(a, r.status)).length;
   const hasFrozen = selected.some((r) => r.status === "Frozen");
@@ -315,10 +318,10 @@ export function Instances() {
           ]}
         />
         <div className="fbtns">
-          <MultiFilter label="Type" value={types} onChange={(v) => patch({ type: v })} options={opts(["container", "virtual-machine"], "type", (r, v) => r.type === v, (v) => (v === "container" ? "Container" : "Virtual machine"))} />
-          {multi && <MultiFilter label="Server" value={srvs} onChange={(v) => patch({ srv: v })} options={opts([...new Set(rows.map((r) => r.server))], "srv", (r, v) => r.server === v)} />}
-          {allProjects && <MultiFilter label="Project" value={projs} onChange={(v) => patch({ proj: v })} options={opts([...new Set(rows.map((r) => r.project))].sort(), "proj", (r, v) => r.project === v)} />}
-          <MultiFilter label="Profile" value={profs} onChange={(v) => patch({ profile: v })} options={opts([...new Set(rows.flatMap((r) => r.profiles))].sort(), "profile", (r, v) => r.profiles.includes(v))} />
+          <MultiFilter label="Type" value={types} onChange={(v) => patch({ type: v })} options={opts(["container", "virtual-machine"], "type", (r, v) => r.type === v, (v) => (v === "container" ? "Container" : "Virtual machine"))} count={pv("type", (r, v) => r.type === v)} />
+          {multi && <MultiFilter label="Server" value={srvs} onChange={(v) => patch({ srv: v })} options={opts([...new Set(rows.map((r) => r.server))], "srv", (r, v) => r.server === v)} count={pv("srv", (r, v) => r.server === v)} />}
+          {allProjects && <MultiFilter label="Project" value={projs} onChange={(v) => patch({ proj: v })} options={opts([...new Set(rows.map((r) => r.project))].sort(), "proj", (r, v) => r.project === v)} count={pv("proj", (r, v) => r.project === v)} />}
+          <MultiFilter label="Profile" value={profs} onChange={(v) => patch({ profile: v })} options={opts([...new Set(rows.flatMap((r) => r.profiles))].sort(), "profile", (r, v) => r.profiles.includes(v))} count={pv("profile", (r, v) => r.profiles.includes(v))} />
         </div>
       </div>
       {chips.length > 0 && (
@@ -344,12 +347,14 @@ export function Instances() {
           <thead>
             <tr>
               <th className="chk">
-                <input
-                  type="checkbox"
-                  aria-label="Select all"
-                  checked={shown.length > 0 && selected.length === shown.length}
-                  onChange={(e) => setSel(e.target.checked ? new Set(shown.map(id)) : new Set())}
-                />
+                <label className="chk-l">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={shown.length > 0 && selected.length === shown.length}
+                    onChange={(e) => setSel(e.target.checked ? new Set(shown.map(id)) : new Set())}
+                  />
+                </label>
               </th>
               {th("name", "Name")}
               {allProjects && th("project", "Project", "hide-s")}
@@ -371,16 +376,18 @@ export function Instances() {
               return (
                 <tr key={id(r)} className={sel.has(id(r)) ? "sel" : ""} onClick={() => open(r)}>
                   <td className="chk" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      aria-label={"Select " + r.name}
-                      checked={sel.has(id(r))}
-                      onChange={(e) => {
-                        const s = new Set(sel);
-                        e.target.checked ? s.add(id(r)) : s.delete(id(r));
-                        setSel(s);
-                      }}
-                    />
+                    <label className="chk-l">
+                      <input
+                        type="checkbox"
+                        aria-label={"Select " + r.name}
+                        checked={sel.has(id(r))}
+                        onChange={(e) => {
+                          const s = new Set(sel);
+                          e.target.checked ? s.add(id(r)) : s.delete(id(r));
+                          setSel(s);
+                        }}
+                      />
+                    </label>
                   </td>
                   <td className="nm">
                     <b>{r.name}</b>
@@ -488,7 +495,6 @@ export function Instances() {
           </button>
         </div>
       )}
-      <StopHost />
       <CreateInstance
         open={params.get("create") === "1"}
         onClose={() => patch({ create: null })}
@@ -498,13 +504,13 @@ export function Instances() {
   );
 }
 
-function MultiFilter({ label, value, onChange, options }: { label: string; value: string[]; onChange: (v: string[]) => void; options: { v: string; l: string; n: number }[] }) {
+function MultiFilter({ label, value, onChange, options, count }: { label: string; value: string[]; onChange: (v: string[]) => void; options: { v: string; l: string; n: number }[]; count: (d: string[]) => number }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>(value);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   const on = value.length > 0;
-  const preview = options.filter((o) => !draft.length || draft.includes(o.v)).reduce((a, o) => a + o.n, 0);
+  const preview = count(draft);
   return (
     <div className="fwrap" ref={ref}>
       <button className={"fbtn" + (on ? " on" : "")} aria-expanded={open} onClick={() => (setDraft(value), setOpen(!open))}>

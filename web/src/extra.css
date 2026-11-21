@@ -314,3 +314,23 @@ p.fnote{align-self:flex-start;margin:0}
   .bulk .vsep{display:none}
   .bulk .btn.ib{margin-left:auto}
 }
+
+/* UX-A */
+.tw-menu{overflow:visible;background:none}
+.tabwrap{overflow:visible;overflow-x:clip}
+.menu-hint{padding:6px 10px 2px;font-size:12px;line-height:1.4;color:var(--ink-3)}
+.chk-l{display:inline-flex;align-items:center;justify-content:center}
+.st.frozen::before,.dots button.frozen,.st-dot[data-s="Frozen"]{background:var(--idle)}
+.ist.frozen{color:var(--ink-3)}
+@media (pointer:coarse){
+  .chk-l{width:40px;height:40px;margin:-10px 0 -10px -10px}
+  .iopt{min-height:44px}
+  .seg0.b-r>button{min-height:40px;padding:0 12px}
+  .chip{height:40px}
+  .chip-b{display:inline-flex;align-items:center}
+}
+@media (max-width:560px){
+  .fbar{flex-wrap:wrap;overflow-x:visible;margin:0;padding:0;background:none}
+  .fbar .fsearch{flex:1 1 100%;min-width:0}
+  .fbtns{flex-wrap:wrap}
+}
