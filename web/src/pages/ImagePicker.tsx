@@ -65,7 +65,16 @@ export function RemotePicker({ server, type, value, onPick }: { server: string; 
         )}
       </div>
       <div className="ilist" role="listbox">
-        {list.error && <div className="emp">{list.error}</div>}
+        {list.error && (
+          <div className="emp">
+            Can't reach {src?.name || "the image server"} right now. Check this host's internet access, or use an image already on this server.
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn btn-s btn-sm press" onClick={() => list.reload()}>
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
         {!list.data && !list.error && (
           <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
             {[0, 1, 2, 3].map((i) => (
