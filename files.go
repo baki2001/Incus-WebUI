@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -47,6 +49,7 @@ func (a *App) handleListDir(w http.ResponseWriter, r *http.Request) {
 		Mode     string `json:"mode"`
 		Modified string `json:"modified"`
 		Target   string `json:"target,omitempty"`
+		Resolved string `json:"resolved,omitempty"` // final path a symlink points to (empty if broken)
 		UID      uint32 `json:"uid"`
 		GID      uint32 `json:"gid"`
 	}
@@ -64,8 +67,16 @@ func (a *App) handleListDir(w http.ResponseWriter, r *http.Request) {
 			if t, err := client.ReadLink(path.Join(dir, fi.Name())); err == nil {
 				e.Target = t
 			}
-			if st, err := client.Stat(path.Join(dir, fi.Name())); err == nil && st.IsDir() {
-				e.Type = "symlink-dir"
+			// Stat follows the link, so size, mode and owner describe the target.
+			if st, err := client.Stat(path.Join(dir, fi.Name())); err == nil {
+				if st.IsDir() {
+					e.Type = "symlink-dir"
+				}
+				e.Size, e.Mode = st.Size(), fmt.Sprintf("%04o", st.Mode().Perm())
+				if fs, ok := st.Sys().(*sftp.FileStat); ok {
+					e.UID, e.GID = fs.UID, fs.GID
+				}
+				e.Resolved = resolveLink(client, path.Join(dir, fi.Name()))
 			}
 		}
 		out = append(out, e)
@@ -78,6 +89,103 @@ func (a *App) handleListDir(w http.ResponseWriter, r *http.Request) {
 		return out[i].Name < out[j].Name
 	})
 	writeJSON(w, map[string]any{"path": dir, "entries": out})
+}
+
+// resolveLink follows a chain of symlinks to the final path. The SFTP RealPath
+// of Incus does not resolve links, so this reads them one by one.
+func resolveLink(c *sftp.Client, p string) string {
+	for i := 0; i < 40; i++ {
+		fi, err := c.Lstat(p)
+		if err != nil {
+			return ""
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return p
+		}
+		t, err := c.ReadLink(p)
+		if err != nil {
+			return ""
+		}
+		if !path.IsAbs(t) {
+			t = path.Join(path.Dir(p), t)
+		}
+		p = path.Clean(t)
+	}
+	return ""
+}
+
+// handleRemoveAll deletes a folder and everything in it (the Incus files API
+// only deletes empty folders). The web UI asks for confirmation first.
+func (a *App) handleRemoveAll(w http.ResponseWriter, r *http.Request) {
+	s, ok := a.server(r.PathValue("server"))
+	if !ok {
+		jsonError(w, http.StatusNotFound, "unknown server")
+		return
+	}
+	p := path.Clean("/" + r.URL.Query().Get("path"))
+	if p == "/" {
+		jsonError(w, http.StatusBadRequest, "refusing to delete /")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	client, closeFn, err := a.sftpClient(ctx, s, r.PathValue("name"), r.URL.Query().Get("project"))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer closeFn()
+	if err := client.RemoveAll(p); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleDownload streams one file as an attachment. The name goes out as an
+// RFC 5987 filename* (plus an ASCII fallback) so non-ASCII names survive.
+func (a *App) handleDownload(w http.ResponseWriter, r *http.Request) {
+	s, ok := a.server(r.PathValue("server"))
+	if !ok {
+		jsonError(w, http.StatusNotFound, "unknown server")
+		return
+	}
+	p := path.Clean("/" + r.URL.Query().Get("path"))
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	client, closeFn, err := a.sftpClient(ctx, s, r.PathValue("name"), r.URL.Query().Get("project"))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer closeFn()
+	f, err := client.Open(p) // follows symlinks
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		jsonError(w, http.StatusBadRequest, "not a file")
+		return
+	}
+	base := path.Base(p)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", contentDisposition(base))
+	w.Header().Set("Content-Length", fmt.Sprint(st.Size()))
+	_, _ = io.Copy(w, f)
+}
+
+func contentDisposition(name string) string {
+	ascii := []rune{}
+	for _, c := range name {
+		if c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '%' {
+			c = '_'
+		}
+		ascii = append(ascii, c)
+	}
+	return "attachment; filename=\"" + string(ascii) + "\"; filename*=UTF-8''" + strings.NewReplacer("'", "%27", "(", "%28", ")", "%29", "*", "%2A").Replace(url.PathEscape(name))
 }
 
 func (a *App) sftpClient(ctx context.Context, s ServerConfig, name, project string) (*sftp.Client, func(), error) {

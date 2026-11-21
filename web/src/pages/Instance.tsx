@@ -37,6 +37,10 @@ export function InstancePage() {
     4000,
   );
   const [prevTab, setPrevTab] = useState<Tab>(tab as Tab);
+  const [seenTerm, setSeenTerm] = useState(tab === "terminal");
+  useEffect(() => {
+    if (tab === "terminal") setSeenTerm(true);
+  }, [tab]);
   useEffect(() => {
     if (inst) app.touch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,10 +164,15 @@ export function InstancePage() {
           {tab === "configuration" && <ConfigTab inst={inst} reload={reload} />}
           {tab === "snapshots" && <SnapshotsTab inst={inst} reload={reload} />}
           {tab === "files" && <FilesTab inst={inst} />}
-          {tab === "terminal" && <TerminalTab inst={inst} onStart={() => act("start")} />}
           {tab === "console" && <ConsoleTab inst={inst} onStart={() => act("start")} />}
           {tab === "logs" && <LogsTab inst={inst} />}
         </div>
+        {/* Stays mounted once opened so the shell survives a visit to another tab. */}
+        {seenTerm && (
+          <div hidden={tab !== "terminal"}>
+            <TerminalTab inst={inst} onStart={() => act("start")} visible={tab === "terminal"} />
+          </div>
+        )}
       </div>
     </>
   );
