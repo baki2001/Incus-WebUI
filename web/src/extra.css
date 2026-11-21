@@ -159,3 +159,59 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+
+/* ---------- touch & phone (WS8) ---------- */
+/* Row actions never sit invisible-but-tappable: no hover on touch, so show them. */
+@media (hover:none){
+  .qa{opacity:1}
+  .rrow .rgo{opacity:1;transform:none}
+}
+/* Touch targets >= 40px. Desktop density is untouched (only pointer:coarse changes). */
+@media (pointer:coarse){
+  .btn,.btn-sm{min-height:40px;height:40px}
+  .ib,.btn.ib{width:40px;min-width:40px}
+  tbody tr td .qa{min-height:40px;gap:4px}
+  .collapse,.copy,.chip-x,.menu-btn,.step button,.toast button,.sortb{min-width:40px;min-height:40px}
+  .chip{height:40px}
+  .chip-b{padding-left:14px}
+  .chip-x{width:40px;height:40px;margin-right:0}
+  .seg button,.theme-seg button{min-height:40px;height:40px}
+  .pre{height:40px}
+  .crumbs button,.crumbs a{display:inline-flex;align-items:center;min-height:40px;padding:0 8px}
+  .pathbar button{min-height:40px;padding:0 8px}
+  .tabs button,.views>button,.vtab,.set-nav button{min-height:40px;height:40px}
+  .ni{min-height:44px}
+  .menu button,.fopt,.pt label,.fbtn,.kbtn,.opsbtn,.scope{min-height:40px}
+  .menu button{height:40px}
+  input[type=checkbox],.radios input{width:20px;height:20px}
+  .chk{width:48px}
+}
+/* Scroll hint: a soft edge where a sideways scroller has more content. Pure CSS, no JS. */
+.tw,.views,.tabs,.fbar,.set-nav{--fb:var(--bg)}
+.tw{--fb:var(--s1)}
+.tw,.views,.tabs,.fbar,.set-nav{
+  background:
+    linear-gradient(to right,var(--fb) 30%,transparent) 0 0/36px 100% no-repeat local,
+    linear-gradient(to left,var(--fb) 30%,transparent) 100% 0/36px 100% no-repeat local,
+    linear-gradient(to right,var(--line-2),transparent) 0 0/14px 100% no-repeat scroll,
+    linear-gradient(to left,var(--line-2),transparent) 100% 0/14px 100% no-repeat scroll;
+  background-color:var(--fb);
+}
+/* Sideways-scrolling tables keep their first column in view. */
+.tw th:first-child,.tw td:first-child{position:sticky;left:0;z-index:1;background:var(--s1)}
+.tw tbody tr:hover td:first-child{background:var(--s2)}
+.tw tbody tr.sel td:first-child{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
+/* Long text never forces sideways scroll. */
+pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.diff div{white-space:pre-wrap;overflow-wrap:anywhere}
+/* Help notes in a filter bar: full width underneath instead of squeezed at the edge. */
+@media (max-width:560px){
+  .fbar:has(.fnote){flex-wrap:wrap;overflow-x:visible;padding-block:0;background:none}
+  .fbar .fnote{flex:1 1 100%;order:9}
+}
+/* Phone drawer: tall enough for the visible viewport, menu scrolls, footer stays below it. */
+@media (max-width:860px){
+  .side{height:100vh;height:100dvh;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+  .side .nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+  .side .side-foot{flex:none;background:var(--s1)}
+}
