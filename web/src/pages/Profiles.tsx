@@ -66,7 +66,7 @@ export function Profiles() {
         <span className="dim fnote">Settings and devices that instances share. Changes apply to every instance that uses the profile.</span>
       </div>
       {shared && (
-        <div className="notice" style={{ marginBottom: 12 }}>
+        <div className="notice sm" style={{ marginBottom: 12 }}>
           Project {project} has no profiles of its own, so these are the profiles from project default. Changing them changes them for every project that shares them.
         </div>
       )}
@@ -94,7 +94,7 @@ export function Profiles() {
         onDelete={edit && edit.name !== "default" ? () => del(edit) : undefined}
         info={
           <>
-            {!edit && shared && <div className="notice">Project {project} shares profiles with default, so this profile is created in project default and shows up in every project that shares them. To keep profiles separate, turn on "Own profiles" for the project.</div>}
+            {!edit && shared && <div className="notice sm">Project {project} shares profiles with default, so this profile is created in project default and shows up in every project that shares them. To keep profiles separate, turn on "Own profiles" for the project.</div>}
             {edit && <UsedBySec list={edit.used_by} server={edit.server} />}
           </>
         }

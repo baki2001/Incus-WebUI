@@ -9,6 +9,6 @@
 .fports .field{height:32px;padding:0 8px}
 .fports .field input,.fports .field select{font-size:12.5px}
 .fports.hdr{font-size:12px;color:var(--ink-3)}
-.notice{padding:10px 12px;border-radius:var(--r-sm);background:var(--s2);color:var(--ink-2);font-size:13px}
+.notice.sm{padding:10px 12px;border-radius:var(--r-sm);background:var(--s2);color:var(--ink-2);font-size:13px}
 .fdlg{max-height:70vh;overflow:auto}
 @media (max-width:860px){.fports{grid-template-columns:repeat(2,minmax(0,1fr))}.fports.hdr{display:none}.fwd{grid-template-columns:minmax(0,1fr)}}

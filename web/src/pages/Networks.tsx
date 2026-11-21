@@ -173,7 +173,7 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
         net && (
           <>
             {net.status !== "Created" && (
-              <div className="notice">
+              <div className="notice sm">
                 {net.status === "Pending" ? "This network is still being set up. If it stays like this, delete it and create it again." : `This network is ${netState(net.status).toLowerCase()}. Delete it and create it again, or check the settings below.`}
               </div>
             )}

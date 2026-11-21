@@ -4,6 +4,7 @@ import { incus, incusOp, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
+import { canDo } from "./pages/Instances";
 import { usePins, useInstances, useProjects } from "./data";
 
 // ---------- breadcrumbs, set by each page ----------
@@ -543,10 +544,10 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       const pq = `?project=${encodeURIComponent(r.project)}`;
       const on = r.status === "Running";
       const place = where(r.project, r.server, true);
-      const power = (action: "start" | "stop" | "restart", verb: string) => () => {
+      const power = (action: "start" | "stop" | "restart" | "unfreeze", verb: string, force = false) => () => {
         onClose();
         app.run(`${verb} ${r.name}`, () =>
-          incusOp(r.server, `/1.0/instances/${encodeURIComponent(r.name)}/state`, { method: "PUT", project: r.project, body: { action, timeout: 30 } }).finally(() => {
+          incusOp(r.server, `/1.0/instances/${encodeURIComponent(r.name)}/state`, { method: "PUT", project: r.project, body: { action, timeout: 30, force } }).finally(() => {
             invalidate("instances:");
             invalidate(`instance:${r.server}:${r.name}`);
             invalidate("cmdk:");
@@ -555,9 +556,10 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
         );
       };
       list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${place}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(base + pq) });
-      if (!on) list.push({ group: "Instance actions", label: `Start ${r.name}`, meta: place, icon: ic.play, run: power("start", "Starting") });
-      if (on) list.push({ group: "Instance actions", label: `Stop ${r.name}`, meta: place, icon: ic.stop, run: power("stop", "Stopping") });
-      if (on) list.push({ group: "Instance actions", label: `Restart ${r.name}`, meta: place, icon: ic.restart, run: power("restart", "Restarting") });
+      if (canDo("start", r.status)) list.push({ group: "Instance actions", label: `Start ${r.name}`, meta: place, icon: ic.play, run: power("start", "Starting") });
+      if (canDo("unfreeze", r.status)) list.push({ group: "Instance actions", label: `Resume ${r.name}`, meta: place, icon: ic.play, run: power("unfreeze", "Resuming") });
+      if (canDo("stop", r.status)) list.push({ group: "Instance actions", label: `${on ? "Stop" : "Force stop"} ${r.name}`, meta: place, icon: ic.stop, run: power("stop", "Stopping", !on) });
+      if (canDo("restart", r.status)) list.push({ group: "Instance actions", label: `Restart ${r.name}`, meta: place, icon: ic.restart, run: power("restart", "Restarting") });
       if (on) list.push({ group: "Instance actions", label: `Open terminal in ${r.name}`, meta: place, icon: ic.term, run: go(base + "/terminal" + pq) });
     }
     for (const t of found.data?.things || []) list.push({ group: t.kind, label: t.name, meta: where(t.project, t.server), icon: groupIcon[t.kind], run: go(t.to) });

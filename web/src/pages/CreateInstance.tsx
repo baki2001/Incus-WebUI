@@ -136,8 +136,10 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   useEffect(() => {
     if (type === "container" && (source === "iso" || source === "none")) setSource("remote");
     if ((type === "virtual-machine" && source === "oci") || (source === "oci" && info && !ociOK)) setSource("remote");
-    setAlias("");
   }, [type, source, info, ociOK]);
+  useEffect(() => {
+    setAlias("");
+  }, [type, source]);
 
   const isVM = type === "virtual-machine";
   const dup = name !== "" && !!taken.data?.includes(name);

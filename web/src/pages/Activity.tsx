@@ -114,7 +114,8 @@ function resourceItems(o: Op) {
     for (const u of urls || []) {
       const [path, qs = ""] = u.split("?");
       const parts = path.split("/").filter(Boolean).slice(1); // drop "1.0"
-      const name = decodeURIComponent(parts[parts.length - 1] || "");
+      // Snapshots and backups belong to their instance.
+      const name = decodeURIComponent(parts[parts[0] === "instances" || parts[0] === "containers" || parts[0] === "virtual_machines" ? 1 : parts.length - 1] || "");
       if (!name) continue;
       const kind = kinds[parts[0] || key] || parts[0] || key;
       const id = kind + "/" + name + "/" + qs;
