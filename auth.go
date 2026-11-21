@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,8 +26,9 @@ type Session struct {
 	User    string `json:"u"`
 	Method  string `json:"m"` // password | oidc
 	Expires int64  `json:"e"`
-	ID      string `json:"i"` // lets logout revoke this one session
-	Gen     int64  `json:"g"` // the user's session generation; a password change or re-creation ends older sessions
+	ID      string `json:"i"`            // lets logout revoke this one session
+	OIDCGen int64  `json:"og,omitempty"` // oidc sessions: must match the config's OIDCGen
+	Gen     int64  `json:"g"`            // the user's session generation; a password change or re-creation ends older sessions
 }
 
 func (a *App) signSession(s Session) string {
@@ -43,6 +45,9 @@ func (a *App) mac(v string) string {
 
 func (a *App) setSession(w http.ResponseWriter, r *http.Request, user, method string) {
 	s := Session{User: user, Method: method, Expires: time.Now().Add(sessionTTL).Unix(), ID: randHex(16)}
+	if method == "oidc" {
+		s.OIDCGen = a.store.Get().OIDCGen
+	}
 	if method == "password" {
 		for _, u := range a.store.Get().Users {
 			if u.Username == user {
@@ -98,7 +103,7 @@ func (a *App) currentSession(r *http.Request) (*Session, bool) {
 		}
 		return nil, false
 	case "oidc":
-		return &s, cfg.OIDC != nil
+		return &s, cfg.OIDC != nil && s.OIDCGen == cfg.OIDCGen
 	}
 	return nil, false
 }
@@ -262,12 +267,65 @@ func tooMany(w http.ResponseWriter, wait time.Duration) {
 	jsonError(w, http.StatusTooManyRequests, msg)
 }
 
-func clientIP(r *http.Request) string {
+// parseTrusted reads trusted_proxies entries (IPs or CIDRs); bad ones are skipped.
+func parseTrusted(list []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, e := range list {
+		e = strings.TrimSpace(e)
+		if p, err := netip.ParsePrefix(e); err == nil {
+			out = append(out, p.Masked())
+		} else if ip, err := netip.ParseAddr(e); err == nil {
+			out = append(out, netip.PrefixFrom(ip.Unmap(), ip.Unmap().BitLen()))
+		}
+	}
+	return out
+}
+
+func isTrusted(ip netip.Addr, trusted []netip.Prefix) bool {
+	ip = ip.Unmap()
+	for _, p := range trusted {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP is the address used for rate limiting. X-Forwarded-For is only
+// believed when the connection comes from a trusted proxy, and then the
+// right-most entry that is not itself a trusted proxy wins, since anything to
+// its left could have been made up by the client.
+func clientIP(r *http.Request, trusted []netip.Prefix) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || len(trusted) == 0 || !isTrusted(peer, trusted) {
+		return host
+	}
+	var hops []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		for _, e := range strings.Split(h, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				hops = append(hops, e)
+			}
+		}
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		ip, err := netip.ParseAddr(hops[i])
+		if err != nil {
+			return host // garbage from the proxy chain: don't guess
+		}
+		if !isTrusted(ip, trusted) {
+			return ip.Unmap().String()
+		}
 	}
 	return host
+}
+
+func (a *App) clientIP(r *http.Request) string {
+	return clientIP(r, parseTrusted(a.store.Get().TrustedProxies))
 }
 
 // dummyHash keeps timing the same when the user does not exist.
@@ -283,7 +341,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	ip := clientIP(r)
+	ip := a.clientIP(r)
 	if ok, wait := a.loginLimit.check(ip, req.Username); !ok {
 		tooMany(w, wait)
 		return
@@ -305,6 +363,10 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !sameOriginOK(r) {
+		jsonError(w, http.StatusForbidden, "bad request origin")
+		return
+	}
 	if s, ok := a.currentSession(r); ok {
 		now := time.Now().Unix()
 		_ = a.store.Update(func(c *Config) error {
@@ -367,7 +429,7 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "bad request origin")
 		return
 	}
-	ip := clientIP(r)
+	ip := a.clientIP(r)
 	if ok, wait := a.loginLimit.check(ip, "\x00setup"); !ok {
 		tooMany(w, wait)
 		return

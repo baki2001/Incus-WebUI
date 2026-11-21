@@ -58,6 +58,7 @@ func testPlan() *plan {
 		tunnel:   netip.MustParsePrefix("10.66.0.0/24"),
 		gwAddr:   netip.MustParsePrefix("10.66.0.1/24"),
 		routes:   []netip.Prefix{netip.MustParsePrefix("10.115.217.0/24")},
+		hostIPs:  []netip.Addr{netip.MustParseAddr("10.115.217.1")},
 		endpoint: "vpn.example.com:51820",
 	}
 }
@@ -73,15 +74,35 @@ func TestGatewayConfig(t *testing.T) {
 	if strings.Contains(conf, "PrivateKey =") {
 		t.Error("the gateway private key must not be in the config")
 	}
-	nft := gatewayNft("wg0", pl.routes)
+	nft := gatewayNft("wg0", pl.routes, pl.hostIPs, netip.Addr{}, nil)
 	if !strings.Contains(nft, `iifname "wg0" ip daddr { 10.115.217.0/24 } accept`) || !strings.Contains(nft, "masquerade") || !strings.Contains(nft, "policy drop") {
 		t.Errorf("nft:\n%s", nft)
+	}
+	drop, accept := strings.Index(nft, `ip daddr { 10.115.217.1 } drop`), strings.Index(nft, "10.115.217.0/24 } accept")
+	if drop < 0 || drop > accept {
+		t.Errorf("host ip must be dropped before the accept:\n%s", nft)
+	}
+	if !strings.Contains(nft, `chain input`) || !strings.Contains(nft, `iifname "wg0" drop`) {
+		t.Errorf("input chain:\n%s", nft)
+	}
+	// vps flavour: only the VPS, only the published tuples
+	rules := []publishRule{{Proto: "tcp", Port: 8080, TargetIP: "10.115.217.5", TargetPort: 80}}
+	vn := gatewayNft("wg0", pl.routes, pl.hostIPs, netip.MustParseAddr("10.66.0.1"), rules)
+	if !strings.Contains(vn, `iifname "wg0" ip saddr 10.66.0.1 ip daddr 10.115.217.5 tcp dport 80 accept`) || strings.Contains(vn, "10.115.217.0/24") || !strings.Contains(vn, "10.115.217.1 } drop") {
+		t.Errorf("vps nft:\n%s", vn)
+	}
+	if got := parsePublishList(publishList(rules)); len(got) != 1 || got[0] != rules[0] {
+		t.Errorf("publish round trip: %+v", got)
 	}
 	// the VPS flavour dials out: no ListenPort, keepalive 25, the VPS as only peer
 	pl.req = createReq{Kind: kindVPS, Iface: "wg0", VPSKey: key1, PSK: key2}
 	pl.gwAddr = netip.MustParsePrefix("10.66.0.2/24")
 	pl.endpoint = "203.0.113.9:51820"
+	pl.req.Publish = []publishRule{{Proto: "tcp", Port: 8080, TargetIP: "10.115.217.5", TargetPort: 80}}
 	v := gatewayConfig(pl)
+	if !strings.Contains(v, "# publish: tcp/8080>10.115.217.5:80") || !strings.Contains(v, "# hosts: 10.115.217.1") {
+		t.Errorf("header lacks publish/hosts:\n%s", v)
+	}
 	if strings.Contains(v, "ListenPort") || !strings.Contains(v, "PersistentKeepalive = 25") || !strings.Contains(v, "Endpoint = 203.0.113.9:51820") || !strings.Contains(v, "AllowedIPs = 10.66.0.1/32") {
 		t.Errorf("vps flavour:\n%s", v)
 	}
@@ -135,12 +156,12 @@ func TestClientAndVPSConfig(t *testing.T) {
 	rules := []publishRule{{Proto: "tcp", Port: 8080, TargetIP: "10.0.0.5", TargetPort: 80}}
 	allowed := []netip.Prefix{netip.MustParsePrefix("10.67.0.2/32"), netip.MustParsePrefix("10.0.0.0/24")}
 	v := vpsConf(netip.MustParsePrefix("10.67.0.1/24"), 51820, key1, key2, allowed, rules)
-	for _, w := range []string{"ListenPort = 51820", "PrivateKey = @VPS_PRIVATE_KEY@", "-A PREROUTING -p tcp --dport 8080 -j DNAT --to-destination 10.0.0.5:80", "-D PREROUTING -p tcp --dport 8080", "AllowedIPs = 10.67.0.2/32, 10.0.0.0/24", "PresharedKey = " + key2} {
+	for _, w := range []string{"ListenPort = 51820", "PrivateKey = @VPS_PRIVATE_KEY@", "-A PREROUTING -p tcp --dport 8080 ! -i %i -j DNAT --to-destination 10.0.0.5:80", "-D PREROUTING -p tcp --dport 8080", "AllowedIPs = 10.67.0.2/32, 10.0.0.0/24", "PresharedKey = " + key2} {
 		if !strings.Contains(v, w) {
 			t.Errorf("vps lacks %q:\n%s", w, v)
 		}
 	}
-	for _, w := range []string{"PostUp = iptables -A FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT", "PostDown = iptables -D FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT"} {
+	for _, w := range []string{"PostUp = iptables -A FORWARD -o %i -j DROP", "PostDown = iptables -D FORWARD -o %i -j DROP", "PREROUTING -p tcp --dport 8080 ! -i %i -j DNAT", "PostUp = iptables -A FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT", "PostDown = iptables -D FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT"} {
 		if !strings.Contains(v, w) {
 			t.Errorf("vps lacks %q", w)
 		}
@@ -229,5 +250,11 @@ func TestValidateCreateRejectsBadInput(t *testing.T) {
 		if _, err := a.validateCreate(context.Background(), nil, r); err == nil {
 			t.Errorf("%s should be rejected", name)
 		}
+	}
+}
+
+func TestStatusScriptFilters(t *testing.T) {
+	if !strings.Contains(statusScript, "grep -v -i -E") || !strings.Contains(statusScript, "PostUp|PreUp|PostDown|PreDown") {
+		t.Error("status script must filter case-insensitively and drop hook lines")
 	}
 }

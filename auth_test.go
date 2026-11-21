@@ -257,3 +257,85 @@ func TestRecreatedUserRejectsOldCookie(t *testing.T) {
 		t.Fatal("old cookie works for a re-created user")
 	}
 }
+
+func TestClientIPTrustedProxies(t *testing.T) {
+	trusted := parseTrusted([]string{"10.0.0.0/24", "192.168.1.1", "bogus", " ::1 "})
+	if len(trusted) != 3 {
+		t.Fatalf("trusted: %v", trusted)
+	}
+	req := func(remote, xff string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return r
+	}
+	for _, c := range []struct{ remote, xff, want string }{
+		{"203.0.113.9:1234", "1.2.3.4", "203.0.113.9"},                  // not a proxy: header ignored
+		{"10.0.0.7:80", "", "10.0.0.7"},                                 // no header
+		{"10.0.0.7:80", "198.51.100.2", "198.51.100.2"},                 // plain proxy
+		{"10.0.0.7:80", "6.6.6.6, 198.51.100.2", "198.51.100.2"},        // client-forged left entry ignored
+		{"10.0.0.7:80", "198.51.100.2, 10.0.0.9", "198.51.100.2"},       // chain of trusted proxies
+		{"192.168.1.1:80", "198.51.100.2, 192.168.1.1", "198.51.100.2"}, // single-IP entry
+		{"10.0.0.7:80", "nonsense", "10.0.0.7"},
+	} {
+		if got := clientIP(req(c.remote, c.xff), trusted); got != c.want {
+			t.Errorf("clientIP(%s, %q) = %s, want %s", c.remote, c.xff, got, c.want)
+		}
+	}
+	if got := clientIP(req("10.0.0.7:80", "1.2.3.4"), nil); got != "10.0.0.7" {
+		t.Errorf("no trusted proxies: %s", got)
+	}
+}
+
+func TestOIDCGen(t *testing.T) {
+	st, err := loadStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{store: st}
+	if err := st.Update(func(c *Config) error {
+		c.OIDC = &OIDCConfig{Issuer: "https://idp", ClientID: "x", AllowedEmails: []string{"a@x"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRecorder()
+	a.setSession(r, httptest.NewRequest("GET", "/", nil), "a@x", "oidc")
+	cookie := r.Result().Cookies()[0]
+	check := func() bool {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.AddCookie(cookie)
+		_, ok := a.currentSession(req)
+		return ok
+	}
+	if !check() {
+		t.Fatal("fresh oidc session should work")
+	}
+	_ = st.Update(func(c *Config) error { c.OIDC.ButtonLabel = "Company SSO"; return nil })
+	if !check() {
+		t.Error("a label change must not end sessions")
+	}
+	_ = st.Update(func(c *Config) error { c.OIDC.AllowedEmails = []string{"b@x"}; return nil })
+	if check() {
+		t.Error("changing the allowed list must end oidc sessions")
+	}
+}
+
+func TestLogoutChecksOrigin(t *testing.T) {
+	st, _ := loadStore(t.TempDir())
+	a := &App{store: st}
+	r := httptest.NewRequest("POST", "/api/ui/logout", nil)
+	w := httptest.NewRecorder()
+	a.handleLogout(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("logout without X-Incus-UI: %d", w.Code)
+	}
+	r.Header.Set("X-Incus-UI", "1")
+	w = httptest.NewRecorder()
+	a.handleLogout(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("logout: %d", w.Code)
+	}
+}

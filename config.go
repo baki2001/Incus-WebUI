@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +28,15 @@ type Config struct {
 	// Revoked lists sessions ended by logout; entries are dropped once the session would have expired.
 	Revoked []RevokedSession `yaml:"revoked_sessions,omitempty"`
 	OIDC    *OIDCConfig      `yaml:"oidc,omitempty"`
-	Servers []ServerConfig   `yaml:"servers"`
+	// OIDCGen must match the generation in an OIDC session cookie. It changes
+	// whenever the OIDC settings or the allowed lists change (see syncOIDCGen).
+	OIDCGen int64 `yaml:"oidc_gen,omitempty"`
+	// OIDCSum is a fingerprint of the OIDC settings, to notice edits made by hand.
+	OIDCSum string `yaml:"oidc_sum,omitempty"`
+	// TrustedProxies are the IPs or CIDRs of reverse proxies whose
+	// X-Forwarded-For header is believed (used for the login rate limit).
+	TrustedProxies []string       `yaml:"trusted_proxies,omitempty"`
+	Servers        []ServerConfig `yaml:"servers"`
 	// ImageServers are the simplestreams servers the UI offers images from.
 	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
 	// UIPrefs are per-user interface settings, keyed by user name (see prefs.go).
@@ -103,6 +113,9 @@ func loadStore(dataDir string) (*Store, error) {
 		s.cfg.Theme.Name = "graphite"
 		changed = true
 	}
+	if syncOIDCGen(&s.cfg) {
+		changed = true
+	}
 	s.Fresh = err != nil
 	if changed || err != nil {
 		if err := s.saveLocked(); err != nil {
@@ -110,6 +123,25 @@ func loadStore(dataDir string) (*Store, error) {
 		}
 	}
 	return s, nil
+}
+
+// syncOIDCGen ends all OIDC sessions when the OIDC settings or allowed lists
+// differ from the last saved ones. It reports whether it changed anything.
+func syncOIDCGen(c *Config) bool {
+	sum := ""
+	if o := c.OIDC; o != nil {
+		cp := *o
+		cp.ButtonLabel = "" // a label change needs no sign-out
+		b, _ := json.Marshal(cp)
+		h := sha256.Sum256(b)
+		sum = hex.EncodeToString(h[:])
+	}
+	if sum == c.OIDCSum {
+		return false
+	}
+	c.OIDCSum = sum
+	c.OIDCGen = nextGen(c.OIDCGen)
+	return true
 }
 
 func (s *Store) Get() Config {
@@ -133,6 +165,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
+	syncOIDCGen(&next)
 	prev := s.cfg
 	s.cfg = next
 	if err := s.saveLocked(); err != nil {

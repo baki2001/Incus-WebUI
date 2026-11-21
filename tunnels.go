@@ -113,6 +113,48 @@ type confOpts struct {
 	Endpoint string       // public host:port clients dial (remote access)
 	Routes   []netip.Prefix
 	Tunnel   netip.Prefix
+	HostIPs  []netip.Addr  // Incus host's own bridge addresses, never reachable from the tunnel
+	Publish  []publishRule // vps kind: the ports published on the VPS
+}
+
+func addrList(as []netip.Addr) string {
+	s := make([]string, len(as))
+	for i, a := range as {
+		s[i] = a.String()
+	}
+	return strings.Join(s, ", ")
+}
+
+// publishList is the "proto/port>ip:port" form kept in the conf header.
+func publishList(rs []publishRule) string {
+	s := make([]string, len(rs))
+	for i, r := range rs {
+		s[i] = fmt.Sprintf("%s/%d>%s:%d", r.Proto, r.Port, r.TargetIP, r.TargetPort)
+	}
+	return strings.Join(s, ", ")
+}
+
+// parsePublishList reads publishList back; bad entries are skipped.
+func parsePublishList(s string) []publishRule {
+	var out []publishRule
+	for _, e := range strings.Split(s, ",") {
+		left, right, ok := strings.Cut(strings.TrimSpace(e), ">")
+		if !ok {
+			continue
+		}
+		proto, ps, ok1 := strings.Cut(left, "/")
+		ip, tps, ok2 := strings.Cut(right, ":")
+		port, err1 := strconv.Atoi(ps)
+		tp, err2 := strconv.Atoi(tps)
+		if !ok1 || !ok2 || err1 != nil || err2 != nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(ip); err != nil || (proto != "tcp" && proto != "udp") {
+			continue
+		}
+		out = append(out, publishRule{Proto: proto, Port: port, TargetIP: ip, TargetPort: tp})
+	}
+	return out
 }
 
 func prefixList(ps []netip.Prefix) string {
@@ -135,6 +177,12 @@ func gatewayConf(o confOpts) string {
 		fmt.Fprintf(&b, "# endpoint: %s\n", o.Endpoint)
 	}
 	fmt.Fprintf(&b, "# routes: %s\n", prefixList(o.Routes))
+	if len(o.HostIPs) > 0 {
+		fmt.Fprintf(&b, "# hosts: %s\n", addrList(o.HostIPs))
+	}
+	if len(o.Publish) > 0 {
+		fmt.Fprintf(&b, "# publish: %s\n", publishList(o.Publish))
+	}
 	fmt.Fprintf(&b, "Address = %s\n", o.Address)
 	if o.Port > 0 {
 		fmt.Fprintf(&b, "ListenPort = %d\n", o.Port)
@@ -167,22 +215,42 @@ func peerBlock(name, pub, psk, endpoint, allowed string, keepalive int) string {
 }
 
 // gatewayNft forwards only from the tunnel to the chosen subnets and
-// masquerades, so the chosen networks need no route back to the tunnel.
-func gatewayNft(iface string, routes []netip.Prefix) string {
+// masquerades, so the chosen networks need no route back to the tunnel. The
+// Incus host's own bridge addresses are dropped first. For a VPS tunnel
+// (vpsIP valid) only the VPS may reach only the published ip/port tuples.
+// Nothing coming in through the tunnel may talk to the gateway itself, except
+// replies and ping.
+func gatewayNft(iface string, routes []netip.Prefix, hostIPs []netip.Addr, vpsIP netip.Addr, publish []publishRule) string {
+	var fwd strings.Builder
+	if len(hostIPs) > 0 {
+		fmt.Fprintf(&fwd, "\t\tiifname \"%s\" ip daddr { %s } drop\n", iface, addrList(hostIPs))
+	}
+	if vpsIP.IsValid() {
+		for _, r := range publish {
+			fmt.Fprintf(&fwd, "\t\tiifname \"%s\" ip saddr %s ip daddr %s %s dport %d accept\n", iface, vpsIP, r.TargetIP, r.Proto, r.TargetPort)
+		}
+	} else {
+		fmt.Fprintf(&fwd, "\t\tiifname \"%s\" ip daddr { %s } accept\n", iface, prefixList(routes))
+	}
 	return fmt.Sprintf(`add table inet wg_gateway
 delete table inet wg_gateway
 table inet wg_gateway {
+	chain input {
+		type filter hook input priority 0; policy accept;
+		iifname "%[1]s" ct state established,related accept
+		iifname "%[1]s" icmp type echo-request accept
+		iifname "%[1]s" drop
+	}
 	chain forward {
 		type filter hook forward priority 0; policy drop;
 		ct state established,related accept
-		iifname "%[1]s" ip daddr { %[2]s } accept
-	}
+%[2]s	}
 	chain postrouting {
 		type nat hook postrouting priority 100; policy accept;
 		iifname "%[1]s" oifname != "%[1]s" masquerade
 	}
 }
-`, iface, prefixList(routes))
+`, iface, fwd.String())
 }
 
 // clientConf is what a laptop or phone imports. The two secrets are
@@ -230,13 +298,16 @@ func vpsConf(address netip.Prefix, port int, gwPub, psk string, allowed []netip.
 		b.WriteString("PostDown = iptables -t nat -D POSTROUTING -o %i -j MASQUERADE\n")
 		for _, r := range rules {
 			// {op} becomes -A when the interface comes up and -D when it goes down
-			dnat := fmt.Sprintf("iptables -t nat {op} PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d", r.Proto, r.Port, r.TargetIP, r.TargetPort)
+			dnat := fmt.Sprintf("iptables -t nat {op} PREROUTING -p %s --dport %d ! -i %%i -j DNAT --to-destination %s:%d", r.Proto, r.Port, r.TargetIP, r.TargetPort)
 			fwd := fmt.Sprintf("iptables {op} FORWARD -o %%i -p %s -d %s --dport %d -j ACCEPT", r.Proto, r.TargetIP, r.TargetPort)
 			for _, rule := range []string{dnat, fwd} {
 				fmt.Fprintf(&b, "PostUp = %s\n", strings.ReplaceAll(rule, "{op}", "-A"))
 				fmt.Fprintf(&b, "PostDown = %s\n", strings.ReplaceAll(rule, "{op}", "-D"))
 			}
 		}
+		// nothing else may be forwarded into the tunnel, so the homelab stays closed
+		b.WriteString("PostUp = iptables -A FORWARD -o %i -j DROP\n")
+		b.WriteString("PostDown = iptables -D FORWARD -o %i -j DROP\n")
 		b.WriteString("PostUp = iptables -I FORWARD -i %i -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 		b.WriteString("PostDown = iptables -D FORWARD -i %i -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 	}
@@ -461,7 +532,7 @@ echo '###CONF'
 for f in /etc/wireguard/*.conf; do
   [ -f "$f" ] || continue
   echo "###FILE $(basename "$f" .conf)"
-  grep -v -E '^[[:space:]]*(PrivateKey|PresharedKey)[[:space:]]*=' "$f"
+  grep -v -i -E '^[[:space:]]*(PrivateKey|PresharedKey|PostUp|PreUp|PostDown|PreDown)[[:space:]]*=' "$f"
 done
 exit 0
 `
@@ -616,6 +687,11 @@ type execResult struct {
 // exec runs argv inside an instance and records its output. Nothing is passed
 // through a shell unless the caller passes a fixed `sh -c` script.
 func (c *incusConn) exec(ctx context.Context, project, inst string, env map[string]string, argv ...string) (execResult, error) {
+	return c.execCap(ctx, 8<<20, project, inst, env, argv...)
+}
+
+// execCap is exec with a limit on how much output is read back.
+func (c *incusConn) execCap(ctx context.Context, limit int64, project, inst string, env map[string]string, argv ...string) (execResult, error) {
 	e := map[string]string{"HOME": "/root", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 	for k, v := range env {
 		e[k] = v
@@ -640,7 +716,7 @@ func (c *incusConn) exec(ctx context.Context, project, inst string, env map[stri
 		if err != nil {
 			return ""
 		}
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
 		resp.Body.Close()
 		if r, err := c.do(ctx, "DELETE", p, project, nil, nil); err == nil {
 			r.Body.Close()
@@ -787,7 +863,60 @@ func (a *App) handleTunnels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// statusCache keeps one instance's status for a few seconds, so several open
+// pages don't each run a root exec in every gateway.
+type statusCacheT struct {
+	mu sync.Mutex
+	m  map[string]statusEntry
+}
+
+type statusEntry struct {
+	at  time.Time
+	out []tunnelOut
+}
+
+const statusTTL = 10 * time.Second
+
+var statusCache = &statusCacheT{m: map[string]statusEntry{}}
+
+func (c *statusCacheT) get(key string) ([]tunnelOut, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok || time.Since(e.at) > statusTTL {
+		return nil, false
+	}
+	return append([]tunnelOut(nil), e.out...), true
+}
+
+func (c *statusCacheT) put(key string, out []tunnelOut) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, e := range c.m {
+		if time.Since(e.at) > statusTTL {
+			delete(c.m, k)
+		}
+	}
+	c.m[key] = statusEntry{time.Now(), append([]tunnelOut(nil), out...)}
+}
+
+func (c *statusCacheT) clear() {
+	c.mu.Lock()
+	c.m = map[string]statusEntry{}
+	c.mu.Unlock()
+}
+
 func (a *App) tunnelStatus(ctx context.Context, c *incusConn, server string, in instInfo, kind string) []tunnelOut {
+	key := server + "\x00" + in.Project + "\x00" + in.Name + "\x00" + in.Status + "\x00" + kind
+	if out, ok := statusCache.get(key); ok {
+		return out
+	}
+	out := a.tunnelStatusLive(ctx, c, server, in, kind)
+	statusCache.put(key, out)
+	return out
+}
+
+func (a *App) tunnelStatusLive(ctx context.Context, c *incusConn, server string, in instInfo, kind string) []tunnelOut {
 	base := tunnelOut{Server: server, Project: in.Project, Instance: in.Name, Managed: kind != kindMonitor, Kind: kind, Status: in.Status, Peers: []tunnelPeer{}}
 	if in.Status != "Running" {
 		base.Error = "The gateway instance is stopped."
@@ -796,7 +925,7 @@ func (a *App) tunnelStatus(ctx context.Context, c *incusConn, server string, in 
 		}
 		return []tunnelOut{base}
 	}
-	res, err := c.exec(ctx, in.Project, in.Name, nil, "sh", "-c", statusScript)
+	res, err := c.execCap(ctx, 256<<10, in.Project, in.Name, nil, "sh", "-c", statusScript)
 	if err != nil {
 		base.Error = "Can't run commands in the instance: " + friendlyIncusErr(err)
 		return []tunnelOut{base}
@@ -891,6 +1020,7 @@ type plan struct {
 	tunnel   netip.Prefix
 	gwAddr   netip.Prefix
 	routes   []netip.Prefix
+	hostIPs  []netip.Addr
 	endpoint string
 }
 
@@ -947,6 +1077,7 @@ func (a *App) validateCreate(ctx context.Context, c *incusConn, req createReq) (
 		if !net.Managed || net.Type != "bridge" || err != nil {
 			return nil, fmt.Errorf("Network %s needs to be a managed bridge with an IPv4 address.", n)
 		}
+		p.hostIPs = append(p.hostIPs, pf.Addr())
 		pf = pf.Masked()
 		if overlaps(pf, tunnel) {
 			return nil, fmt.Errorf("The tunnel subnet %s overlaps network %s (%s). Pick another tunnel subnet.", tunnel, n, pf)
@@ -1044,13 +1175,13 @@ func (a *App) handleTunnelCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func gatewayConfig(pl *plan) string {
-	o := confOpts{Kind: pl.req.Kind, Iface: pl.req.Iface, Address: pl.gwAddr, Routes: pl.routes, Tunnel: pl.tunnel}
+	o := confOpts{Kind: pl.req.Kind, Iface: pl.req.Iface, Address: pl.gwAddr, Routes: pl.routes, Tunnel: pl.tunnel, HostIPs: pl.hostIPs}
 	var conf string
 	if pl.req.Kind == kindRemote {
 		o.Port, o.Endpoint = pl.req.Port, pl.endpoint
 		conf = gatewayConf(o)
 	} else {
-		o.Endpoint = pl.endpoint
+		o.Endpoint, o.Publish = pl.endpoint, pl.req.Publish
 		conf = gatewayConf(o)
 		vpsIP := hostN(pl.tunnel, 1)
 		conf += peerBlock("vps", pl.req.VPSKey, pl.req.PSK, pl.endpoint, vpsIP.String()+"/32", 25)
@@ -1147,9 +1278,13 @@ func (a *App) createGateway(ctx context.Context, c *incusConn, pl *plan) (map[st
 	if !validKey(pub) {
 		return rollback(errors.New("The gateway didn't produce a valid public key."))
 	}
+	var vpsAddr netip.Addr
+	if req.Kind == kindVPS {
+		vpsAddr = hostN(pl.tunnel, 1)
+	}
 	files := map[string]string{
 		"/etc/wireguard/" + req.Iface + ".conf": gatewayConfig(pl),
-		"/etc/wireguard/" + req.Iface + ".nft":  gatewayNft(req.Iface, pl.routes),
+		"/etc/wireguard/" + req.Iface + ".nft":  gatewayNft(req.Iface, pl.routes, pl.hostIPs, vpsAddr, req.Publish),
 	}
 	for p, content := range files {
 		if err := c.writeFile(ctx, req.Project, req.Instance, p, content, "0600"); err != nil {
@@ -1521,11 +1656,18 @@ func (a *App) handleTunnelDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) registerTunnelRoutes(mux *http.ServeMux, auth func(http.HandlerFunc) http.Handler) {
+	// changes drop the cached status so the page shows them right away
+	mut := func(h http.HandlerFunc) http.Handler {
+		return auth(func(w http.ResponseWriter, r *http.Request) {
+			h(w, r)
+			statusCache.clear()
+		})
+	}
 	mux.Handle("GET /api/ui/tunnels", auth(a.handleTunnels))
-	mux.Handle("POST /api/ui/tunnels", auth(a.handleTunnelCreate))
-	mux.Handle("POST /api/ui/tunnels/watch", auth(a.handleWatch))
-	mux.Handle("POST /api/ui/tunnels/{server}/{project}/{instance}/peers", auth(a.handlePeerAdd))
-	mux.Handle("DELETE /api/ui/tunnels/{server}/{project}/{instance}/peers", auth(a.handlePeerRemove))
-	mux.Handle("POST /api/ui/tunnels/{server}/{project}/{instance}/restart", auth(a.handleTunnelRestart))
-	mux.Handle("DELETE /api/ui/tunnels/{server}/{project}/{instance}", auth(a.handleTunnelDelete))
+	mux.Handle("POST /api/ui/tunnels", mut(a.handleTunnelCreate))
+	mux.Handle("POST /api/ui/tunnels/watch", mut(a.handleWatch))
+	mux.Handle("POST /api/ui/tunnels/{server}/{project}/{instance}/peers", mut(a.handlePeerAdd))
+	mux.Handle("DELETE /api/ui/tunnels/{server}/{project}/{instance}/peers", mut(a.handlePeerRemove))
+	mux.Handle("POST /api/ui/tunnels/{server}/{project}/{instance}/restart", mut(a.handleTunnelRestart))
+	mux.Handle("DELETE /api/ui/tunnels/{server}/{project}/{instance}", mut(a.handleTunnelDelete))
 }

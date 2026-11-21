@@ -52,7 +52,7 @@ const fileSafe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+
 export function Tunnels() {
   useCrumbs([{ label: "Networking" }, { label: "Tunnels" }]);
   const app = useApp();
-  const q = useData<Tunnel[]>("tunnels", () => ui<Tunnel[]>("/tunnels"), 5000);
+  const q = useData<Tunnel[]>("tunnels", () => ui<Tunnel[]>("/tunnels"), 20000);
   const [wizard, setWizard] = useState<"" | "remote" | "vps" | "monitor">("");
   const [addTo, setAddTo] = useState<Tunnel | null>(null);
   const [, tick] = useState(0);

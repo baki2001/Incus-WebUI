@@ -22,6 +22,8 @@ Networking, Tunnels sets up [WireGuard](https://www.wireguard.com/) for you. It 
 - The gateway is an unprivileged container. The host never runs WireGuard.
 - The gateway makes its own private key and keeps it. The UI only reads the public key.
 - Device and VPS keys are made in your browser. The UI server sees public keys and the preshared key, which both ends need.
+- Tunnel peers can't reach the Incus host itself (its bridge address is blocked) or the gateway, apart from ping.
+- With a VPS tunnel, only the VPS can reach your network, and only the ports you published. The VPS drops everything else headed into the tunnel.
 - The VPS script contains the VPS private key. Run it, then close the sheet.
 
 ## Limits
