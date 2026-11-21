@@ -107,8 +107,9 @@ export async function waitOp(server: string, id: string, project?: string, onPro
     try {
       op = await incus<Operation>(server, `/1.0/operations/${id}/wait?timeout=${onProgress ? 1 : 30}`, { project });
     } catch (e) {
-      if (e instanceof ApiError && e.status !== 404 && /deadline exceeded/i.test(e.message)) continue;
-      throw e;
+      if (!(e instanceof ApiError && e.status !== 404 && /deadline exceeded/i.test(e.message))) throw e;
+      // Incus 6.0 answers a timed-out /wait with an error body; read the operation for its progress.
+      op = await incus<Operation>(server, `/1.0/operations/${id}`, { project });
     }
     if (op.status_code >= 200) {
       if (op.status_code !== 200) throw new ApiError(400, op.err || op.status);

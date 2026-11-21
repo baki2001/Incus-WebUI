@@ -8,6 +8,7 @@ import { listVolumes, useCollection, useCurrentProject, useInstances, useNames }
 import { CopyBtn, confirmDialog, Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, Table, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
+import { parseUsed } from "./usedby";
 
 type Pool = { name: string; driver: string; description: string; status: string; config: Record<string, string>; used_by: string[]; server: string };
 type PoolPut = { name?: string; driver?: string; description: string; config: Record<string, string> };
@@ -17,14 +18,8 @@ const serverCol = <T extends { server: string }>(multi: boolean): Col<T> => ({ k
 
 // What an Incus "used by" URL points at, with a link to where you manage it.
 function usedRef(u: string, server: string) {
-  const [path, query] = u.split("?");
-  const parts = path.split("/").filter(Boolean).map(decodeURIComponent).slice(1);
-  const kind = parts[0] || "";
-  const name = parts[kind === "storage-pools" ? 3 : 1] || parts[parts.length - 1] || u;
-  const project = new URLSearchParams(query || "").get("project") || "default";
-  const to = kind === "instances" ? `/instances/${encodeURIComponent(server)}/${encodeURIComponent(name)}` : kind === "profiles" ? "/profiles" : kind === "images" ? "/images" : kind === "networks" ? "/networks" : kind === "storage-pools" ? "/storage/volumes" : "";
-  const label = ({ instances: "Instance", profiles: "Profile", images: "Image", networks: "Network", "storage-pools": "Volume" } as Record<string, string>)[kind] || kind;
-  return { kind, label, name: kind === "images" ? name.slice(0, 12) : name, project, to };
+  const it = parseUsed(u, server);
+  return { kind: it.res, label: it.kind, name: it.name, project: it.project, to: it.res === "storage-pools" ? "/storage/volumes" : it.to || "" };
 }
 
 // Everything that uses an object, as links. Shown wherever it decides whether a delete can work.

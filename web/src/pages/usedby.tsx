@@ -4,33 +4,37 @@ import { useApp } from "../state";
 import { SheetSec } from "../ui";
 import "./ws5.css";
 
-type Item = { kind: string; name: string; to?: string };
+type Item = { kind: string; name: string; to?: string; res: string; project: string };
 
 // "/1.0/instances/web?project=dev" -> a label and, where the UI has a page for it, a link.
-function parse(u: string, server: string): Item {
+export function parseUsed(u: string, server: string): Item {
   const [path, qs = ""] = u.split("?");
   const parts = path.split("/").filter(Boolean).slice(1);
   const project = new URLSearchParams(qs).get("project") || "default";
-  const name = decodeURIComponent(parts[parts.length - 1] || "");
+  // Snapshots and backups belong to their instance: /1.0/instances/x/snapshots/s is "x".
+  const at = parts[0] === "instances" ? 1 : parts[0] === "storage-pools" && parts[2] === "volumes" ? 4 : parts.length - 1;
+  const name = decodeURIComponent(parts[at] || "");
   const proj = project === "default" ? "" : `&project=${encodeURIComponent(project)}`;
   const open = `?open=${encodeURIComponent(name)}${proj}`;
+  const res = parts[0] || "";
+  const it = (x: Omit<Item, "res" | "project">): Item => ({ ...x, res, project });
   switch (parts[0]) {
     case "instances":
-      return { kind: "Instance", name, to: `/instances/${encodeURIComponent(server)}/${encodeURIComponent(name)}?project=${encodeURIComponent(project)}` };
+      return it({ kind: "Instance", name, to: `/instances/${encodeURIComponent(server)}/${encodeURIComponent(name)}?project=${encodeURIComponent(project)}` });
     case "profiles":
-      return { kind: "Profile", name, to: "/profiles" + open };
+      return it({ kind: "Profile", name, to: "/profiles" + open });
     case "networks":
-      return { kind: "Network", name, to: "/networks" + open };
+      return it({ kind: "Network", name, to: "/networks" + open });
     case "network-acls":
-      return { kind: "ACL", name, to: "/networks/acls" + open };
+      return it({ kind: "ACL", name, to: "/networks/acls" + open });
     case "projects":
-      return { kind: "Project", name, to: "/projects" + open };
+      return it({ kind: "Project", name, to: "/projects" + open });
     case "images":
-      return { kind: "Image", name: name.slice(0, 12), to: "/images" };
+      return it({ kind: "Image", name: name.slice(0, 12), to: "/images" });
     case "storage-pools":
-      return { kind: parts[2] === "volumes" ? "Volume" : "Pool", name, to: "/storage" };
+      return it({ kind: parts[2] === "volumes" ? "Volume" : "Pool", name, to: "/storage" });
     default:
-      return { kind: parts[0] || "Item", name };
+      return it({ kind: parts[0] || "Item", name });
   }
 }
 
@@ -38,7 +42,7 @@ function parse(u: string, server: string): Item {
 // tab so the dialog stays where it is.
 export function UsedByList({ list, server, blank, max = 8 }: { list?: string[]; server: string; blank?: boolean; max?: number }) {
   const [all, setAll] = useState(false);
-  const items = (list || []).map((u) => parse(u, server));
+  const items = (list || []).map((u) => parseUsed(u, server));
   if (!items.length) return <span className="dim">Nothing uses it.</span>;
   const shown = all ? items : items.slice(0, max);
   return (

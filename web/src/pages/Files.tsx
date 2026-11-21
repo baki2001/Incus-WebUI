@@ -104,10 +104,21 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
     }
     load();
   };
-  const download = (e: Entry) => {
-    // The server sends the file with a proper Content-Disposition, non-ASCII names too.
+  const download = async (e: Entry) => {
+    // Check the response headers first, so an error shows as a toast instead of replacing the page.
+    const href = `/api/ui${apiBase}/download${q(join(dir, e.name))}`; // the server follows links
+    const ac = new AbortController();
+    try {
+      const r = await fetch(href, { headers: { "X-Incus-UI": "1" }, signal: ac.signal });
+      if (!r.ok) throw new Error(await errMsg(r));
+      ac.abort(); // headers are enough; the browser downloads the file itself
+    } catch (err) {
+      return app.fail(readable(err instanceof Error ? err.message : String(err), join(dir, e.name)), `Can't download ${e.name}.`);
+    }
+    // The server sends a proper Content-Disposition, non-ASCII names too.
     const a = document.createElement("a");
-    a.href = `/api/ui${apiBase}/download${q(join(dir, e.name))}`; // the server follows links
+    a.href = href;
+    a.download = e.name;
     document.body.appendChild(a);
     a.click();
     a.remove();

@@ -42,6 +42,10 @@ export function InstancePage() {
   const [prevTab, setPrevTab] = useState<Tab>(tab as Tab);
   const [seenTerm, setSeenTerm] = useState(tab === "terminal");
   useEffect(() => {
+    setSeenTerm(tab === "terminal");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server, name, project]);
+  useEffect(() => {
     if (tab === "terminal") setSeenTerm(true);
   }, [tab]);
   useEffect(() => {
