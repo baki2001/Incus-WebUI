@@ -52,7 +52,7 @@ function Appearance() {
       app.toast(`Theme set to ${t.name[0].toUpperCase() + t.name.slice(1)} for everyone`, { label: "Undo", fn: () => setTheme(prev) });
     } catch (e: any) {
       app.setTheme(prev);
-      app.toast(e.message);
+      app.fail(e, "Could not change the theme.");
     }
   };
   const pair = accentPair(custom);
@@ -297,7 +297,7 @@ function Users() {
       await ui(`/users/${encodeURIComponent(name)}`, { method: "DELETE" });
       invalidate("ui-users");
     } catch (e: any) {
-      app.toast(e.message);
+      app.fail(e, "Could not remove the user.");
     }
   };
   return (
@@ -450,7 +450,7 @@ function About() {
       }
       app.toast("The update was installed, but the UI didn't come back within a minute. Check the service log.");
     } catch (e: any) {
-      app.toast(e.message);
+      app.fail(e, "Could not install the update.");
     }
     setBusy("");
   };

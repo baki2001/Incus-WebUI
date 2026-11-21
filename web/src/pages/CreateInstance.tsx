@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import YAML from "yaml";
-import { incus } from "../api";
+import { friendlyError, incus, incusOp, memBytes } from "../api";
 import { ic } from "../icons";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { listVolumes, nameOf, useNames } from "../data";
-import { confirmDialog, Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } from "../ui";
-import { cpuOK, friendlyError, hasExt, memBytes, runOp, SizeField, useManagedNetworks } from "./cfgutil";
+import { hasExt, listVolumes, nameOf, useManagedNetworks, useNames } from "../data";
+import { Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } from "../ui";
+import { cpuOK, SizeField } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
 import { LocalPicker, ociRegistries, RemotePicker, useImageServers, useRemoteImages, useServerArch } from "./ImagePicker";
 import "../cfg.css";
@@ -183,10 +183,6 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     return { name: name || undefined, type, profiles, config, devices, start, ephemeral, description: desc, source: src };
   };
 
-  const close = async () => {
-    if (busy || !dirty || (await confirmDialog({ title: "Discard your changes?", body: "This instance has not been created yet.", confirm: "Discard", danger: true }))) onClose();
-  };
-
   const submit = async () => {
     setTried(true);
     setErr("");
@@ -197,7 +193,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     const label = name || "The instance";
     setBusy(true);
     try {
-      const op = await runOp(srv, "/1.0/instances", { method: "POST", project: projSel, body: request() }, setProgress);
+      const op = await incusOp(srv, "/1.0/instances", { method: "POST", project: projSel, body: request() }, setProgress);
       invalidate("instances:");
       const made = name || (op?.resources?.instances?.[0] || "").split("/").pop()?.split("?")[0];
       app.toast(`${label} created`);
@@ -208,7 +204,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
       if (openRef.current) {
         setErr(m);
         requestAnimationFrame(() => body.current?.querySelector(".cerr")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
-      } else app.toast(`Creating ${label.toLowerCase()} failed: ${m}`);
+      } else app.fail(m, `Creating ${label.toLowerCase()} failed.`);
     } finally {
       setBusy(false);
       setProgress("");
@@ -223,7 +219,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   return (
     <Sheet
       open={open}
-      onClose={close}
+      onClose={onClose}
+      dirty={dirty && !busy}
       title="Create instance"
       wide
       footer={
@@ -231,7 +228,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
           <span className="dim l" style={{ fontSize: 12.5 }}>
             {busy ? progress || "Creating…" : `${servers.length > 1 ? `On ${srv}, ` : ""}${projSel ? `project ${projSel}` : "choose a project"}`}
           </span>
-          <button className="btn btn-s press" onClick={close}>
+          <button className="btn btn-s press" onClick={onClose}>
             Cancel
           </button>
           <button className="btn btn-p press" onClick={submit} disabled={busy}>

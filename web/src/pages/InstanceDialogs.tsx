@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { incusOp, type Instance } from "../api";
+import { friendlyError, incusOp, type Instance } from "../api";
 import { useNames } from "../data";
 import { invalidate, useApp } from "../state";
 import { Dialog, Select } from "../ui";
@@ -117,7 +117,7 @@ export function readable(e: unknown) {
   const m = e instanceof Error ? e.message : String(e);
   if (/already exists/i.test(m)) return "That name is already used. Pick another one.";
   if (/must be stopped|is running|not stopped/i.test(m)) return "Stop the instance first, then try again.";
-  return m;
+  return friendlyError(e);
 }
 
 const rootPool = (i: Inst) => i.expanded_devices?.root?.pool || "";

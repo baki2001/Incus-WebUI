@@ -1,9 +1,9 @@
 // Disk and port forwarding (proxy) editors, used by the instance
 // Configuration tab and the Create sheet.
-import { listVolumes } from "../data";
+import { listVolumes, useServerInfo } from "../data";
 import { ic } from "../icons";
 import { useData } from "../state";
-import { portsOK, useServerInfo } from "./cfgutil";
+import { portsOK } from "./cfgutil";
 import "../cfg.css";
 
 export type Dev = Record<string, string>;

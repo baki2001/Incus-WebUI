@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
-import { ApiError, bytes, incus, incusOp, type Instance } from "../api";
+import { ApiError, bytes, friendlyError, incus, incusOp, incusWithETag, memBytes, memStr, type Instance } from "../api";
 import { ic } from "../icons";
 import { invalidate, useApp, useData } from "../state";
 import { Dialog, Seg, shake } from "../ui";
-import { CONFLICT, cpuCount, cpuOK, friendlyError, incusWithETag, memBytes, memStr, SizeField, useNetworkList } from "./cfgutil";
+import { CONFLICT, cpuCount, cpuOK, SizeField, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
 import "../cfg.css";
 
@@ -228,7 +228,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
     }
     const rs = body.devices.root?.size ? memBytes(body.devices.root.size) : null;
     if (rs) body.devices.root.size = memStr(Math.round(rs));
-    const put = (etag: string) => incusOp(server, path, { method: "PUT", project, body, headers: { "If-Match": etag } });
+    const put = (etag: string) => incusOp(server, path, { method: "PUT", project, body, etag });
     try {
       try {
         await put(base.etag);

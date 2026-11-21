@@ -3,7 +3,7 @@ import { incus, incusOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { useCollection, useCurrentProject, useNames } from "../data";
+import { useCollection, useCurrentProject, useManagedNetworks, useNames } from "../data";
 import { confirmDialog, Field, Input, KVEditor, Select, SheetSec, Table, TglRow } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
@@ -13,13 +13,6 @@ import { instanceKeys } from "./CreateInstance";
 type Dev = Record<string, string>;
 type Profile = { name: string; description: string; config: Record<string, string>; devices: Record<string, Dev>; used_by: string[]; server: string };
 type PPut = { name?: string; description: string; config: Record<string, string>; devices: Record<string, Dev> };
-
-// Managed networks only: the ones an instance's network card can attach to by name.
-function useManagedNets(server: string, project: string) {
-  return useData<string[]>(server ? `managed-nets:${server}:${project}` : null, async () =>
-    ((await incus<{ name: string; managed: boolean }[]>(server, "/1.0/networks?recursion=1", { project })) || []).filter((n) => n.managed).map((n) => n.name),
-  );
-}
 
 export function Profiles() {
   useCrumbs([{ label: "Profiles" }]);
@@ -34,7 +27,7 @@ export function Profiles() {
   const [server, setServer] = useState("");
   const srv = edit?.server || server || servers[0]?.name || "";
   const pools = useNames(create || edit ? srv : "", "storage-pools", project);
-  const nets = useManagedNets(create || edit ? srv : "", project);
+  const nets = useManagedNetworks(create || edit ? srv : "", project);
   useOpenParam(q.data, setEdit);
   // A project without its own profiles shows the ones from project default.
   const proj = useData<{ config: Record<string, string> }>(`project-cfg:${srv}:${project}`, () => incus(srv, `/1.0/projects/${encodeURIComponent(project)}`));
@@ -124,7 +117,7 @@ export function Profiles() {
             <Field label="Description">
               <Input value={d.description} onChange={(v) => set((x) => void (x.description = v))} />
             </Field>
-            <ProfileForm d={d} set={set} pools={pools.data || []} nets={nets.data || []} />
+            <ProfileForm d={d} set={set} pools={pools.data || []} nets={(nets.data || []).map((n) => n.name)} />
           </>
         )}
       />

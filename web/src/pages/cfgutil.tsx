@@ -1,48 +1,15 @@
 // Small helpers shared by the Configuration tab and the Create sheet.
-// memStr, memBytes, friendlyError, incusWithETag, useManagedNetworks,
-// useServerInfo and hasExt are local stand-ins for the shared helpers in
-// api.ts/data.ts; switch to those when they land.
 import { useEffect, useRef, useState } from "react";
-import { ApiError, incus, incusRaw, opProgress, parseBytes, type Operation } from "../api";
+import { incus, memBytes, memStr } from "../api";
 import { useData } from "../state";
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
 
-// "512MiB" / "2GiB": what Incus accepts (it rejects "0.5GiB").
-export function memStr(bytes: number): string {
-  if (bytes >= GiB && bytes % GiB === 0) return `${bytes / GiB}GiB`;
-  return `${Math.max(1, Math.round(bytes / MiB))}MiB`;
-}
-export function memBytes(s: string | undefined): number | null {
-  return parseBytes(s);
-}
-
-export function friendlyError(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  if (/dial tcp|no such host|i\/o timeout|connection refused|connection reset|context deadline|TLS handshake|unexpected EOF|bad gateway|lookup .* on /i.test(m)) return "Couldn't reach the server. Check the network connection and try again.";
-  return m;
-}
-
-export async function incusWithETag<T>(server: string, path: string, o: { project?: string } = {}): Promise<{ data: T; etag: string }> {
-  const res = await incusRaw(server, path, o);
-  const j = await res.json().catch(() => ({}));
-  if (!res.ok || j.type === "error") throw new ApiError(res.status, j.error || res.statusText);
-  return { data: j.metadata as T, etag: res.headers.get("ETag") || "" };
-}
 export const CONFLICT = "Someone else changed this while you were editing. Reload to see their change.";
-
-export function useServerInfo(server: string) {
-  return useData<any>(server ? `server-info:${server}` : null, () => incus(server, "/1.0"));
-}
-export const hasExt = (info: any, name: string) => !!info && (info.api_extensions || []).includes(name);
 
 export function useNetworkList(server: string, project?: string) {
   return useData<any[]>(server ? `netlist:${server}:${project || ""}` : null, async () => (await incus<any[]>(server, "/1.0/networks?recursion=1", { project })) || []);
-}
-export function useManagedNetworks(server: string, project?: string) {
-  const q = useNetworkList(server, project);
-  return { ...q, data: q.data?.filter((n) => n.managed).map((n) => ({ name: n.name as string, type: n.type as string })) };
 }
 
 type Unit = "MiB" | "GiB";
@@ -95,31 +62,6 @@ export function SizeField({ value, onChange, defUnit = "GiB", placeholder, bad, 
       </div>
     </div>
   );
-}
-
-// Sends a request that may start an async operation and waits for it, with
-// progress text. Local stand-in for incusOp: Incus answers a wait that timed
-// out with no metadata, which this tolerates.
-export async function runOp(server: string, path: string, o: { method?: string; body?: any; project?: string }, onProgress?: (detail: string) => void): Promise<any> {
-  const res = await incusRaw(server, path, o);
-  const j = await res.json().catch(() => ({}));
-  if (!res.ok || j.type === "error") throw new ApiError(res.status, j.error || res.statusText);
-  if (j.type !== "async") return j.metadata;
-  const id = (j.metadata as Operation).id;
-  for (;;) {
-    const op = await incus<Operation | undefined>(server, `/1.0/operations/${id}/wait?timeout=2`, { project: o.project });
-    if (op && op.status_code >= 200) {
-      if (op.status_code !== 200) throw new ApiError(400, op.err || op.status);
-      return op;
-    }
-    const cur = await incus<Operation>(server, `/1.0/operations/${id}`, { project: o.project }).catch(() => undefined);
-    if (cur && cur.status_code >= 200) {
-      if (cur.status_code !== 200) throw new ApiError(400, cur.err || cur.status);
-      return cur;
-    }
-    const p = cur && opProgress(cur);
-    if (p) onProgress?.(p);
-  }
 }
 
 // Cores: "2", or a pin list like "0-3,6".

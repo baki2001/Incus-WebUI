@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { bytes, incusRaw, ui, type Instance } from "../api";
+import { bytes, friendlyError, incusRaw, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useApp } from "../state";
 import { confirmDialog, Dialog, MidTrunc } from "../ui";
@@ -25,7 +25,7 @@ function readable(msg: string, p: string) {
   if (/no such file|not exist|not found/i.test(msg)) return `${p} doesn't exist.`;
   if (/permission denied/i.test(msg)) return `Permission denied for ${p}.`;
   if (/not empty/i.test(msg)) return "The folder is not empty.";
-  return msg;
+  return friendlyError(new Error(msg));
 }
 
 type Choice = "replace" | "both" | "cancel";
@@ -126,7 +126,7 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
       if (await confirmDialog({ title: `${e.name} is not empty`, body: "Delete the folder and everything inside it? This can't be undone.", confirm: "Delete everything", danger: true })) {
         await app.run(`Deleting ${e.name}`, () => ui(apiBase + q(p), { method: "DELETE" }), `${e.name} deleted`);
       }
-    } else app.toast(`Can't delete ${e.name}. ${readable(msg, p)}`);
+    } else app.fail(readable(msg, p), `Can't delete ${e.name}.`);
     load();
   };
   const mkdir = async (n: string) => {
@@ -156,7 +156,7 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
       } catch {
         /* fall through to the message */
       }
-      app.toast(`Can't open ${p}. ${readable(e.message, p)}`);
+      app.fail(readable(e.message, p), `Can't open ${p}.`);
     }
   };
   const openEntry = (e: Entry) => {
@@ -360,19 +360,8 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
   const [text, setText] = useState<string | null>(null);
   const [orig, setOrig] = useState("");
   const [binary, setBinary] = useState(false);
-  const asking = useRef(false);
   const dirty = text !== null && text !== orig;
   const url = `/1.0/instances/${encodeURIComponent(inst.name)}/files?path=${encodeURIComponent(path)}`;
-  const tryClose = async () => {
-    if (asking.current) return;
-    if (dirty) {
-      asking.current = true;
-      const ok = await confirmDialog({ title: "Discard your changes?", body: `${entry?.name} has changes that are not saved.`, confirm: "Discard", danger: true });
-      asking.current = false;
-      if (!ok) return;
-    }
-    onClose();
-  };
   useEffect(() => {
     setText(null);
     setBinary(false);
@@ -394,7 +383,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
         setOrig(t);
       })
       .catch((e) => {
-        app.toast(`Can't open ${entry.name}. ${e.message}`);
+        app.fail(e, `Can't open ${entry.name}.`);
         onClose();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -420,7 +409,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
     }
   };
   return (
-    <Dialog open={!!entry} onClose={tryClose} size="md">
+    <Dialog open={!!entry} onClose={onClose} dirty={dirty} size="md">
       <div className="ptitle">
         <h2 className="mono">{path}</h2>
         <span className="r">{entry && bytes(entry.size)}</span>
@@ -444,7 +433,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
         <textarea className="yaml" style={{ minHeight: "50vh" }} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} />
       )}
       <div className="dlg-f">
-        <button className="btn btn-s press" onClick={tryClose}>
+        <button className="btn btn-s press" onClick={onClose}>
           Close
         </button>
         {!binary && text !== null && (
