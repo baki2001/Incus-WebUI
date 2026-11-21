@@ -4,7 +4,7 @@ import { friendlyError, ui, type ServerStatus } from "./api";
 
 // ---------- data fetching with a shared cache (stale-while-revalidate) ----------
 
-type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void> };
+type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void>; stale?: boolean };
 const cache = new Map<string, Entry>();
 const subs = new Map<string, Set<() => void>>();
 function notify(key: string) {
@@ -14,6 +14,8 @@ export function invalidate(prefix: string) {
   for (const k of cache.keys()) if (k.startsWith(prefix)) {
     const e = cache.get(k)!;
     e.at = 0;
+    // a load already in flight may carry data from before the change
+    if (e.p) e.stale = true;
     notify(k);
   }
 }
@@ -54,7 +56,8 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
       },
     ).finally(() => {
       entry.loading = false;
-      entry.at = Date.now();
+      entry.at = entry.stale ? 0 : Date.now();
+      entry.stale = false;
       entry.p = undefined;
       notify(key);
     });
