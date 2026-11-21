@@ -5,6 +5,7 @@ import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
 import { canDo } from "./pages/Instances";
+import { askStop, StopHost } from "./pages/InstanceDialogs";
 import { usePins, useInstances, useProjects } from "./data";
 
 // ---------- breadcrumbs, set by each page ----------
@@ -105,6 +106,7 @@ export function Shell() {
       </div>
       <CmdK open={cmdk} onClose={() => setCmdk(false)} />
       <ConfirmHost />
+      <StopHost />
     </div>
   );
 }
@@ -341,7 +343,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         <NavLink to="/warnings" className="ni" title="Warnings">
           {ic.warn}
           {lbl("Warnings")}
-          {warnings > 0 && <span className="count warn">{warnings}</span>}
+          {warnings.n > 0 && <span className={"count" + (warnings.hot ? " warn" : "")}>{warnings.n}</span>}
         </NavLink>
       </nav>
       </div>
@@ -368,15 +370,16 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
 function useWarningCount() {
   const servers = useScopedServers();
   const names = servers.map((s) => s.name).join(",");
-  const q = useData<number>(
+  const q = useData<{ n: number; hot: boolean }>(
     names ? `warnings-count:${names}` : null,
     async () => {
       const all = await Promise.all(servers.map((s) => incus<any[]>(s.name, "/1.0/warnings?recursion=1").catch(() => [])));
-      return all.flat().filter((w) => w.status === "new").length;
+      const fresh = all.flat().filter((w) => w.status === "new");
+      return { n: fresh.length, hot: fresh.some((w) => w.severity === "moderate" || w.severity === "high") };
     },
     60000,
   );
-  return q.data || 0;
+  return q.data || { n: 0, hot: false };
 }
 
 function Account() {
@@ -544,6 +547,11 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       const pq = `?project=${encodeURIComponent(r.project)}`;
       const on = r.status === "Running";
       const place = where(r.project, r.server, true);
+      const stop = async () => {
+        onClose();
+        const ans = await askStop([r]);
+        if (ans) power("stop", "Stopping", ans.force)();
+      };
       const power = (action: "start" | "stop" | "restart" | "unfreeze", verb: string, force = false) => () => {
         onClose();
         app.run(`${verb} ${r.name}`, () =>
@@ -558,7 +566,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${place}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(base + pq) });
       if (canDo("start", r.status)) list.push({ group: "Instance actions", label: `Start ${r.name}`, meta: place, icon: ic.play, run: power("start", "Starting") });
       if (canDo("unfreeze", r.status)) list.push({ group: "Instance actions", label: `Resume ${r.name}`, meta: place, icon: ic.play, run: power("unfreeze", "Resuming") });
-      if (canDo("stop", r.status)) list.push({ group: "Instance actions", label: `${on ? "Stop" : "Force stop"} ${r.name}`, meta: place, icon: ic.stop, run: power("stop", "Stopping", !on) });
+      if (canDo("stop", r.status)) list.push({ group: "Instance actions", label: `${on ? "Stop" : "Force stop"} ${r.name}`, meta: place, icon: ic.stop, run: stop });
       if (canDo("restart", r.status)) list.push({ group: "Instance actions", label: `Restart ${r.name}`, meta: place, icon: ic.restart, run: power("restart", "Restarting") });
       if (on) list.push({ group: "Instance actions", label: `Open terminal in ${r.name}`, meta: place, icon: ic.term, run: go(base + "/terminal" + pq) });
     }
@@ -571,7 +579,9 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
     const idle = !words.length;
     // Without a search, keep the menu short: pages, actions and instances.
     const hit = cmds.filter((c) => (idle ? idleOrder.includes(c.group) : words.every((w) => (c.label + " " + c.group + " " + (c.meta || "")).toLowerCase().includes(w))));
-    const order = idle ? idleOrder : groupOrder;
+    // A query that starts like an action ("stop", "restart") puts actions above instances whose state text matches.
+    const verb = !idle && hit.some((c) => c.group === "Instance actions" && c.label.toLowerCase().startsWith(words[0]));
+    const order = idle ? idleOrder : verb ? ["Instance actions", ...groupOrder.filter((g) => g !== "Instance actions")] : groupOrder;
     const score = (c: Cmd) => (idle || c.label.toLowerCase().startsWith(words[0]) ? 0 : 1);
     return hit
       .map((c, i) => ({ c, i }))

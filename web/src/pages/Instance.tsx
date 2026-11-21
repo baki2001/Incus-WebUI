@@ -145,13 +145,14 @@ export function InstancePage() {
                   {ic.restart}Restart
                 </button>
                 <button disabled={!canDo("freeze", inst.status)} onClick={() => (close(), act("freeze"))}>
-                  {ic.stop}Pause
+                  {ic.pause}Pause
                 </button>
                 <button disabled={!canDo("stop", inst.status)} onClick={() => (close(), act("stop", true))}>
                   {ic.stop}Force stop
                 </button>
                 <button onClick={() => (close(), go("snapshots"))}>{ic.snap}Snapshots</button>
                 <hr />
+                {!stopped && <div className="menu-hint">Stop the instance first to rename or move it.</div>}
                 <button disabled={!stopped} title={stopped ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("rename"))}>
                   {ic.edit}Rename
                 </button>
@@ -493,7 +494,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
         </button>
         {bad && <span className="snap-err">{bad}</span>}
       </div>
-      <div className="panel tw">
+      <div className="panel tw tw-menu">
         <table>
           <thead>
             <tr>
