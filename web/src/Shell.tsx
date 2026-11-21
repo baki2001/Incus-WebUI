@@ -180,6 +180,7 @@ const groups: NavGroup[] = [
       { to: "/networks", label: "Networks", end: true },
       { to: "/networks/acls", label: "ACLs" },
       { to: "/networks/ipam", label: "IPAM" },
+      { to: "/tunnels", label: "Tunnels" },
     ],
   },
   {
