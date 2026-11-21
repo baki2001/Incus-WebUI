@@ -41,6 +41,9 @@ type Theme struct {
 type User struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+	// SessionGen must match the generation in a session cookie. It changes on
+	// password change and is a creation timestamp for new users.
+	SessionGen int64 `yaml:"session_gen,omitempty"`
 }
 
 type RevokedSession struct {

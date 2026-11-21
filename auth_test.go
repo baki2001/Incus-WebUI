@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,5 +176,84 @@ func TestUserRules(t *testing.T) {
 	}
 	if len(a.store.Get().Users) != 1 {
 		t.Fatal("last user was removed")
+	}
+}
+
+func TestRateLimitParallel(t *testing.T) {
+	l := &limiter{}
+	var allowed atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, _ := l.check("6.6.6.6", "admin"); ok {
+				time.Sleep(10 * time.Millisecond) // a slow password check
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := allowed.Load(); n > loginFreeTries+1 {
+		t.Fatalf("%d parallel attempts got through, want at most %d", n, loginFreeTries+1)
+	}
+}
+
+func TestRateLimitPrunesIPs(t *testing.T) {
+	l := &limiter{}
+	now := time.Now()
+	l.now = func() time.Time { return now }
+	for i := 0; i < 10001; i++ {
+		l.check("ip"+strconv.Itoa(i), "u")
+	}
+	now = now.Add(2 * time.Hour)
+	l.check("fresh", "u")
+	if len(l.ips) != 1 || len(l.pairs) != 1 {
+		t.Fatalf("stale entries kept: %d ips, %d pairs", len(l.ips), len(l.pairs))
+	}
+}
+
+func TestPasswordChangeEndsSessions(t *testing.T) {
+	a := testApp(t, "admin", "bob")
+	good := `{"username":"admin","password":"correct-password"}`
+	old := sessionOf(post(a.handleLogin, "1.1.1.1", good, nil))
+	bob := sessionOf(post(a.handleLogin, "1.1.1.2", `{"username":"bob","password":"correct-password"}`, nil))
+	put := func(name string, c *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("PUT", "/", bytes.NewBufferString(`{"password":"brand-new-password"}`))
+		r.SetPathValue("name", name)
+		if c != nil {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		a.handleUserPut(w, r)
+		return w
+	}
+	// Changing your own password keeps this browser signed in, with a new cookie.
+	w := put("admin", old)
+	fresh := sessionOf(w)
+	if w.Code != 204 || fresh == nil || !valid(a, fresh) {
+		t.Fatal("own password change did not reissue a working session")
+	}
+	if valid(a, old) {
+		t.Fatal("old cookie survived a password change")
+	}
+	// Changing someone else's password ends theirs only.
+	put("bob", fresh)
+	if valid(a, bob) || !valid(a, fresh) {
+		t.Fatal("password change affected the wrong sessions")
+	}
+}
+
+func TestRecreatedUserRejectsOldCookie(t *testing.T) {
+	a := testApp(t, "admin", "bob")
+	old := sessionOf(post(a.handleLogin, "1.1.1.2", `{"username":"bob","password":"correct-password"}`, nil))
+	r := httptest.NewRequest("DELETE", "/", nil)
+	r.SetPathValue("name", "bob")
+	a.handleUserDelete(httptest.NewRecorder(), r)
+	if w := post(a.handleUserCreate, "1.1.1.1", `{"username":"bob","password":"another-password"}`, nil); w.Code != 204 {
+		t.Fatalf("recreate: %d", w.Code)
+	}
+	if valid(a, old) {
+		t.Fatal("old cookie works for a re-created user")
 	}
 }

@@ -62,3 +62,18 @@ func TestDashboardPrefs(t *testing.T) {
 		t.Fatalf("want 401, got %d", w.Code)
 	}
 }
+
+func TestDeleteUserDropsPrefs(t *testing.T) {
+	a := testApp(t, "admin", "bob")
+	a.store.Update(func(c *Config) error {
+		c.UIPrefs = map[string]UIPrefs{"bob": {Dashboard: &DashPrefs{}}, "oidc:bob": {Dashboard: &DashPrefs{}}}
+		return nil
+	})
+	r := httptest.NewRequest("DELETE", "/", nil)
+	r.SetPathValue("name", "bob")
+	a.handleUserDelete(httptest.NewRecorder(), r)
+	p := a.store.Get().UIPrefs
+	if _, ok := p["bob"]; ok || len(p) != 1 {
+		t.Fatalf("prefs after delete: %v", p)
+	}
+}
