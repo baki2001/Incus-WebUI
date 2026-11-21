@@ -159,3 +159,33 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+
+/* ---------- WS2: instances list and detail ---------- */
+.qa-more,.qa-more-w{display:none}
+.qa-stop{margin-left:14px}
+.show-s-only{display:none}
+.check-row{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:13.5px;cursor:pointer}
+.check-row input{margin-top:3px}
+.check-row small{display:block;color:var(--ink-3);font-size:12.5px}
+.dlg-fields{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.dlg-fields .fl .hint{min-height:0}
+.bulk{flex-wrap:wrap;max-width:calc(100vw - 24px);justify-content:center}
+.snap-bar .field{flex:1 1 150px}
+.snap-err{flex-basis:100%;font-size:12.5px;color:var(--err)}
+.is-deleting{opacity:.5;pointer-events:none}
+@media (pointer:coarse){
+  .qa-inline{display:none}
+  .qa-more-w{display:flex;opacity:1}
+  .qa-more{display:inline-flex;min-width:40px;height:40px}
+  .inst-tw{overflow:visible}
+}
+@media (max-width:560px){
+  .show-s-only{display:inline}
+  .fbar .fsearch{flex:1 0 232px;min-width:232px}
+  .fsearch kbd{display:none}
+  .bulk{left:12px;right:12px;max-width:none;transform:none;animation:none;justify-content:flex-start;padding:8px 8px 8px 12px}
+  .bulk b{flex-basis:100%;margin:0 0 2px}
+  .bulk .btn{min-height:40px}
+  .bulk .vsep{display:none}
+  .bulk .btn.ib{margin-left:auto}
+}
