@@ -147,7 +147,7 @@ export function Timeline({ d }: { d: D }) {
           </div>
           <div className="tl-h">
             <span style={{ left: 0 }}>now</span>
-            {hours.map((h) => (
+            {hours.filter((h) => pct(h.t) > 8).map((h) => (
               <span key={h.t} style={{ left: `${pct(h.t)}%` }}>
                 {h.l}
               </span>
