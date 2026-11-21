@@ -140,6 +140,14 @@ func TestClientAndVPSConfig(t *testing.T) {
 			t.Errorf("vps lacks %q:\n%s", w, v)
 		}
 	}
+	for _, w := range []string{"PostUp = iptables -A FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT", "PostDown = iptables -D FORWARD -o %i -p tcp -d 10.0.0.5 --dport 80 -j ACCEPT"} {
+		if !strings.Contains(v, w) {
+			t.Errorf("vps lacks %q", w)
+		}
+	}
+	if strings.Contains(v, "%!") || strings.Contains(v, "{op}") {
+		t.Errorf("formatting leftovers in:\n%s", v)
+	}
 	if strings.Contains(vpsConf(netip.MustParsePrefix("10.67.0.1/24"), 51820, key1, key2, allowed, nil), "iptables") {
 		t.Error("no iptables rules without published ports")
 	}

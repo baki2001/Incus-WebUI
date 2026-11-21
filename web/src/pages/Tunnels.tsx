@@ -345,26 +345,27 @@ function RemoteWizard({ open, onClose, onAdd }: { open: boolean; onClose: () => 
       footer={
         res ? (
           <>
-            <button className="btn btn-s press" onClick={onClose}>
+            <button className="btn btn-s press tn-fb" onClick={onClose}>
               Done
             </button>
-            <button className="btn btn-p press" onClick={() => onAdd({ server: res.server, project: res.project, instance: res.instance, iface: res.iface } as Tunnel)}>
+            <button className="btn btn-p press tn-fb" onClick={() => onAdd({ server: res.server, project: res.project, instance: res.instance, iface: res.iface } as Tunnel)}>
               Add a device
             </button>
           </>
         ) : (
           <>
             {busy && <span className="dim tn-busy">Creating the gateway. This takes about a minute.</span>}
-            <button className="btn btn-s press" onClick={close} disabled={busy}>
+            <button className="btn btn-s press tn-fb" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button className="btn btn-p press" onClick={go} disabled={!can}>
+            <button className="btn btn-p press tn-fb" onClick={go} disabled={!can}>
               Create gateway
             </button>
           </>
         )
       }
     >
+      <div className="tn-form">
       {res ? (
         <>
           <p className="tn-p">
@@ -401,6 +402,7 @@ function RemoteWizard({ open, onClose, onAdd }: { open: boolean; onClose: () => 
           {err && <div className="tn-err">{err}</div>}
         </>
       )}
+      </div>
     </Sheet>
   );
 }
@@ -494,11 +496,11 @@ function AddDevice({ t, onClose }: { t: Tunnel | null; onClose: () => void }) {
         )}
       </div>
       <div className="dlg-f">
-        <button className="btn btn-s press" onClick={close}>
+        <button className="btn btn-s press tn-fb" onClick={close}>
           {conf ? "Done" : "Cancel"}
         </button>
         {!conf && (
-          <button className="btn btn-p press" onClick={go} disabled={!okName || busy}>
+          <button className="btn btn-p press tn-fb" onClick={go} disabled={!okName || busy}>
             {busy ? "Creating…" : "Create device"}
           </button>
         )}
@@ -585,22 +587,23 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
       title="Homelab to VPS"
       footer={
         res ? (
-          <button className="btn btn-p press" onClick={close}>
+          <button className="btn btn-p press tn-fb" onClick={close}>
             Done
           </button>
         ) : (
           <>
             {busy && <span className="dim tn-busy">Creating the gateway. This takes about a minute.</span>}
-            <button className="btn btn-s press" onClick={close} disabled={busy}>
+            <button className="btn btn-s press tn-fb" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button className="btn btn-p press" onClick={go} disabled={!can}>
+            <button className="btn btn-p press tn-fb" onClick={go} disabled={!can}>
               Create gateway
             </button>
           </>
         )
       }
     >
+      <div className="tn-form">
       {res ? (
         <>
           <p className="tn-p">
@@ -676,6 +679,7 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
           {err && <div className="tn-err">{err}</div>}
         </>
       )}
+      </div>
     </Sheet>
   );
 }
@@ -715,6 +719,7 @@ function MonitorWizard({ open, onClose, watched }: { open: boolean; onClose: () 
 
   return (
     <Sheet open={open} onClose={onClose} title="Monitor an existing tunnel">
+      <div className="tn-form">
       <p className="tn-p dim">Pick an instance that already runs WireGuard. The page shows its peers and traffic. Nothing in the instance is changed.</p>
       <Search value={search} onChange={setSearch} placeholder="Filter instances" />
       <div className="tn-pick">
@@ -734,6 +739,7 @@ function MonitorWizard({ open, onClose, watched }: { open: boolean; onClose: () 
           );
         })}
         {!rows.length && <div className="dim tn-h">{inst.data ? "No running containers to pick." : "Loading…"}</div>}
+      </div>
       </div>
     </Sheet>
   );

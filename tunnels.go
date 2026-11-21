@@ -229,12 +229,13 @@ func vpsConf(address netip.Prefix, port int, gwPub, psk string, allowed []netip.
 		b.WriteString("PostUp = iptables -t nat -A POSTROUTING -o %i -j MASQUERADE\n")
 		b.WriteString("PostDown = iptables -t nat -D POSTROUTING -o %i -j MASQUERADE\n")
 		for _, r := range rules {
-			dnat := fmt.Sprintf("-t nat %%s PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d", r.Proto, r.Port, r.TargetIP, r.TargetPort)
-			fwd := fmt.Sprintf("%%s FORWARD -o %%i -p %s -d %s --dport %d -j ACCEPT", r.Proto, r.TargetIP, r.TargetPort)
-			fmt.Fprintf(&b, "PostUp = iptables %s\n", fmt.Sprintf(dnat, "-A"))
-			fmt.Fprintf(&b, "PostUp = iptables %s\n", fmt.Sprintf(fwd, "-A"))
-			fmt.Fprintf(&b, "PostDown = iptables %s\n", fmt.Sprintf(dnat, "-D"))
-			fmt.Fprintf(&b, "PostDown = iptables %s\n", fmt.Sprintf(fwd, "-D"))
+			// {op} becomes -A when the interface comes up and -D when it goes down
+			dnat := fmt.Sprintf("iptables -t nat {op} PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d", r.Proto, r.Port, r.TargetIP, r.TargetPort)
+			fwd := fmt.Sprintf("iptables {op} FORWARD -o %%i -p %s -d %s --dport %d -j ACCEPT", r.Proto, r.TargetIP, r.TargetPort)
+			for _, rule := range []string{dnat, fwd} {
+				fmt.Fprintf(&b, "PostUp = %s\n", strings.ReplaceAll(rule, "{op}", "-A"))
+				fmt.Fprintf(&b, "PostDown = %s\n", strings.ReplaceAll(rule, "{op}", "-D"))
+			}
 		}
 		b.WriteString("PostUp = iptables -I FORWARD -i %i -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 		b.WriteString("PostDown = iptables -D FORWARD -i %i -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
@@ -248,7 +249,7 @@ func vpsScript(conf string, port int) string {
 # Sets up the VPS end of the tunnel on Debian or Ubuntu. Run as root.
 set -e
 apt-get update
-apt-get install -y wireguard iptables
+apt-get install -y wireguard-tools iptables
 umask 077
 mkdir -p /etc/wireguard
 cat > /etc/wireguard/wg0.conf <<'WG_CONF_END'

@@ -2,6 +2,8 @@
 .tn .ptitle{flex-wrap:wrap}
 .tn-kind{color:var(--ink-3);font-size:12.5px}
 .tn-act{display:flex;gap:6px;align-items:center}
+.tn-form{display:contents}
+.tn-form .fsearch{flex:none;max-width:none}
 .tn-meta{display:flex;flex-wrap:wrap;gap:6px 28px;margin:0;padding:12px 16px}
 .tn-meta>div{min-width:0}
 .tn-meta dt{font-size:12px;color:var(--ink-3)}
@@ -51,11 +53,9 @@
 .tn-dlg p{margin:0}
 .tn-qr{display:block;width:min(280px,100%);aspect-ratio:1;border-radius:var(--r-sm);align-self:center}
 .tn-row{display:flex;gap:8px;flex-wrap:wrap}
-.copy{min-width:32px}
 
 @media (max-width:560px){
   .tn-lbl{display:none}
-  .tn-act{width:100%}
   .tn-act .btn{min-height:40px}
   .tn-head{display:none}
   .tn-peer{grid-template-columns:minmax(0,1fr) 40px;row-gap:2px}
@@ -66,6 +66,8 @@
   .tn-rule>:nth-child(3){grid-column:1 / span 2}
   .tn-rule>:nth-child(4){grid-column:1 / span 2}
   .tn-rule>.tn-rx{grid-column:3;grid-row:1}
-  .tn-row .btn,.tn-pickrow .btn,.tn-start button,.sheet-f .btn,.dlg-f .btn{min-height:40px}
-  .tn-rule .field,.tn-pick .field{min-height:40px}
+  .tn-row .btn,.tn-pickrow .btn,.tn-start button,.tn-fb{min-height:40px}
+  .tn-form .field,.tn-dlg .field{height:40px}
+  .tn-form .copy{min-width:40px;min-height:40px}
+  .tn-act{margin-left:auto}
 }
