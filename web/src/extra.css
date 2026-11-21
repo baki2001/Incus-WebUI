@@ -284,6 +284,7 @@ p.fnote{align-self:flex-start;margin:0}
   .term-h{flex-wrap:wrap;height:auto;min-height:40px;padding:4px 6px 4px 14px}
   .term-h .r{flex-wrap:wrap}
   .term-h .btn-sm{min-height:40px}
+}
 /* ---------- WS2: instances list and detail ---------- */
 .qa-more,.qa-more-w{display:none}
 .qa-stop{margin-left:14px}
