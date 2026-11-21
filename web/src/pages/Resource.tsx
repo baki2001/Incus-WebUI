@@ -53,15 +53,21 @@ export function EditSheet<T extends object>({
       fn(n);
       return n;
     });
-  const fromYaml = (): T | null => {
+  // Pure: it runs during render for the review dialog, so it must not set state
+  // (that caused a render loop, React error #301).
+  const parseYaml = (): { v: T | null; err: string } => {
     try {
       const v = YAML.parse(text) as T;
-      setErr("");
-      return v;
+      if (v === null || typeof v !== "object") return { v: null, err: "The YAML must describe an object." };
+      return { v, err: "" };
     } catch (e: any) {
-      setErr(e.message);
-      return null;
+      return { v: null, err: e.message };
     }
+  };
+  const fromYaml = (): T | null => {
+    const r = parseYaml();
+    setErr(r.err);
+    return r.v;
   };
   const switchView = (v: "form" | "yaml") => {
     if (v === "yaml") setText(YAML.stringify(draft));
@@ -74,6 +80,7 @@ export function EditSheet<T extends object>({
   };
   const current = () => (view === "yaml" ? fromYaml() : draft);
   const orig = value ? YAML.stringify(value) : "";
+  const dirty = open && !review && (view === "yaml" ? text !== YAML.stringify(draft) : !!draft && JSON.stringify(draft) !== JSON.stringify(value));
   const save = async (d: T) => {
     setBusy(true);
     const ok = await onSave(d).finally(() => setBusy(false));
@@ -82,7 +89,7 @@ export function EditSheet<T extends object>({
       onClose();
     }
   };
-  const next = review ? current() : null;
+  const next = review ? (view === "yaml" ? parseYaml().v : draft) : null;
 
   return (
     <>
@@ -90,6 +97,7 @@ export function EditSheet<T extends object>({
         open={open}
         onClose={onClose}
         title={title}
+        dirty={dirty}
         wide
         head={
           yaml ? (

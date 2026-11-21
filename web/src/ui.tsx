@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { stateClass } from "./api";
+import { friendlyError, stateClass } from "./api";
 import { ic } from "./icons";
 import { useApp } from "./state";
 
@@ -40,18 +40,35 @@ function useShown(open: boolean) {
   return { mounted, on };
 }
 
-export function Dialog({ open, onClose, children, size }: { open: boolean; onClose: () => void; children: ReactNode; size?: "sm" | "md" }) {
+// useGuard wraps onClose: when dirty, ask "Discard your changes?" first.
+function useGuard(dirty: boolean | undefined, onClose: () => void) {
+  const asking = useRef(false);
+  const last = useRef({ dirty, onClose });
+  last.current = { dirty, onClose };
+  return useRef(() => {
+    const { dirty, onClose } = last.current;
+    if (!dirty) return onClose();
+    if (asking.current) return;
+    asking.current = true;
+    confirmDialog({ title: "Discard your changes?", body: "What you entered will be lost.", confirm: "Discard", danger: true })
+      .then((ok) => ok && last.current.onClose())
+      .finally(() => (asking.current = false));
+  }).current;
+}
+
+export function Dialog({ open, onClose, children, size, dirty }: { open: boolean; onClose: () => void; children: ReactNode; size?: "sm" | "md"; dirty?: boolean }) {
   const { mounted, on } = useShown(open);
+  const close = useGuard(dirty, onClose);
   useEffect(() => {
     if (!open) return;
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const k = (e: KeyboardEvent) => e.key === "Escape" && close();
     document.addEventListener("keydown", k);
     return () => document.removeEventListener("keydown", k);
-  }, [open, onClose]);
+  }, [open, close]);
   if (!mounted) return null;
   return (
     <>
-      <div className={"scrim" + (on ? " on" : "")} onClick={onClose} />
+      <div className={"scrim" + (on ? " on" : "")} onClick={close} />
       <div className={"dlg sq " + (size || "") + (on ? " on" : "")} role="dialog" aria-modal="true">
         {children}
       </div>
@@ -59,23 +76,24 @@ export function Dialog({ open, onClose, children, size }: { open: boolean; onClo
   );
 }
 
-export function Sheet({ open, onClose, title, children, footer, wide, head }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean; head?: ReactNode }) {
+export function Sheet({ open, onClose, title, children, footer, wide, head, dirty }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean; head?: ReactNode; dirty?: boolean }) {
   const { mounted, on } = useShown(open);
+  const close = useGuard(dirty, onClose);
   useEffect(() => {
     if (!open) return;
-    const k = (e: KeyboardEvent) => e.key === "Escape" && !document.querySelector(".dlg.on") && onClose();
+    const k = (e: KeyboardEvent) => e.key === "Escape" && !document.querySelector(".dlg.on") && close();
     document.addEventListener("keydown", k);
     return () => document.removeEventListener("keydown", k);
-  }, [open, onClose]);
+  }, [open, close]);
   if (!mounted) return null;
   return (
     <>
-      <div className={"scrim" + (on ? " on" : "")} onClick={onClose} />
+      <div className={"scrim" + (on ? " on" : "")} onClick={close} />
       <div className={"sheet" + (wide ? " wide" : "") + (on ? " on" : "")} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
         <div className="sheet-h">
           <h2>{title}</h2>
           {head}
-          <button className="btn btn-q ib" onClick={onClose} aria-label="Close">
+          <button className="btn btn-q ib" onClick={close} aria-label="Close">
             {ic.x}
           </button>
         </div>
@@ -491,5 +509,5 @@ export function SheetSec({ title, action, children }: { title: string; action?: 
 }
 
 export function errText(e: unknown) {
-  return e instanceof Error ? e.message : String(e);
+  return friendlyError(e);
 }

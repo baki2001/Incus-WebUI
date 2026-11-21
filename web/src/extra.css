@@ -159,3 +159,12 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+
+/* error toasts: stay until dismissed, wrap long text */
+.toast.err{white-space:normal;max-width:min(520px,calc(100vw - 32px));align-items:flex-start;padding:10px 8px 10px 14px}
+.toast.err .ti{flex:none;display:flex;margin-top:2px;color:var(--err)}
+.toast.err .ti svg{width:16px;height:16px}
+.toast.err .tm{flex:1;min-width:0;overflow-wrap:anywhere}
+.toast.err .tm b{display:block;font-weight:600}
+.toast.err button{align-self:center}
+@media (max-width:640px){.toasts{left:16px;right:16px;transform:none;align-items:center}.toast.err{width:100%;max-width:none}.toast button{min-height:40px;min-width:40px}}
