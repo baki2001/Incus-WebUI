@@ -124,6 +124,15 @@ func (a *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	// A change to the host network (a bridge coming up) can make the browser drop
+	// its request. If Incus saw the client vanish half way, it would leave the
+	// object half made (a network stuck in Pending). So JSON changes run to the
+	// end even when the browser is gone; the UI looks at the result afterwards.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("Upgrade") == "" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
 	proxy := &httputil.ReverseProxy{
 		Transport: be.transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {

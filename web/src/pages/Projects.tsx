@@ -6,6 +6,7 @@ import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useCollection } from "../data";
 import { confirmDialog, Field, Input, KVEditor, Select, SheetSec, Table, TglRow } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
+import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 
 type Project = { name: string; description: string; config: Record<string, string>; used_by: string[]; server: string };
 type PrPut = { name?: string; description: string; config: Record<string, string>; copyDefault?: boolean };
@@ -32,6 +33,7 @@ export function Projects() {
   const [create, setCreate] = useState(false);
   const [server, setServer] = useState("");
   const srv = edit?.server || server || servers[0]?.name || "";
+  useOpenParam(q.data, setEdit);
 
   const save = async (d: PrPut) => {
     if (!edit) {
@@ -63,7 +65,7 @@ export function Projects() {
   };
   const del = async (p: Project) => {
     const used = (p.used_by || []).filter((u) => !u.includes("/profiles/default"));
-    if (!(await confirmDialog({ title: `Delete project ${p.name}?`, body: used.length ? `It still holds ${used.length} things (instances, images, volumes…). Incus refuses until it's empty.` : "The project is empty.", confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
+    if (!(await confirmDialog({ title: `Delete project ${p.name}?`, body: used.length ? usedByBody(`It still holds ${used.length} things. Incus refuses to delete it until it's empty.`, used, p.server) : "The project is empty.", confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/projects/${encodeURIComponent(p.name)}`, { method: "DELETE" }).then(() => true), `Project ${p.name} deleted`);
     if (ok) {
       if (app.project === p.name) app.setProject("default");
@@ -142,7 +144,14 @@ export function Projects() {
         }
         onSave={save}
         onDelete={edit && edit.name !== "default" ? () => del(edit) : undefined}
-        info={edit && <Usage server={edit.server} name={edit.name} />}
+        info={
+          edit && (
+            <>
+              <Usage server={edit.server} name={edit.name} />
+              <UsedBySec list={edit.used_by} server={edit.server} title="Holds" />
+            </>
+          )
+        }
         form={(d, set) => {
           const setCfg = (k: string, v: string) => set((x) => (v === "" ? delete x.config[k] : (x.config[k] = v)));
           return (
