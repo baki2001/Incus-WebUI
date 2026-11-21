@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { bytes, incus, incusOp, incusURL, parseBytes, upload, waitOp } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { bytes, dateTime, incus, incusOp, incusURL, parseBytes, upload, waitOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
@@ -14,6 +14,44 @@ type PoolPut = { name?: string; driver?: string; description: string; config: Re
 type Vol = { name: string; pool: string; type: string; content_type: string; description: string; config: Record<string, string>; used_by: string[]; created_at: string; location: string; project: string; server: string };
 
 const serverCol = <T extends { server: string }>(multi: boolean): Col<T> => ({ k: "server", label: "Server", cell: (r) => r.server, sort: (r) => r.server, hide: !multi, cls: "hide-m" });
+
+// What an Incus "used by" URL points at, with a link to where you manage it.
+function usedRef(u: string, server: string) {
+  const [path, query] = u.split("?");
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent).slice(1);
+  const kind = parts[0] || "";
+  const name = parts[kind === "storage-pools" ? 3 : 1] || parts[parts.length - 1] || u;
+  const project = new URLSearchParams(query || "").get("project") || "default";
+  const to = kind === "instances" ? `/instances/${encodeURIComponent(server)}/${encodeURIComponent(name)}` : kind === "profiles" ? "/profiles" : kind === "images" ? "/images" : kind === "networks" ? "/networks" : kind === "storage-pools" ? "/storage/volumes" : "";
+  const label = ({ instances: "Instance", profiles: "Profile", images: "Image", networks: "Network", "storage-pools": "Volume" } as Record<string, string>)[kind] || kind;
+  return { kind, label, name: kind === "images" ? name.slice(0, 12) : name, project, to };
+}
+
+// Everything that uses an object, as links. Shown wherever it decides whether a delete can work.
+function UsedList({ list, server, detach }: { list?: string[]; server: string; detach?: (kind: string, name: string, project: string) => void }) {
+  if (!list?.length) return <span className="dim">Nothing</span>;
+  return (
+    <span className="ulist">
+      {list.map((u) => {
+        const r = usedRef(u, server);
+        return (
+          <span key={u} className="ul-r">
+            {r.to ? <Link to={r.to}>{r.name}</Link> : <span>{r.name}</span>}
+            <small className="dim">
+              {r.label.toLowerCase()}
+              {r.project !== "default" && r.kind === "instances" ? ` in ${r.project}` : ""}
+            </small>
+            {detach && (r.kind === "instances" || r.kind === "profiles") && (
+              <button type="button" className="btn btn-q btn-sm press" onClick={() => detach(r.kind, r.name, r.project)}>
+                Detach
+              </button>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 const poolKeys = ["source", "size", "zfs.pool_name", "btrfs.mount_options", "lvm.vg_name", "lvm.thinpool_name", "volume.size", "volume.block.filesystem", "rsync.bwlimit"];
 
@@ -57,7 +95,14 @@ export function Pools() {
     return ok;
   };
   const del = async (p: Pool) => {
-    if (!(await confirmDialog({ title: `Delete pool ${p.name}?`, body: p.used_by?.length ? "Incus refuses while volumes, images or profiles use it." : "The pool and its data are removed.", confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
+    if (!(await confirmDialog({ title: `Delete pool ${p.name}?`, body: p.used_by?.length ? (
+        <>
+          Incus refuses while these use it. Remove or move them first.
+          <UsedList list={p.used_by} server={p.server} />
+        </>
+      ) : (
+        "The pool and its data are removed."
+      ), confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/storage-pools/${encodeURIComponent(p.name)}`, { method: "DELETE" }).then(() => true), `Pool ${p.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -204,9 +249,15 @@ export function Volumes() {
   const servers = useScopedServers();
   const multi = app.servers.length > 1;
   const [kind, setKind] = useState<"custom" | "all">("custom");
-  const q = useVolumes((v) => (kind === "all" || v.type === "custom") && v.content_type !== "iso", "vols");
+  const q = useVolumes((v) => (kind === "all" || v.type === "custom") && v.content_type !== "iso" && !(v.type === "custom" && v.name.includes("/")), "vols");
   const [search, setSearch] = useState("");
-  const [edit, setEdit] = useState<Vol | null>(null);
+  const [editKey, setEdit] = useState<Vol | null>(null);
+  // Look the volume up again after every reload, so "Used by" stays current.
+  const edit = (editKey && q.data?.find((v) => v.server === editKey.server && v.pool === editKey.pool && v.name === editKey.name)) || editKey;
+  const state = useData<{ used: number; total: number } | null>(edit ? `vol-state:${edit.server}:${edit.pool}:${edit.name}:${project}` : null, async () => {
+    const st = await incus<any>(edit!.server, volPath(edit!) + "/state", { project }).catch(() => null);
+    return st?.usage ? { used: st.usage.used || 0, total: st.usage.total || 0 } : null;
+  });
   const [create, setCreate] = useState(false);
   const [server, setServer] = useState("");
   const srv = edit?.server || server || servers[0]?.name || "";
@@ -229,11 +280,40 @@ export function Volumes() {
     return ok;
   };
   const del = async (v: Vol) => {
-    if (!(await confirmDialog({ title: `Delete volume ${v.name}?`, body: v.used_by?.length ? "Detach it from its instances first; Incus refuses while it's attached." : "Its data is removed. This can't be undone.", confirm: "Delete", danger: true, typeToConfirm: v.name }))) return;
+    if (!(await confirmDialog({ title: `Delete volume ${v.name}?`, body: v.used_by?.length ? (
+        <>
+          Incus refuses while it's attached. Detach it from these first.
+          <UsedList list={v.used_by} server={v.server} />
+        </>
+      ) : (
+        "Its data and snapshots are removed. This can't be undone."
+      ), confirm: "Delete", danger: true, typeToConfirm: v.name }))) return;
     const ok = await app.run(`Deleting ${v.name}`, () => incusOp(v.server, volPath(v), { method: "DELETE", project }).then(() => true), `Volume ${v.name} deleted`);
     if (ok) {
       setEdit(null);
       invalidate("volumes:");
+    }
+  };
+  const doDetach = async (v: Vol, kind: string, name: string, proj: string) => {
+    const path = `/1.0/${kind}/${encodeURIComponent(name)}`;
+    if (!(await confirmDialog({ title: `Detach ${v.name} from ${name}?`, body: "The data stays on the volume. A running VM may need a restart to let go of it.", confirm: "Detach" }))) return;
+    const ok = await app.run(
+      `Detaching ${v.name}`,
+      async () => {
+        const o = await incus<any>(v.server, path, { project: proj });
+        const keys = Object.keys(o.devices || {}).filter((k) => o.devices[k].type === "disk" && o.devices[k].pool === v.pool && o.devices[k].source === v.name);
+        if (!keys.length) throw new Error(`${name} gets this disk from a profile. Remove it from the profile instead.`);
+        for (const k of keys) delete o.devices[k];
+        const body = kind === "profiles" ? { description: o.description, config: o.config, devices: o.devices } : { architecture: o.architecture, config: o.config, devices: o.devices, ephemeral: o.ephemeral, profiles: o.profiles, stateful: o.stateful, description: o.description };
+        await incusOp(v.server, path, { method: "PUT", project: proj, body });
+        return true;
+      },
+      `${v.name} detached from ${name}`,
+    );
+    if (ok) {
+      invalidate("volumes:");
+      invalidate("instances:");
+      invalidate("profiles:");
     }
   };
   const doAttach = async (v: Vol) => {
@@ -245,7 +325,7 @@ export function Volumes() {
     if (ok) {
       invalidate("volumes:");
       invalidate("instances:");
-      setEdit(null);
+      setAttach({ ...attach, inst: "" });
     }
   };
 
@@ -291,24 +371,37 @@ export function Volumes() {
                 <dd>{edit.pool}</dd>
                 <dt>Content</dt>
                 <dd>{edit.content_type}</dd>
+                {state.data && (
+                  <>
+                    <dt>Space</dt>
+                    <dd>
+                      {bytes(state.data.used)}
+                      {state.data.total ? ` of ${bytes(state.data.total)}` : ""} used
+                    </dd>
+                  </>
+                )}
                 <dt>Used by</dt>
-                <dd>{edit.used_by?.map((u) => decodeURIComponent(u.split("?")[0].split("/").pop()!)).join(", ") || "Nothing"}</dd>
+                <dd>
+                  <UsedList list={edit.used_by} server={edit.server} detach={(k, n, pr) => doDetach(edit, k, n, pr)} />
+                </dd>
               </dl>
               <SheetSec title="Attach to an instance">
                 <div className="two">
                   <Select
                     value={attach.inst}
                     onChange={(v) => setAttach({ ...attach, inst: v })}
-                    options={[{ v: "", l: "Choose an instance" }, ...(insts.data || []).filter((i) => i.server === edit.server).map((i) => ({ v: i.name, l: i.name }))]}
+                    options={[{ v: "", l: "Choose an instance" }, ...(insts.data || []).filter((i) => i.server === edit.server && (edit.content_type !== "block" || i.type === "virtual-machine")).map((i) => ({ v: i.name, l: i.name }))]}
                   />
                   {edit.content_type !== "block" && <Input mono value={attach.path} onChange={(v) => setAttach({ ...attach, path: v })} placeholder="/mnt/data" />}
                 </div>
                 <div>
-                  <button className="btn btn-s btn-sm press" disabled={!attach.inst} onClick={() => doAttach(edit)}>
+                  <button className="btn btn-s btn-sm tt press" disabled={!attach.inst} onClick={() => doAttach(edit)}>
                     {ic.link}Attach
                   </button>
                 </div>
+                {edit.content_type === "block" && <span className="dim" style={{ fontSize: 12.5 }}>Block volumes attach to virtual machines only.</span>}
               </SheetSec>
+              <VolSnapshots v={edit} project={project} path={volPath(edit)} />
             </>
           )
         }
@@ -349,13 +442,98 @@ export function Volumes() {
                 <Input value={d.description} onChange={(v) => set((x) => void (x.description = v))} />
               </Field>
             </div>
+            {edit && (
+              <div className="two">
+                <Field label="Snapshot schedule" hint="Like @daily or 0 3 * * *. Empty means none.">
+                  <Input mono value={d.config["snapshots.schedule"] || ""} onChange={(v) => set((x) => (v ? (x.config["snapshots.schedule"] = v) : delete x.config["snapshots.schedule"]))} placeholder="@daily" />
+                </Field>
+                <Field label="Keep scheduled snapshots" hint="Like 7d or 4w. Empty keeps them.">
+                  <Input mono value={d.config["snapshots.expiry"] || ""} onChange={(v) => set((x) => (v ? (x.config["snapshots.expiry"] = v) : delete x.config["snapshots.expiry"]))} placeholder="7d" />
+                </Field>
+              </div>
+            )}
             <SheetSec title="All settings">
-              <KVEditor value={d.config} onChange={(c) => set((x) => void (x.config = c))} keys={["size", "snapshots.schedule", "snapshots.expiry", "security.shifted", "security.unmapped", "block.filesystem", "block.mount_options"]} />
+              <KVEditor value={d.config} onChange={(c) => set((x) => void (x.config = c))} keys={["size", "snapshots.schedule", "snapshots.expiry", "security.shifted", "security.unmapped", "block.filesystem", "block.mount_options"]} hide={(k) => k.startsWith("volatile.")} />
             </SheetSec>
           </>
         )}
       />
     </>
+  );
+}
+
+type VolSnap = { name: string; created_at: string; expires_at: string | null };
+
+// Snapshots of one custom volume. Incus lists them as "volume/snapshot".
+function VolSnapshots({ v, project, path }: { v: Vol; project: string; path: string }) {
+  const app = useApp();
+  const q = useData<VolSnap[]>(`vol-snaps:${v.server}:${v.pool}:${v.name}:${project}`, async () => (await incus<VolSnap[]>(v.server, path + "/snapshots?recursion=1", { project })) || []);
+  const [name, setName] = useState("");
+  const [exp, setExp] = useState("");
+  const snaps = (q.data || []).map((s) => ({ ...s, short: s.name.split("/").pop()! })).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const done = () => (invalidate("vol-snaps:"), invalidate("volumes:"));
+  const create = async () => {
+    const body: any = {};
+    if (name.trim()) body.name = name.trim();
+    if (exp) body.expires_at = new Date(exp).toISOString();
+    const ok = await app.run(`Snapshot of ${v.name}`, () => incusOp(v.server, path + "/snapshots", { method: "POST", project, body }).then(() => true), "Snapshot created");
+    if (ok) {
+      setName("");
+      setExp("");
+      done();
+    }
+  };
+  const restore = async (s: string) => {
+    if (!(await confirmDialog({ title: `Restore ${s}?`, body: `${v.name} goes back to how it was at this snapshot. Changes since then are lost.`, confirm: "Restore", danger: true }))) return;
+    const ok = await app.run(`Restoring ${s}`, () => incusOp(v.server, path, { method: "PUT", project, body: { restore: s } }).then(() => true), `${v.name} restored from ${s}`);
+    if (ok) done();
+  };
+  const del = async (s: string) => {
+    if (!(await confirmDialog({ title: `Delete snapshot ${s}?`, body: "This can't be undone.", confirm: "Delete", danger: true }))) return;
+    const ok = await app.run(`Deleting ${s}`, () => incusOp(v.server, `${path}/snapshots/${encodeURIComponent(s)}`, { method: "DELETE", project }).then(() => true), `Snapshot ${s} deleted`);
+    if (ok) done();
+  };
+  const expires = (s: VolSnap) => (s.expires_at && !s.expires_at.startsWith("0001") ? dateTime(s.expires_at) : "");
+  return (
+    <SheetSec title="Snapshots">
+      <div className="two">
+        <Field label="Name">
+          <Input mono value={name} onChange={setName} placeholder="Optional" onKeyDown={(e) => e.key === "Enter" && create()} />
+        </Field>
+        <Field label="Expires">
+          <div className="field">
+            <input type="datetime-local" value={exp} onChange={(e) => setExp(e.target.value)} aria-label="Expires" />
+          </div>
+        </Field>
+      </div>
+      <div>
+        <button className="btn btn-s btn-sm tt press" onClick={create}>
+          {ic.snap}Take snapshot
+        </button>
+      </div>
+      {q.data && !snaps.length && <span className="dim" style={{ fontSize: 12.5 }}>No snapshots yet.</span>}
+      {!!snaps.length && (
+        <div className="dl">
+          {snaps.map((s) => (
+            <div className="snr" key={s.name}>
+              <span>
+                <b className="mono">{s.short}</b>
+                <small className="dim">
+                  {dateTime(s.created_at)}
+                  {expires(s) && ` · expires ${expires(s)}`}
+                </small>
+              </span>
+              <button className="btn btn-q btn-sm press" onClick={() => restore(s.short)}>
+                Restore
+              </button>
+              <button className="btn btn-q ib btn-sm" aria-label={"Delete " + s.short} onClick={() => del(s.short)}>
+                {ic.trash}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </SheetSec>
   );
 }
 

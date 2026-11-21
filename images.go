@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,11 +92,35 @@ func (c *remoteCache) get(ctx context.Context, base string, force bool) ([]remot
 		if c.img[base] != nil {
 			return c.img[base], nil // keep serving the last good list
 		}
-		return nil, fmt.Errorf("can't read the image list from %s: %w", base, err)
+		return nil, errors.New(streamsError(base, err))
 	}
 	c.img[base], c.at[base] = list, time.Now()
 	return list, nil
 }
+
+// streamsError explains in plain words why an image server's list can't be
+// read, instead of passing on the raw Go network error.
+func streamsError(base string, err error) string {
+	host := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	var status *statusError
+	switch {
+	case errors.As(err, &status):
+		return fmt.Sprintf("%s answered %s. Try again in a few minutes.", host, status.status)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("%s took too long to answer. Try again in a few minutes.", host)
+	default:
+		var syn *json.SyntaxError
+		var typ *json.UnmarshalTypeError
+		if errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Sprintf("%s sent an image list this app can't read. Check the server address in Settings.", host)
+		}
+		return fmt.Sprintf("Can't reach %s. Check that this host has internet access, then try again.", host)
+	}
+}
+
+type statusError struct{ status string }
+
+func (e *statusError) Error() string { return "server answered " + e.status }
 
 type streamsIndex struct {
 	Index map[string]struct {
@@ -130,7 +155,7 @@ func getJSON(ctx context.Context, url string, v any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s answered %s", url, resp.Status)
+		return &statusError{resp.Status}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 256<<20)).Decode(v)
 }
