@@ -22,7 +22,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const servers = useScopedServers();
   const [server, setServer] = useState("");
   const srv = server || servers[0]?.name || "";
-  const { vm: vmOK, info } = useServerArch(open ? srv : "");
+  const { vm: vmOK, vmWhy, info } = useServerArch(open ? srv : "");
   const ociOK = hasExt(info, "instance_oci");
 
   const [proj, setProj] = useState("");
@@ -264,7 +264,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
         </div>
         <div className="two">
           <Field label="Type">
-            <TypeSeg type={type} setType={setType} vmOK={vmOK} />
+            <TypeSeg type={type} setType={setType} vmOK={vmOK} why={vmWhy} />
           </Field>
           {servers.length > 1 && (
             <Field label="Server">
@@ -421,7 +421,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   );
 }
 
-function TypeSeg({ type, setType, vmOK }: { type: "container" | "virtual-machine"; setType: (t: "container" | "virtual-machine") => void; vmOK: boolean }) {
+function TypeSeg({ type, setType, vmOK, why }: { type: "container" | "virtual-machine"; setType: (t: "container" | "virtual-machine") => void; vmOK: boolean; why?: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <Seg
@@ -432,7 +432,11 @@ function TypeSeg({ type, setType, vmOK }: { type: "container" | "virtual-machine
           { v: "virtual-machine", l: <>{ic.vm}VM</> },
         ]}
       />
-      {!vmOK && type === "virtual-machine" && <span className="hint bad" style={{ fontSize: 12.5 }}>This server can't run VMs.</span>}
+      {!vmOK && type === "virtual-machine" && (
+        <span className="hint bad" style={{ fontSize: 12.5, flexBasis: "100%" }}>
+          Incus on this server can't start VMs{why ? `: ${why.replace(/\.$/, "")}.` : "."} VMs need KVM (virtualization turned on in the BIOS, or nested virtualization if the host is itself a VM) and QEMU installed with Incus. Containers work without them.
+        </span>
+      )}
     </div>
   );
 }

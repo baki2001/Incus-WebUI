@@ -22,12 +22,26 @@ export function useRemoteImages(url: string | undefined) {
 
 // Incus reports x86_64 / aarch64; image servers use amd64 / arm64.
 const archMap: Record<string, string> = { x86_64: "amd64", aarch64: "arm64", armv7l: "armhf", riscv64: "riscv64", ppc64le: "ppc64el", s390x: "s390x" };
+// Instance types the server can run. Newer Incus lists them in
+// environment.instance_types; 6.0 LTS doesn't, so read the driver string
+// ("lxc | qemu") instead.
+export function instanceTypes(env: any): string[] {
+  if (Array.isArray(env?.instance_types)) return env.instance_types;
+  const d = String(env?.driver || "").split("|").map((x) => x.trim());
+  return [d.includes("lxc") && "container", d.includes("qemu") && "virtual-machine"].filter(Boolean) as string[];
+}
+
 export function useServerArch(server: string) {
   const q = useData<any>(server ? `server-info:${server}` : null, () => incus(server, "/1.0"));
   const env = q.data?.environment;
+  const vm = env ? instanceTypes(env).includes("virtual-machine") : true;
+  // Incus explains a missing VM driver in a warning ("KVM support is missing").
+  const w = useData<any[]>(server && !vm ? `vm-why:${server}` : null, () => incus(server, "/1.0/warnings?recursion=1"));
+  const why = (w.data || []).find((x) => x.type === "Instance type not operational" && /kvm|qemu|virtual/i.test(x.last_message || ""))?.last_message as string | undefined;
   return {
     arch: env ? archMap[env.architectures?.[0]] || env.architectures?.[0] || "amd64" : "",
-    vm: env ? (env.instance_types || []).includes("virtual-machine") : true,
+    vm,
+    vmWhy: why,
     info: q.data,
   };
 }

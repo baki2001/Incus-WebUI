@@ -8,6 +8,7 @@ import { bytes, incus, incusRaw, type Instance } from "../api";
 import { useCrumbs } from "../Shell";
 import { useApp, useData, cacheGet, invalidate } from "../state";
 import { hostBusy, HostUpdates } from "./HostUpdates";
+import { instanceTypes } from "./ImagePicker";
 
 // Incus has no host uptime or load average in its API, so show how long Incus itself has been running.
 function dur(sec: number) {
@@ -103,7 +104,7 @@ export function Host() {
                 <dt>Storage drivers</dt>
                 <dd>{env.storage_supported_drivers?.filter((d: any) => !d.remote).map((d: any) => d.Name || d.name).join(", ") || env.storage}</dd>
                 <dt>Instance types</dt>
-                <dd>{(env.instance_types || []).join(", ") || "container"}</dd>
+                <dd>{instanceTypes(env).join(", ") || "container"}</dd>
                 <dt>Address</dt>
                 <dd className="mono">{(env.addresses || []).join(", ") || s.url}</dd>
                 {up.data != null && (
