@@ -27,6 +27,8 @@ type Config struct {
 	Servers []ServerConfig `yaml:"servers"`
 	// ImageServers are the simplestreams servers the UI offers images from.
 	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
+	// UIPrefs are per-user interface settings, keyed by user name (see prefs.go).
+	UIPrefs map[string]UIPrefs `yaml:"ui_prefs,omitempty"`
 }
 
 type Theme struct {
