@@ -18,6 +18,7 @@ import { Projects } from "./pages/Projects";
 import { Operations, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
+import { Tunnels } from "./pages/Tunnels";
 
 type AuthInfo = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; theme: Theme; user?: string; method?: string };
 
@@ -65,6 +66,7 @@ function Root() {
             <Route path="/networks" element={<Networks />} />
             <Route path="/networks/acls" element={<Acls />} />
             <Route path="/networks/ipam" element={<Ipam />} />
+            <Route path="/tunnels" element={<Tunnels />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/operations" element={<Operations />} />

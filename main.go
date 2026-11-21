@@ -206,6 +206,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))
 	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.handleRemoveAll))
 	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.handleDownload))
+	a.registerTunnelRoutes(mux, auth)
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })
 	mux.Handle("/", spaHandler())
