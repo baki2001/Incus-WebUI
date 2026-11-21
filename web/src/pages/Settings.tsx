@@ -267,17 +267,28 @@ function Users() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
-  const save = async (name: string, pass: string) => {
+  const [pw, setPw] = useState<{ name: string; pass: string; err: string } | null>(null);
+  const users = q.data?.users || [];
+  const add = async () => {
     setErr("");
     try {
-      await ui(`/users/${encodeURIComponent(name)}`, { method: "PUT", body: { password: pass } });
-      app.toast(q.data?.users.some((x) => x.username === name) ? `Password changed for ${name}` : `${name} added`);
+      await ui("/users", { method: "POST", body: { username: u, password: p } });
+      app.toast(`${u} added`);
       setU("");
       setP("");
-      q.reload();
       invalidate("ui-users");
     } catch (e: any) {
       setErr(e.message);
+    }
+  };
+  const changePw = async () => {
+    if (!pw) return;
+    try {
+      await ui(`/users/${encodeURIComponent(pw.name)}`, { method: "PUT", body: { password: pw.pass } });
+      app.toast(`Password changed for ${pw.name}`);
+      setPw(null);
+    } catch (e: any) {
+      setPw({ ...pw, err: e.message });
     }
   };
   const del = async (name: string) => {
@@ -295,24 +306,51 @@ function Users() {
         <h2>Local users</h2>
         <p>Everyone who signs in can manage every connected server. Roles come later.</p>
         <div className="panel">
-          {q.data?.users.map((x) => (
-            <div className="snap" key={x.username}>
+          {users.map((x) => (
+            <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
               <span className="av">{x.username.slice(0, 2).toUpperCase()}</span>
               <span>
                 {x.username}
                 {x.username === app.user && <span className="dim"> · you</span>}
               </span>
               <span className="r">
-                <button className="btn btn-q btn-sm" onClick={() => del(x.username)}>
-                  Remove
+                <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
+                  Change password
                 </button>
+                {x.username !== app.user && users.length > 1 && (
+                  <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => del(x.username)}>
+                    Remove
+                  </button>
+                )}
               </span>
+              {pw?.name === x.username && (
+                <form
+                  style={{ flexBasis: "100%", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", paddingTop: 8 }}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    changePw();
+                  }}
+                >
+                  <Field label={`New password for ${x.username}`} hint="At least 10 characters.">
+                    <div className="field">
+                      <input type="password" autoFocus value={pw.pass} onChange={(e) => setPw({ ...pw, pass: e.target.value, err: "" })} autoComplete="new-password" />
+                    </div>
+                  </Field>
+                  <div className="fl">
+                    <button className="btn btn-p press" disabled={!pw.pass} style={{ minHeight: 40 }}>
+                      Save
+                    </button>
+                    <div className="hint" />
+                  </div>
+                  {pw.err && <div className="bad" style={{ width: "100%" }}>{pw.err}</div>}
+                </form>
+              )}
             </div>
           ))}
         </div>
       </section>
       <section className="set-sec">
-        <h2>Add a user or change a password</h2>
+        <h2>Add a user</h2>
         <div className="panel" style={{ padding: 16, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", maxWidth: 640 }}>
           <Field label="Username">
             <div className="field">
@@ -325,8 +363,8 @@ function Users() {
             </div>
           </Field>
           <div className="fl">
-            <button className="btn btn-p press" disabled={!u || !p} onClick={() => save(u, p)}>
-              Save
+            <button className="btn btn-p press" disabled={!u || !p} style={{ minHeight: 40 }} onClick={add}>
+              Add user
             </button>
             <div className="hint" />
           </div>
@@ -367,16 +405,20 @@ function About() {
   const app = useApp();
   const q = useData<UpdateInfo>("ui-update", () => ui("/update"));
   const [busy, setBusy] = useState<"" | "check" | "update" | "restart">("");
+  const [result, setResult] = useState<{ text: string; bad?: boolean } | null>(null);
   const u = q.data;
 
   const check = async () => {
     setBusy("check");
+    setResult(null);
     try {
       const d = await ui<UpdateInfo>("/update?refresh=1");
       invalidate("ui-update");
-      if (!d.error && !d.newer) app.toast(`You're on the newest version (${d.current}).`);
+      if (d.error) setResult({ text: `${d.error}. Check the server's internet access and try again.`, bad: true });
+      else if (d.newer) setResult({ text: `${d.latest!.tag} is available.` });
+      else setResult({ text: `Up to date (${d.current}).` });
     } catch (e: any) {
-      app.toast(e.message);
+      setResult({ text: `Couldn't check for updates: ${e.message}`, bad: true });
     }
     setBusy("");
   };
@@ -442,6 +484,9 @@ function About() {
             </a>
           )}
         </div>
+        <p role="status" aria-live="polite" className="upd-note" style={{ minHeight: 20, color: result?.bad ? "var(--err)" : undefined }}>
+          {busy === "check" ? "Checking for updates…" : result?.text}
+        </p>
         {u?.newer && !u.can_update && <p className="upd-note">{u.reason}</p>}
       </section>
       <section className="set-sec">

@@ -6,7 +6,7 @@ import "./extra.css";
 import { setUnauthorizedHandler, ui } from "./api";
 import { AppProvider, applyTheme, type Mode, type Theme } from "./state";
 import { Shell } from "./Shell";
-import { Login } from "./pages/Login";
+import { Login, takeNext } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Instances } from "./pages/Instances";
 import { InstancePage } from "./pages/Instance";
@@ -23,7 +23,15 @@ type AuthInfo = { setup_required: boolean; password: boolean; oidc: boolean; oid
 
 function Root() {
   const [auth, setAuth] = useState<AuthInfo | null>(null);
-  const load = () => ui<AuthInfo>("/auth").then(setAuth);
+  const load = () =>
+    ui<AuthInfo>("/auth").then((d) => {
+      // Back from single sign-on: go to the page that was open before signing in.
+      if (d.user && location.pathname === "/") {
+        const n = takeNext();
+        if (n) history.replaceState(null, "", n);
+      }
+      setAuth(d);
+    });
   useEffect(() => {
     load();
     setUnauthorizedHandler(() => load());

@@ -62,7 +62,7 @@ func main() {
 	app := &App{
 		store:      store,
 		backends:   &Backends{clientCert: clientCert, transports: map[string]*backend{}},
-		loginLimit: &limiter{hits: map[string][]time.Time{}},
+		loginLimit: &limiter{},
 		updater:    &updater{},
 		dataDir:    *dataDir,
 	}
@@ -191,6 +191,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("DELETE /api/ui/servers/{name}", auth(a.handleServerDelete))
 	mux.Handle("GET /api/ui/client-cert", auth(a.handleClientCert))
 	mux.Handle("GET /api/ui/users", auth(a.handleUsers))
+	mux.Handle("POST /api/ui/users", auth(a.handleUserCreate))
 	mux.Handle("PUT /api/ui/users/{name}", auth(a.handleUserPut))
 	mux.Handle("DELETE /api/ui/users/{name}", auth(a.handleUserDelete))
 	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
