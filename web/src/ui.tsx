@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { friendlyError, stateClass } from "./api";
 import { ic } from "./icons";
 import { useApp } from "./state";
@@ -264,9 +264,19 @@ export function MidTrunc({ text, max = 32 }: { text: string; max?: number }) {
 }
 
 export function Field({ label, hint, bad, children }: { label: string; hint?: ReactNode; bad?: boolean; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const uid = useId();
+  const [target, setTarget] = useState<string | undefined>();
+  // Links the label to the field's first input, so clicking it focuses the input and it has an accessible name.
+  useLayoutEffect(() => {
+    const el = box.current?.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea");
+    if (!el) return setTarget(undefined);
+    if (!el.id) el.id = uid;
+    setTarget(el.id);
+  });
   return (
-    <div className="fl">
-      <label>{label}</label>
+    <div className="fl" ref={box}>
+      <label htmlFor={target}>{label}</label>
       {children}
       <div className={"hint" + (bad ? " bad" : "")}>{hint}</div>
     </div>

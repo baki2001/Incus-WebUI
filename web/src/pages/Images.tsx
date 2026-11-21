@@ -70,7 +70,10 @@ export function Images() {
             sort: (i) => i.properties?.description || imageName(i),
             cell: (i) => (
               <span className="nm">
-                <span className="nm2">{i.properties?.description || imageName(i)}</span>
+                <span className="nm2">
+                  {i.properties?.description || imageName(i)}
+                  {i.public && <span className="tag">Public</span>}
+                </span>
                 <small className="mono dim">{i.aliases?.map((a) => a.name).join(", ") || i.fingerprint.slice(0, 12)}</small>
               </span>
             ),
@@ -283,7 +286,7 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
               .filter(([k]) => ["os", "release", "variant", "serial"].includes(k))
               .map(([k, v]) => (
                 <div key={k} style={{ display: "contents" }}>
-                  <dt>{k[0].toUpperCase() + k.slice(1)}</dt>
+                  <dt>{k === "os" ? "OS" : k[0].toUpperCase() + k.slice(1)}</dt>
                   <dd>{v}</dd>
                 </div>
               ))}
@@ -309,7 +312,11 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
           </SheetSec>
           <SheetSec title="Options">
             {i.update_source && <TglRow title="Keep it up to date" note="Refreshes from its source every few hours." on={i.auto_update} onChange={(o) => patch({ auto_update: o }, o ? "Auto update on" : "Auto update off")} />}
-            <TglRow title="Public" note="Other Incus servers can pull it from this one without a certificate." on={i.public} onChange={(o) => patch({ public: o }, o ? "Image is public" : "Image is private")} />
+            <TglRow title="Public" note="Other Incus servers can pull it from this one without a certificate." on={i.public}
+              onChange={async (o) => {
+                if (o && !(await confirmDialog({ title: "Make this image public?", body: "Anyone who can reach this server can download this image.", confirm: "Make public" }))) return;
+                patch({ public: o }, o ? "Image is public" : "Image is private");
+              }} />
           </SheetSec>
         </>
       )}

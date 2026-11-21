@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { incus, incusOp } from "../api";
+import { incus, incusOp, memBytes, spaced } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
@@ -7,6 +7,7 @@ import { useCollection, useCurrentProject, useManagedNetworks, useNames } from "
 import { confirmDialog, Field, Input, KVEditor, Select, SheetSec, Table, TglRow } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
+import { SizeField } from "./cfgutil";
 import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 import { instanceKeys } from "./CreateInstance";
 
@@ -79,12 +80,16 @@ export function Profiles() {
         cols={[
           { k: "name", label: "Name", sort: (p) => p.name, cell: (p) => <NameCell name={p.name} sub={p.description} /> },
           { k: "server", label: "Server", sort: (p) => p.server, cell: (p) => p.server, hide: !multi, cls: "hide-m" },
-          { k: "limits", label: "Limits", cell: (p) => <span className="dim">{[p.config["limits.cpu"] && `${p.config["limits.cpu"]} CPU`, p.config["limits.memory"]].filter(Boolean).join(" · ") || "–"}</span>, cls: "hide-s" },
+          { k: "limits", label: "Limits", cell: (p) => <span className="dim">{[p.config["limits.cpu"] && `${p.config["limits.cpu"]} CPU`, p.config["limits.memory"] && spaced(p.config["limits.memory"])].filter(Boolean).join(" · ") || "–"}</span>, cls: "hide-s" },
           { k: "devices", label: "Devices", cell: (p) => <span className="keys">{Object.keys(p.devices || {}).map((d) => <code key={d}>{d}</code>)}</span>, cls: "hide-s" },
           { k: "used", label: "Used by", sort: (p) => p.used_by?.length || 0, cell: (p) => <UsedBy list={p.used_by} />, cls: "right" },
         ]}
       />
       <EditSheet<PPut>
+        validate={(d) => {
+          const m = d.config["limits.memory"];
+          return m && !m.endsWith("%") && memBytes(m) == null ? "Memory must be a number with a unit, like 2 GiB." : "";
+        }}
         open={!!create || !!edit}
         onClose={() => (setCreate(null), setEdit(null))}
         title={edit ? `Profile ${edit.name}` : shared ? "Create profile in default" : "Create profile"}
@@ -143,8 +148,12 @@ function ProfileForm({ d, set, pools, nets }: { d: PPut; set: (fn: (x: PPut) => 
           <Field label="CPU cores" hint="Empty means all.">
             <Input mono value={d.config["limits.cpu"] || ""} onChange={(v) => setCfg("limits.cpu", v.replace(/[^\d,-]/g, ""))} />
           </Field>
-          <Field label="Memory" hint="Like 2GiB. Empty means no limit.">
-            <Input mono value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} />
+          <Field label="Memory" hint="Empty means no limit.">
+            {/\d$|^$/.test(d.config["limits.memory"] || "") || /[KMGT]i?B$/i.test(d.config["limits.memory"] || "") ? (
+              <SizeField label="Memory" value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} bad={!!d.config["limits.memory"] && memBytes(d.config["limits.memory"]) == null} />
+            ) : (
+              <Input mono value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} />
+            )}
           </Field>
         </div>
       </SheetSec>

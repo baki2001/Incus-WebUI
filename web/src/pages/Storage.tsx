@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { bytes, dateTime, incus, incusOp, incusURL, parseBytes, upload, waitOp } from "../api";
+import { bytes, dateTime, incus, incusOp, incusURL, memBytes, parseBytes, spaced, upload, waitOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
@@ -8,6 +8,7 @@ import { listVolumes, useCollection, useCurrentProject, useInstances, useNames }
 import { CopyBtn, confirmDialog, Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, Table, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
+import { SizeField } from "./cfgutil";
 import { parseUsed } from "./usedby";
 
 type Pool = { name: string; driver: string; description: string; status: string; config: Record<string, string>; used_by: string[]; server: string };
@@ -205,8 +206,8 @@ export function Pools() {
                     <Input mono value={d.config.source || ""} onChange={(v) => set((x) => (v ? (x.config.source = v) : delete x.config.source))} placeholder={d.driver === "dir" ? "/srv/incus" : "/dev/sdb"} />
                   </Field>
                   {d.driver !== "dir" && (
-                    <Field label="Size" hint="For a loop file, like 50GiB.">
-                      <Input mono value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} placeholder="30GiB" />
+                    <Field label="Size" hint="For a loop file.">
+                      <SizeField label="Size" value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} placeholder="30" bad={!!d.config.size && memBytes(d.config.size) == null} />
                     </Field>
                   )}
                 </div>
@@ -346,11 +347,12 @@ export function Volumes() {
           { k: "pool", label: "Pool", sort: (v) => v.pool, cell: (v) => v.pool },
           { k: "type", label: "Type", sort: (v) => v.type, cell: (v) => (v.type === "custom" ? v.content_type : v.type.replace("virtual-machine", "VM disk").replace("container", "container disk")) },
           serverCol<Vol>(multi),
-          { k: "size", label: "Size", sort: (v) => parseBytes(v.config.size) ?? -1, cell: (v) => <span className="mono">{v.config.size || "–"}</span>, cls: "right hide-s" },
+          { k: "size", label: "Size", sort: (v) => parseBytes(v.config.size) ?? -1, cell: (v) => <span className="mono">{v.config.size ? spaced(v.config.size) : "–"}</span>, cls: "right hide-s" },
           { k: "used", label: "Used by", sort: (v) => v.used_by?.length || 0, cell: (v) => <UsedBy list={v.used_by} />, cls: "right" },
         ]}
       />
       <EditSheet<VolPut>
+        validate={(d) => (d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "")}
         open={create || !!edit}
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Volume ${edit.name}` : "Create volume"}
@@ -430,8 +432,8 @@ export function Volumes() {
               </>
             )}
             <div className="two">
-              <Field label="Size" hint="Like 10GiB. Empty means no quota where the driver allows it.">
-                <Input mono value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} />
+              <Field label="Size" hint="Empty means no quota where the driver allows it.">
+                <SizeField label="Size" value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} bad={!!d.config.size && memBytes(d.config.size) == null} />
               </Field>
               <Field label="Description">
                 <Input value={d.description} onChange={(v) => set((x) => void (x.description = v))} />
@@ -777,11 +779,12 @@ export function Buckets() {
           { k: "name", label: "Name", sort: (b) => b.name, cell: (b) => <NameCell name={b.name} sub={b.description} /> },
           { k: "pool", label: "Pool", sort: (b) => b.pool, cell: (b) => b.pool },
           serverCol<Bucket>(multi),
-          { k: "size", label: "Quota", sort: (b) => parseBytes(b.config.size) ?? -1, cell: (b) => <span className="mono">{b.config.size || "–"}</span>, cls: "right" },
+          { k: "size", label: "Quota", sort: (b) => parseBytes(b.config.size) ?? -1, cell: (b) => <span className="mono">{b.config.size ? spaced(b.config.size) : "–"}</span>, cls: "right" },
           { k: "url", label: "S3 address", sort: (b) => b.s3_url, cell: (b) => <span className="mono dim">{b.s3_url || "–"}</span>, cls: "hide-m" },
         ]}
       />
       <EditSheet<BPut>
+        validate={(d) => (d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "")}
         open={create || !!edit}
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Bucket ${edit.name}` : "Create bucket"}
@@ -803,8 +806,8 @@ export function Buckets() {
               </div>
             )}
             <div className="two">
-              <Field label="Quota" hint="Like 50GiB. Empty means no limit.">
-                <Input mono value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} />
+              <Field label="Quota" hint="Empty means no limit.">
+                <SizeField label="Size" value={d.config.size || ""} onChange={(v) => set((x) => (v ? (x.config.size = v) : delete x.config.size))} bad={!!d.config.size && memBytes(d.config.size) == null} />
               </Field>
               <Field label="Description">
                 <Input value={d.description} onChange={(v) => set((x) => void (x.description = v))} />
