@@ -1,14 +1,58 @@
-import { useState } from "react";
-import { incus, incusOp } from "../api";
+import { useEffect, useState } from "react";
+import { ApiError, incus, incusOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useCollection, useCurrentProject } from "../data";
-import { confirmDialog, Field, Input, KVEditor, Seg, Select, SheetSec, Table, TglRow, type Col } from "../ui";
+import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, SheetSec, Table, TglRow, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
+import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 
 type Net = { name: string; type: string; description: string; managed: boolean; status: string; config: Record<string, string>; used_by: string[]; server: string };
 type NetPut = { name?: string; type?: string; description: string; config: Record<string, string> };
+
+// A bridge coming up can drop the browser's connection for a moment (the UI
+// may run on the Incus host itself). When a request fails without an answer,
+// look at the network instead of guessing: it has either finished or it hasn't.
+const dropped = (e: unknown) => !(e instanceof ApiError) || e.status >= 502;
+
+const netState = (s: string) => (s === "Created" ? "Created" : s === "Pending" ? "Setting up" : s === "Errored" ? "Failed" : s || "Unknown");
+
+async function recheck(server: string, name: string, project: string, done: (n: Net | null) => boolean, what: string, progress: (d: string) => void) {
+  progress("Reconnecting");
+  let last = "";
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, i ? 2000 : 1000));
+    try {
+      const n = await incus<Net>(server, `/1.0/networks/${encodeURIComponent(name)}`, { project }).catch((e) => {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      });
+      if (n?.status === "Errored") throw new ApiError(500, `Network ${name} failed to start${n.config?.["volatile.last_state.error"] ? ": " + n.config["volatile.last_state.error"] : ""}. Delete it and check the settings.`);
+      if (done(n)) return;
+      last = n ? netState(n.status) : "gone";
+      progress(last === "Setting up" ? "Setting up the network" : "Waiting for Incus");
+    } catch (e) {
+      if (!dropped(e)) throw e;
+    }
+  }
+  throw new Error(`Lost the connection while ${what}, and ${name} is ${last ? last.toLowerCase() : "not reachable"} now. Check the Networks list; it updates by itself.`);
+}
+
+// Runs a network change; if the connection drops half way, finish by checking the result.
+async function netChange(server: string, name: string, project: string, act: () => Promise<unknown>, done: (n: Net | null) => boolean, what: string, progress: (d: string) => void) {
+  try {
+    await act();
+    return true;
+  } catch (e) {
+    if (!dropped(e)) throw e;
+  }
+  await recheck(server, name, project, done, what, progress);
+  return true;
+}
+
+const created = (n: Net | null) => n?.status === "Created";
+const applied = (want: Record<string, string>) => (n: Net | null) => !!n && n.status === "Created" && Object.entries(want).every(([k, v]) => n.config[k] === v);
 
 const netKeys = [
   "ipv4.address", "ipv4.nat", "ipv4.dhcp", "ipv4.dhcp.ranges", "ipv4.firewall", "ipv4.routing", "ipv6.address", "ipv6.nat", "ipv6.dhcp", "ipv6.dhcp.stateful",
@@ -26,15 +70,19 @@ export function Networks() {
   const project = useCurrentProject();
   const servers = useScopedServers();
   const multi = app.servers.length > 1;
-  const q = useCollection<Net>("networks", "/1.0/networks?recursion=1");
+  const [poll, setPoll] = useState(0);
+  const q = useCollection<Net>("networks", "/1.0/networks?recursion=1", poll);
   const [search, setSearch] = useState("");
   const [edit, setEdit] = useState<Net | null>(null);
   const [create, setCreate] = useState(false);
+  const settling = !!q.data?.some((n) => n.managed && n.status === "Pending");
+  useEffect(() => setPoll(settling ? 3000 : 0), [settling]);
+  useOpenParam(q.data, setEdit);
   const rows = q.data?.filter((n) => n.managed && matches(search, n.name, n.description, n.config["ipv4.address"], n.type));
 
   const del = async (n: Net) => {
-    if (!(await confirmDialog({ title: `Delete network ${n.name}?`, body: n.used_by?.length ? `${n.used_by.length} instances or profiles still use it; Incus refuses until they don't.` : "Nothing uses it.", confirm: "Delete", danger: true }))) return;
-    const ok = await app.run(`Deleting ${n.name}`, () => incusOp(n.server, `/1.0/networks/${encodeURIComponent(n.name)}`, { method: "DELETE", project }).then(() => true), `Network ${n.name} deleted`);
+    if (!(await confirmDialog({ title: `Delete network ${n.name}?`, body: usedByBody("These still use it; Incus refuses to delete it until they don't.", n.used_by, n.server), confirm: "Delete", danger: true }))) return;
+    const ok = await app.run(`Deleting ${n.name}`, (progress) => netChange(n.server, n.name, project, () => incusOp(n.server, `/1.0/networks/${encodeURIComponent(n.name)}`, { method: "DELETE", project }), (x) => !x, "deleting it", progress), `Network ${n.name} deleted`);
     if (ok) {
       setEdit(null);
       invalidate("networks:");
@@ -63,7 +111,7 @@ export function Networks() {
           ServerCol<Net>(multi),
           { k: "v4", label: "IPv4", sort: (n) => n.config["ipv4.address"], cell: (n) => <span className="mono">{n.config["ipv4.address"] || "–"}</span>, cls: "hide-s" },
           { k: "v6", label: "IPv6", sort: (n) => n.config["ipv6.address"], cell: (n) => <span className="mono dim">{n.config["ipv6.address"] || "–"}</span>, cls: "hide-m" },
-          { k: "status", label: "State", sort: (n) => n.status, cell: (n) => <span className={"st " + (n.status === "Created" ? "running" : n.status === "Pending" ? "busy" : "error")}>{n.status}</span>, cls: "hide-s" },
+          { k: "status", label: "State", sort: (n) => n.status, cell: (n) => <span className={"st " + (n.status === "Created" ? "running" : n.status === "Pending" ? "busy" : "error")}>{netState(n.status)}</span> },
           { k: "used", label: "Used by", sort: (n) => n.used_by?.length || 0, cell: (n) => <UsedBy list={n.used_by} />, cls: "right" },
         ]}
       />
@@ -103,11 +151,11 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
         app.toast("Network names are up to 15 letters, numbers and dashes.");
         return false;
       }
-      const ok = await app.run(`Creating ${d.name}`, () => incusOp(srv, "/1.0/networks", { method: "POST", project, body: { ...d, config: clean(d.config) } }).then(() => true), `Network ${d.name} created`);
+      const ok = await app.run(`Creating ${d.name}`, (progress) => netChange(srv, d.name!, project, () => incusOp(srv, "/1.0/networks", { method: "POST", project, body: { ...d, config: clean(d.config) } }), created, "creating it", progress), `Network ${d.name} created`);
       if (ok) onSaved();
       return ok;
     }
-    const ok = await app.run(`Saving ${net.name}`, () => incusOp(net.server, `/1.0/networks/${encodeURIComponent(net.name)}`, { method: "PUT", project, body: { description: d.description, config: clean(d.config) } }).then(() => true), `Network ${net.name} saved`);
+    const ok = await app.run(`Saving ${net.name}`, (progress) => netChange(net.server, net.name, project, () => incusOp(net.server, `/1.0/networks/${encodeURIComponent(net.name)}`, { method: "PUT", project, body: { description: d.description, config: clean(d.config) } }), applied(clean(d.config)), "saving it", progress), `Network ${net.name} saved`);
     if (ok) onSaved();
     return ok;
   };
@@ -122,19 +170,30 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
       onSave={save}
       onDelete={onDelete}
       info={
-        net && leases.data && leases.data.length > 0 ? (
-          <SheetSec title={`DHCP leases (${leases.data.length})`}>
-            <div className="dl">
-              {leases.data.map((l) => (
-                <div className="drow d3" key={l.address + l.hwaddr}>
-                  <span>{l.hostname || "–"}</span>
-                  <span className="mono">{l.address}</span>
-                  <span className="dim">{l.type}</span>
+        net && (
+          <>
+            {net.status !== "Created" && (
+              <div className="notice">
+                {net.status === "Pending" ? "This network is still being set up. If it stays like this, delete it and create it again." : `This network is ${netState(net.status).toLowerCase()}. Delete it and create it again, or check the settings below.`}
+              </div>
+            )}
+            <UsedBySec list={net.used_by} server={net.server} />
+            {net.status === "Created" && (net.type === "bridge" || net.type === "ovn") && <Forwards net={net} project={project} />}
+            {leases.data && leases.data.length > 0 && (
+              <SheetSec title={`DHCP leases (${leases.data.length})`}>
+                <div className="dl">
+                  {leases.data.map((l) => (
+                    <div className="drow d3" key={l.address + l.hwaddr}>
+                      <span>{l.hostname || "–"}</span>
+                      <span className="mono">{l.address}</span>
+                      <span className="dim">{l.type}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </SheetSec>
-        ) : undefined
+              </SheetSec>
+            )}
+          </>
+        )
       }
       form={(d, set) => {
         const type = net?.type || d.type || "bridge";
@@ -207,18 +266,35 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
                     <Input mono value={d.config["bridge.mtu"] || ""} onChange={(v) => setCfg("bridge.mtu", v.replace(/\D/g, ""))} placeholder="1500" />
                   </Field>
                 </div>
-                {(acls.data?.length || 0) > 0 && (
-                  <SheetSec title="ACLs">
-                    <div className="pt">
-                      {acls.data!.map((a) => (
-                        <label key={a}>
-                          <input type="checkbox" checked={aclList.includes(a)} onChange={(e) => setCfg("security.acls", (e.target.checked ? [...aclList, a] : aclList.filter((x) => x !== a)).join(","))} />
-                          {a}
-                        </label>
-                      ))}
-                    </div>
-                  </SheetSec>
-                )}
+                <SheetSec title="ACLs">
+                  {(acls.data?.length || 0) + aclList.length === 0 ? (
+                    <span className="dim" style={{ fontSize: 12.5 }}>
+                      No ACLs yet. Create one under Networking, ACLs, then pick it here.
+                    </span>
+                  ) : (
+                    <>
+                      <div className="pt">
+                        {[...new Set([...(acls.data || []), ...aclList])].map((a) => (
+                          <label key={a}>
+                            <input type="checkbox" checked={aclList.includes(a)} onChange={(e) => setCfg("security.acls", (e.target.checked ? [...aclList, a] : aclList.filter((x) => x !== a)).join(","))} />
+                            {a}
+                            {!acls.data?.includes(a) && <small>missing</small>}
+                          </label>
+                        ))}
+                      </div>
+                      {aclList.length > 0 && (
+                        <div className="two">
+                          <Field label="Inbound with no matching rule">
+                            <Select value={d.config["security.acls.default.ingress.action"] || "reject"} onChange={(v) => setCfg("security.acls.default.ingress.action", v)} options={["reject", "allow", "drop"]} />
+                          </Field>
+                          <Field label="Outbound with no matching rule">
+                            <Select value={d.config["security.acls.default.egress.action"] || "reject"} onChange={(v) => setCfg("security.acls.default.egress.action", v)} options={["reject", "allow", "drop"]} />
+                          </Field>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </SheetSec>
               </>
             )}
             {(type === "macvlan" || type === "physical" || type === "sriov") && (
@@ -241,6 +317,164 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
   );
 }
 
+// ---------- Port forwards ----------
+
+type FPort = { description?: string; protocol: string; listen_port: string; target_port?: string; target_address?: string };
+type Fwd = { listen_address: string; description: string; config: Record<string, string>; ports: FPort[] };
+
+const fwdPath = (net: Net, addr?: string) => `/1.0/networks/${encodeURIComponent(net.name)}/forwards` + (addr ? "/" + encodeURIComponent(addr) : "");
+
+function Forwards({ net, project }: { net: Net; project: string }) {
+  const app = useApp();
+  const key = `forwards:${net.server}:${project}:${net.name}`;
+  const q = useData<Fwd[]>(key, async () => (await incus<Fwd[]>(net.server, fwdPath(net) + "?recursion=1", { project })) || []);
+  const [edit, setEdit] = useState<Fwd | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const blank = (): Fwd => ({ listen_address: "", description: "", config: { target_address: "" }, ports: [{ protocol: "tcp", listen_port: "", target_port: "", target_address: "" }] });
+  const close = () => setEdit(null);
+
+  const save = async (f: Fwd) => {
+    if (!f.listen_address.trim()) return void app.toast("Enter the listen address, an address on this server like 192.168.1.20.");
+    const ports = f.ports.filter((p) => p.listen_port.trim()).map((p) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "" && v !== undefined)));
+    if (!ports.length && !f.config.target_address) return void app.toast("Add a port, or a target address that gets all traffic.");
+    const config = f.config.target_address ? { target_address: f.config.target_address } : {};
+    const body = { listen_address: f.listen_address.trim(), description: f.description, config, ports };
+    const ok = await app.run(
+      isNew ? "Adding port forward" : "Saving port forward",
+      () => (isNew ? incusOp(net.server, fwdPath(net), { method: "POST", project, body }) : incusOp(net.server, fwdPath(net, f.listen_address), { method: "PUT", project, body: { description: body.description, config, ports } })).then(() => true),
+      "Port forward saved",
+    );
+    if (ok) {
+      close();
+      invalidate("forwards:");
+    }
+  };
+  const del = async (f: Fwd) => {
+    if (!(await confirmDialog({ title: `Delete the forward on ${f.listen_address}?`, body: "Traffic to that address will stop reaching the instances.", confirm: "Delete", danger: true }))) return;
+    const ok = await app.run("Deleting port forward", () => incusOp(net.server, fwdPath(net, f.listen_address), { method: "DELETE", project }).then(() => true), "Port forward deleted");
+    if (ok) {
+      close();
+      invalidate("forwards:");
+    }
+  };
+  const summary = (f: Fwd) =>
+    (f.ports || []).map((p) => `${p.protocol} ${p.listen_port} to ${p.target_address || f.config?.target_address || "?"}:${p.target_port || p.listen_port}`).join(", ") || (f.config?.target_address ? `everything to ${f.config.target_address}` : "–");
+
+  return (
+    <>
+      <SheetSec
+        title={`Port forwards${q.data?.length ? ` (${q.data.length})` : ""}`}
+        action={
+          <button
+            className="btn btn-s btn-sm press"
+            onClick={() => {
+              setIsNew(true);
+              setEdit(blank());
+            }}
+          >
+            {ic.plus}Add
+          </button>
+        }
+      >
+        {q.data && q.data.length > 0 ? (
+          <div className="dl">
+            {q.data.map((f) => (
+              <div
+                className="drow fwd"
+                key={f.listen_address}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setIsNew(false);
+                  setEdit(JSON.parse(JSON.stringify({ ...f, config: { target_address: f.config?.target_address || "" }, ports: f.ports || [] })));
+                }}
+                onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLElement).click()}
+              >
+                <span className="mono">{f.listen_address}</span>
+                <span className="dim">{summary(f)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="dim" style={{ fontSize: 12.5 }}>
+            {q.error || "No forwards. A forward sends traffic that arrives on a server address to an instance on this network."}
+          </span>
+        )}
+      </SheetSec>
+      <Dialog open={!!edit} onClose={close} size="md">
+        {edit && <FwdForm key={isNew ? "new" : edit.listen_address} init={edit} isNew={isNew} onSave={save} onDelete={() => del(edit)} onClose={close} />}
+      </Dialog>
+    </>
+  );
+}
+
+function FwdForm({ init, isNew, onSave, onDelete, onClose }: { init: Fwd; isNew: boolean; onSave: (f: Fwd) => void; onDelete: () => void; onClose: () => void }) {
+  const [f, setF] = useState(init);
+  const setPort = (i: number, k: keyof FPort, v: string) => setF({ ...f, ports: f.ports.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
+  return (
+    <>
+      <div className="dlg-b fdlg">
+        <h2>{isNew ? "Add port forward" : "Port forward " + f.listen_address}</h2>
+        <div className="two" style={{ marginTop: 12 }}>
+          <Field label="Listen address" hint="An address on the server, like 192.168.1.20.">
+            <Input mono autoFocus={isNew} readOnly={!isNew} value={f.listen_address} onChange={(v) => setF({ ...f, listen_address: v })} placeholder="192.168.1.20" />
+          </Field>
+          <Field label="Target address" hint="Instance address that gets the traffic. Ports can use their own.">
+            <Input mono value={f.config.target_address || ""} onChange={(v) => setF({ ...f, config: { target_address: v } })} placeholder="10.250.1.10" />
+          </Field>
+        </div>
+        <Field label="Description">
+          <Input value={f.description} onChange={(v) => setF({ ...f, description: v })} />
+        </Field>
+        <SheetSec
+          title="Ports"
+          action={
+            <button className="btn btn-s btn-sm press" onClick={() => setF({ ...f, ports: [...f.ports, { protocol: "tcp", listen_port: "", target_port: "", target_address: "" }] })}>
+              {ic.plus}Add port
+            </button>
+          }
+        >
+          {f.ports.length > 0 && (
+            <div className="rules">
+              <div className="fports hdr">
+                <span>Protocol</span>
+                <span>Listen port</span>
+                <span>Target port</span>
+                <span>Target address</span>
+                <span />
+              </div>
+              {f.ports.map((p, i) => (
+                <div className="fports" key={i}>
+                  <Select value={p.protocol} onChange={(v) => setPort(i, "protocol", v)} options={["tcp", "udp"]} aria-label="Protocol" />
+                  <Input mono value={p.listen_port} onChange={(v) => setPort(i, "listen_port", v.replace(/[^\d,-]/g, ""))} placeholder="80 or 8000-8010" aria-label="Listen port" />
+                  <Input mono value={p.target_port || ""} onChange={(v) => setPort(i, "target_port", v.replace(/[^\d,-]/g, ""))} placeholder="same" aria-label="Target port" />
+                  <Input mono value={p.target_address || ""} onChange={(v) => setPort(i, "target_address", v)} placeholder="default" aria-label="Target address" />
+                  <button className="btn btn-q ib btn-sm" aria-label="Remove port" onClick={() => setF({ ...f, ports: f.ports.filter((_, j) => j !== i) })}>
+                    {ic.x}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </SheetSec>
+      </div>
+      <div className="dlg-f">
+        {!isNew && (
+          <button className="btn btn-q press" style={{ color: "var(--err)", marginRight: "auto" }} onClick={onDelete}>
+            {ic.trash}Delete
+          </button>
+        )}
+        <button className="btn btn-s press" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn btn-p press" onClick={() => onSave(f)}>
+          {isNew ? "Add" : "Save"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 function clean(c: Record<string, string>) {
   const o: Record<string, string> = {};
   for (const [k, v] of Object.entries(c)) if (k && !k.startsWith("volatile.")) o[k] = v;
@@ -251,7 +485,9 @@ function clean(c: Record<string, string>) {
 
 type Rule = { action: string; state: string; description?: string; source?: string; destination?: string; protocol?: string; source_port?: string; destination_port?: string; icmp_type?: string; icmp_code?: string };
 type Acl = { name: string; description: string; ingress: Rule[]; egress: Rule[]; config: Record<string, string>; used_by: string[]; server: string };
-type AclPut = { name?: string; description: string; ingress: Rule[]; egress: Rule[]; config: Record<string, string> };
+type AclPut = { name?: string; description: string; ingress: Rule[]; egress: Rule[]; config: Record<string, string>; networks?: string[] };
+
+const aclsOf = (n: Net) => (n.config["security.acls"] || "").split(",").map((x) => x.trim()).filter(Boolean);
 
 export function Acls() {
   useCrumbs([{ label: "Networking" }, { label: "ACLs" }]);
@@ -260,26 +496,44 @@ export function Acls() {
   const servers = useScopedServers();
   const multi = app.servers.length > 1;
   const q = useCollection<Acl>("acls", "/1.0/network-acls?recursion=1");
+  const nets = useCollection<Net>("networks", "/1.0/networks?recursion=1");
   const [search, setSearch] = useState("");
   const [edit, setEdit] = useState<Acl | null>(null);
+  useOpenParam(q.data, setEdit);
   const [create, setCreate] = useState(false);
   const [server, setServer] = useState("");
   const srv = edit?.server || server || servers[0]?.name || "";
+  // Only bridge and OVN networks take ACLs.
+  const attachable = (nets.data || []).filter((n) => n.managed && (n.type === "bridge" || n.type === "ovn") && n.server === srv);
+  const attached = (a: string) => attachable.filter((n) => aclsOf(n).includes(a)).map((n) => n.name);
 
+  // Adds or removes this ACL on networks, keeping everything else on them.
+  const attach = async (name: string, want: string[], was: string[], progress: (d: string) => void) => {
+    for (const n of attachable.filter((x) => want.includes(x.name) !== was.includes(x.name))) {
+      const cur = await incus<Net>(n.server, `/1.0/networks/${encodeURIComponent(n.name)}`, { project });
+      const list = aclsOf(cur).filter((x) => x !== name);
+      if (want.includes(n.name)) list.push(name);
+      const config = clean({ ...cur.config, "security.acls": list.join(",") });
+      if (!list.length) delete config["security.acls"];
+      await netChange(n.server, n.name, project, () => incusOp(n.server, `/1.0/networks/${encodeURIComponent(n.name)}`, { method: "PUT", project, body: { description: cur.description, config } }), applied(config), "updating it", progress);
+    }
+    return true;
+  };
   const save = async (d: AclPut) => {
-    const body = { ...d, ingress: d.ingress.map(cleanRule), egress: d.egress.map(cleanRule) };
+    const { networks: want = [], ...rest } = d;
+    const body = { ...rest, ingress: d.ingress.map(cleanRule), egress: d.egress.map(cleanRule) };
     if (!edit) {
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the ACL a name.");
-      const ok = await app.run(`Creating ${d.name}`, () => incusOp(srv, "/1.0/network-acls", { method: "POST", project, body }).then(() => true), `ACL ${d.name} created`);
-      if (ok) invalidate("acls:");
+      const ok = await app.run(`Creating ${d.name}`, async (progress) => (await incusOp(srv, "/1.0/network-acls", { method: "POST", project, body }), want.length ? attach(d.name!, want, [], progress) : true), `ACL ${d.name} created`);
+      if (ok) invalidate("acls:"), invalidate("acl-names:"), invalidate("networks:");
       return ok;
     }
-    const ok = await app.run(`Saving ${edit.name}`, () => incusOp(edit.server, `/1.0/network-acls/${encodeURIComponent(edit.name)}`, { method: "PUT", project, body: { description: body.description, ingress: body.ingress, egress: body.egress, config: body.config } }).then(() => true), `ACL ${edit.name} saved`);
-    if (ok) invalidate("acls:");
+    const ok = await app.run(`Saving ${edit.name}`, async (progress) => (await incusOp(edit.server, `/1.0/network-acls/${encodeURIComponent(edit.name)}`, { method: "PUT", project, body: { description: body.description, ingress: body.ingress, egress: body.egress, config: body.config } }), attach(edit.name, want, attached(edit.name), progress)), `ACL ${edit.name} saved`);
+    if (ok) invalidate("acls:"), invalidate("networks:");
     return ok;
   };
   const del = async (a: Acl) => {
-    if (!(await confirmDialog({ title: `Delete ACL ${a.name}?`, body: a.used_by?.length ? "Networks or instances still use it; remove it from them first." : "Nothing uses it.", confirm: "Delete", danger: true }))) return;
+    if (!(await confirmDialog({ title: `Delete ACL ${a.name}?`, body: usedByBody("These still use it; remove it from them first.", a.used_by, a.server), confirm: "Delete", danger: true }))) return;
     const ok = await app.run(`Deleting ${a.name}`, () => incusOp(a.server, `/1.0/network-acls/${encodeURIComponent(a.name)}`, { method: "DELETE", project }).then(() => true), `ACL ${a.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -317,7 +571,8 @@ export function Acls() {
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `ACL ${edit.name}` : "Create ACL"}
         create={!edit}
-        value={edit ? { description: edit.description, ingress: edit.ingress || [], egress: edit.egress || [], config: edit.config || {} } : create ? { name: "", description: "", ingress: [], egress: [], config: {} } : null}
+        value={edit ? { description: edit.description, ingress: edit.ingress || [], egress: edit.egress || [], config: edit.config || {}, networks: attached(edit.name) } : create ? { name: "", description: "", ingress: [], egress: [], config: {}, networks: [] } : null}
+        info={edit && <UsedBySec list={edit.used_by} server={edit.server} />}
         onSave={save}
         onDelete={edit ? () => del(edit) : undefined}
         form={(d, set) => (
@@ -341,6 +596,26 @@ export function Acls() {
             </Field>
             <RuleList title="Ingress, traffic coming in" rules={d.ingress} onChange={(r) => set((x) => void (x.ingress = r))} />
             <RuleList title="Egress, traffic going out" rules={d.egress} onChange={(r) => set((x) => void (x.egress = r))} />
+            <SheetSec title="Networks">
+              {attachable.length ? (
+                <div className="pt">
+                  {attachable.map((n) => (
+                    <label key={n.name}>
+                      <input type="checkbox" checked={(d.networks || []).includes(n.name)} onChange={(e) => set((x) => void (x.networks = e.target.checked ? [...(x.networks || []), n.name] : (x.networks || []).filter((y) => y !== n.name)))} />
+                      {n.name}
+                      <small>{n.type}</small>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <span className="dim" style={{ fontSize: 12.5 }}>
+                  No bridge or OVN networks to attach it to.
+                </span>
+              )}
+              <span className="dim" style={{ fontSize: 12.5 }}>
+                Ticked networks apply this ACL to everything connected to them.
+              </span>
+            </SheetSec>
             <span className="dim" style={{ fontSize: 12.5 }}>
               Source and destination take addresses, ranges or subnets (comma separated), or another ACL's name. Traffic no rule matches gets the network's default action.
             </span>

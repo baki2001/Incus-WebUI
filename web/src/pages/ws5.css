@@ -1,0 +1,14 @@
+.ubl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.ss .ubl{margin-top:0}
+.ubl a,.ubl .plain{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border-radius:var(--r-xs);background:var(--s2);color:var(--ink);font-size:13px;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ubl a:hover{background:var(--line)}
+.ubl small{color:var(--ink-3);font-size:11.5px}
+.fwd{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,2fr);gap:10px;align-items:center;padding:9px 12px;min-height:44px;cursor:pointer}
+.fwd:hover{background:var(--s2)}
+.fports{display:grid;grid-template-columns:80px minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+.fports .field{height:32px;padding:0 8px}
+.fports .field input,.fports .field select{font-size:12.5px}
+.fports.hdr{font-size:12px;color:var(--ink-3)}
+.notice{padding:10px 12px;border-radius:var(--r-sm);background:var(--s2);color:var(--ink-2);font-size:13px}
+.fdlg{max-height:70vh;overflow:auto}
+@media (max-width:860px){.fports{grid-template-columns:repeat(2,minmax(0,1fr))}.fports.hdr{display:none}.fwd{grid-template-columns:minmax(0,1fr)}}
