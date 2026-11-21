@@ -6,7 +6,8 @@ import { useCrumbs } from "../Shell";
 import { invalidate, mutateCache, useApp, useData } from "../state";
 import { confirmDialog, CopyBtn, Menu, Seg, Status, Tabs } from "../ui";
 import { isPinned, togglePin, usePins, type Row } from "../data";
-import { deleteInstance, stateAction } from "./Instances";
+import { canDo, deleteInstance, stateAction, type Act } from "./Instances";
+import { CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, readable, RenameDialog, SnapRenameDialog } from "./InstanceDialogs";
 import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
@@ -36,7 +37,17 @@ export function InstancePage() {
     },
     4000,
   );
+  const [deleting, setDeleting] = useState(false);
+  const [dlg, setDlg] = useState<"" | "rename" | "copy" | "move" | "publish">("");
   const [prevTab, setPrevTab] = useState<Tab>(tab as Tab);
+  const [seenTerm, setSeenTerm] = useState(tab === "terminal");
+  useEffect(() => {
+    setSeenTerm(tab === "terminal");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server, name, project]);
+  useEffect(() => {
+    if (tab === "terminal") setSeenTerm(true);
+  }, [tab]);
   useEffect(() => {
     if (inst) app.touch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,13 +73,16 @@ export function InstancePage() {
 
   const isVM = inst.type === "virtual-machine";
   const running = inst.status === "Running";
+  const frozen = inst.status === "Frozen";
+  const stopped = inst.status === "Stopped";
+  const status = deleting ? "Deleting…" : inst.status;
   const row = inst as Row;
   const go = (t: Tab) => {
     setPrevTab(tab as Tab);
     nav(`/instances/${server}/${name}${t === "overview" ? "" : "/" + t}${loc.search}`);
   };
   const dir = tabOrder.indexOf(tab as Tab) >= tabOrder.indexOf(prevTab) ? "fromR" : "fromL";
-  const act = (a: "start" | "stop" | "restart" | "freeze" | "unfreeze", force = false) => {
+  const act = (a: Act, force = false) => {
     mutateCache(key, (d: Instance) => ({ ...d, status: { start: "Starting", stop: "Stopping", restart: "Restarting", freeze: "Pausing", unfreeze: "Resuming" }[a] }));
     stateAction(app, null, row, a, force).then(() => reload());
   };
@@ -78,7 +92,7 @@ export function InstancePage() {
       <div className="ihead">
         <div style={{ minWidth: 0 }}>
           <h1>
-            {inst.name} <Status status={inst.status} />
+            {inst.name} <Status status={status} />
             <PinButton pin={{ server, name, project: inst.project }} />
           </h1>
           <p>
@@ -95,45 +109,60 @@ export function InstancePage() {
           </p>
         </div>
         <div className="r">
-          {running && (
+          {running && !deleting && (
             <button className="btn btn-p press" onClick={() => go("terminal")}>
               {ic.term}Terminal
             </button>
           )}
           {running ? (
-            <button className="btn btn-s press" onClick={() => act("stop")}>
+            <button className="btn btn-s press" disabled={deleting} onClick={() => act("stop")}>
               {ic.stop}Stop
             </button>
-          ) : inst.status === "Frozen" ? (
-            <button className="btn btn-p press" onClick={() => act("unfreeze")}>
-              {ic.play}Resume
-            </button>
+          ) : frozen ? (
+            <>
+              <button className="btn btn-p press" disabled={deleting} onClick={() => act("unfreeze")}>
+                {ic.play}Resume
+              </button>
+              <button className="btn btn-s press" disabled={deleting} onClick={() => act("stop", true)}>
+                {ic.stop}Force stop
+              </button>
+            </>
           ) : (
-            <button className="btn btn-p press" onClick={() => act("start")}>
+            <button className="btn btn-p press" disabled={deleting || !stopped} onClick={() => act("start")}>
               {ic.play}Start
             </button>
           )}
           <Menu
             button={(p) => (
-              <button className="btn btn-s ib press" aria-label="More actions" {...p}>
+              <button className="btn btn-s ib press" aria-label="More actions" disabled={deleting} {...p}>
                 {ic.more}
               </button>
             )}
           >
             {(close) => (
               <>
-                <button disabled={!running} onClick={() => (close(), act("restart"))}>
+                <button disabled={!canDo("restart", inst.status)} onClick={() => (close(), act("restart"))}>
                   {ic.restart}Restart
                 </button>
-                <button disabled={!running} onClick={() => (close(), act("freeze"))}>
-                  {ic.stop}Pause
+                <button disabled={!canDo("freeze", inst.status)} onClick={() => (close(), act("freeze"))}>
+                  {ic.pause}Pause
                 </button>
-                <button disabled={!running} onClick={() => (close(), act("stop", true))}>
+                <button disabled={!canDo("stop", inst.status)} onClick={() => (close(), act("stop", true))}>
                   {ic.stop}Force stop
                 </button>
                 <button onClick={() => (close(), go("snapshots"))}>{ic.snap}Snapshots</button>
                 <hr />
-                <button className="danger" onClick={async () => (close(), (await deleteInstance(app, row)) && nav("/instances"))}>
+                {!stopped && <div className="menu-hint">Stop the instance first to rename or move it.</div>}
+                <button disabled={!stopped} title={stopped ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("rename"))}>
+                  {ic.edit}Rename
+                </button>
+                <button onClick={() => (close(), setDlg("copy"))}>{ic.copy}Copy</button>
+                <button disabled={!stopped} title={stopped ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("move"))}>
+                  {ic.right}Move
+                </button>
+                <button onClick={() => (close(), setDlg("publish"))}>{ic.img}Create image</button>
+                <hr />
+                <button className="danger" onClick={async () => (close(), (await deleteInstance(app, row, () => setDeleting(true))) ? nav("/instances") : setDeleting(false))}>
                   {ic.trash}Delete
                 </button>
               </>
@@ -141,6 +170,10 @@ export function InstancePage() {
           </Menu>
         </div>
       </div>
+      <RenameDialog key={"r" + inst.name} inst={inst} open={dlg === "rename"} onClose={() => setDlg("")} onDone={(n) => nav(`/instances/${server}/${n}${loc.search}`, { replace: true })} />
+      <CopyDialog key={"c" + inst.name} inst={inst} open={dlg === "copy"} onClose={() => setDlg("")} onDone={(n, p) => nav(`/instances/${server}/${n}?project=${encodeURIComponent(p)}`)} />
+      <MoveDialog key={"m" + inst.name} inst={inst} open={dlg === "move"} onClose={() => setDlg("")} onDone={(p) => nav(`/instances/${server}/${name}?project=${encodeURIComponent(p)}`, { replace: true })} />
+      <PublishDialog key={"p" + inst.name} inst={inst} open={dlg === "publish"} onClose={() => setDlg("")} />
       <Tabs
         value={tab as Tab}
         onChange={go}
@@ -154,16 +187,21 @@ export function InstancePage() {
           { v: "logs", l: "Logs" },
         ]}
       />
-      <div className="tabwrap">
+      <div className={"tabwrap" + (deleting ? " is-deleting" : "")}>
         <div className="tp" key={tab} style={{ ["--tp-anim" as any]: dir }}>
           {tab === "overview" && <OverviewTab inst={inst} />}
           {tab === "configuration" && <ConfigTab inst={inst} reload={reload} />}
           {tab === "snapshots" && <SnapshotsTab inst={inst} reload={reload} />}
           {tab === "files" && <FilesTab inst={inst} />}
-          {tab === "terminal" && <TerminalTab inst={inst} onStart={() => act("start")} />}
           {tab === "console" && <ConsoleTab inst={inst} onStart={() => act("start")} />}
           {tab === "logs" && <LogsTab inst={inst} />}
         </div>
+        {/* Stays mounted once opened so the shell survives a visit to another tab. */}
+        {seenTerm && (
+          <div hidden={tab !== "terminal"}>
+            <TerminalTab inst={inst} onStart={() => act("start")} visible={tab === "terminal"} />
+          </div>
+        )}
       </div>
     </>
   );
@@ -375,17 +413,48 @@ function describeDevice(d: Record<string, string>) {
 
 // ---------- snapshots ----------
 
+const expiries = [
+  { v: "never", l: "Never expires" },
+  { v: "1", l: "Expires in 1 day" },
+  { v: "7", l: "Expires in 7 days" },
+  { v: "30", l: "Expires in 30 days" },
+  { v: "custom", l: "Custom date" },
+];
+
 function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; reload: () => void }) {
   const app = useApp();
+  const nav = useNavigate();
   const [name, setName] = useState("");
   const [stateful, setStateful] = useState(false);
+  const [exp, setExp] = useState("never");
+  const [custom, setCustom] = useState("");
+  const [ren, setRen] = useState<string | null>(null);
+  const [from, setFrom] = useState<string | null>(null);
   const snaps = (inst.snapshots || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
   const base = `/1.0/instances/${encodeURIComponent(inst.name)}`;
   const o = { project: inst.project };
+  const canState = inst.status === "Running" && inst.expanded_config?.["migration.stateful"] === "true";
+  const hasSize = snaps.some((s) => s.size > 0);
+  const bad = nameProblem(name.trim(), snaps.map((s) => s.name));
+  const expiresAt = () => {
+    if (exp === "never") return undefined;
+    if (exp === "custom") return custom ? new Date(custom).toISOString() : undefined;
+    return new Date(Date.now() + Number(exp) * 86400000).toISOString();
+  };
   const create = () => {
+    if (bad || (exp === "custom" && !custom)) return;
     const n = name.trim() || `snap-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`;
     setName("");
-    app.run(`Snapshot of ${inst.name}`, () => incusOp(inst.server, base + "/snapshots", { ...o, method: "POST", body: { name: n, stateful } }).then(reload), `Snapshot ${n} created`);
+    app.run(
+      `Snapshot of ${inst.name}`,
+      () =>
+        incusOp(inst.server, base + "/snapshots", { ...o, method: "POST", body: { name: n, stateful: canState && stateful, expires_at: expiresAt() } })
+          .catch((e) => {
+            throw new Error(readable(e).replace("That name", `The name "${n}"`));
+          })
+          .then(reload),
+      `Snapshot ${n} created`,
+    );
   };
   const restore = async (s: string) => {
     if (!(await confirmDialog({ title: `Restore ${s}?`, body: `${inst.name} goes back to how it was at this snapshot. Changes since then are lost.`, confirm: "Restore", danger: true }))) return;
@@ -397,45 +466,78 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
   };
   return (
     <div className="col">
-      <div className="toolbar">
-        <div className="field" style={{ maxWidth: 280 }}>
-          <input className="mono" placeholder="Snapshot name (optional)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
+      <div className="toolbar snap-bar">
+        <div className="field" style={{ maxWidth: 240 }}>
+          <input className="mono" placeholder="Snapshot name (optional)" aria-invalid={!!bad} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         </div>
-        {inst.type === "virtual-machine" && inst.status === "Running" && (
+        <div className="field" style={{ maxWidth: 190 }}>
+          <select aria-label="Expiry" value={exp} onChange={(e) => setExp(e.target.value)}>
+            {expiries.map((x) => (
+              <option key={x.v} value={x.v}>
+                {x.l}
+              </option>
+            ))}
+          </select>
+        </div>
+        {exp === "custom" && (
+          <div className="field" style={{ maxWidth: 210 }}>
+            <input type="datetime-local" aria-label="Expires on" value={custom} min={new Date().toISOString().slice(0, 16)} onChange={(e) => setCustom(e.target.value)} />
+          </div>
+        )}
+        {canState && (
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input type="checkbox" checked={stateful} onChange={(e) => setStateful(e.target.checked)} /> Include memory
           </label>
         )}
-        <button className="btn btn-p press" onClick={create}>
+        <button className="btn btn-p press" disabled={!!bad || (exp === "custom" && !custom)} onClick={create}>
           {ic.snap}Take snapshot
         </button>
+        {bad && <span className="snap-err">{bad}</span>}
       </div>
-      <div className="panel tw">
+      <div className="panel tw tw-menu">
         <table>
           <thead>
             <tr>
               <th>Name</th>
               <th>Taken</th>
               <th className="hide-s">Expires</th>
-              <th className="right hide-s">Size</th>
+              {hasSize && <th className="right hide-s">Size</th>}
               <th />
             </tr>
           </thead>
           <tbody>
             {snaps.map((s) => (
               <tr key={s.name} style={{ cursor: "default" }}>
-                <td className="mono">{s.name}</td>
+                <td className="mono">
+                  {s.name}
+                  {s.stateful && <span className="tag" style={{ marginLeft: 8 }}>with memory</span>}
+                </td>
                 <td>{dateTime(s.created_at)}</td>
-                <td className="dim hide-s">{dateTime(s.expires_at)}</td>
-                <td className="right mono hide-s">{s.size > 0 ? bytes(s.size) : "–"}</td>
+                <td className="dim hide-s">{s.expires_at && !s.expires_at.startsWith("0001") ? dateTime(s.expires_at) : "Never"}</td>
+                {hasSize && <td className="right mono hide-s">{s.size > 0 ? bytes(s.size) : ""}</td>}
                 <td>
                   <div className="qa" style={{ opacity: 1 }}>
                     <button className="btn btn-q btn-sm" onClick={() => restore(s.name)}>
                       Restore
                     </button>
-                    <button className="btn btn-q ib btn-sm" aria-label="Delete" onClick={() => del(s.name)}>
-                      {ic.trash}
-                    </button>
+                    <Menu
+                      button={(p) => (
+                        <button className="btn btn-q ib btn-sm" aria-label={`More actions for ${s.name}`} {...p}>
+                          {ic.more}
+                        </button>
+                      )}
+                    >
+                      {(close) => (
+                        <>
+                          <button onClick={() => (close(), setRen(s.name))}>{ic.edit}Rename</button>
+                          <button onClick={() => (close(), setFrom(s.name))}>{ic.copy}Create instance</button>
+                          <hr />
+                          <button className="danger" onClick={() => (close(), del(s.name))}>
+                            {ic.trash}Delete
+                          </button>
+                        </>
+                      )}
+                    </Menu>
                   </div>
                 </td>
               </tr>
@@ -450,6 +552,8 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
           </tbody>
         </table>
       </div>
+      <SnapRenameDialog key={"sr" + ren} inst={inst} snap={ren} onClose={() => setRen(null)} reload={reload} />
+      <FromSnapDialog key={"sf" + from} inst={inst} snap={from} onClose={() => setFrom(null)} onDone={(n) => nav(`/instances/${inst.server}/${n}?project=${encodeURIComponent(inst.project)}`)} />
     </div>
   );
 }

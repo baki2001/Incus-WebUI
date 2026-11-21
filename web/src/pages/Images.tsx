@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { bytes, dateTime, incusOp, incusURL } from "../api";
+import { bytes, dateTime, incusOp, incusURL, upload, waitOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useScopedServers } from "../state";
 import { useCollection, useCurrentProject } from "../data";
 import { confirmDialog, CopyBtn, Field, Input, Seg, Select, Sheet, SheetSec, Table, TglRow } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
-import { imageName, ociRegistries, RemotePicker, type RemoteImage } from "./ImagePicker";
+import { imageName, ociRegistries, RemotePicker, useServerArch, type RemoteImage } from "./ImagePicker";
 
 type Image = {
   fingerprint: string;
@@ -35,12 +35,19 @@ export function Images() {
   const [search, setSearch] = useState("");
   const [type, setType] = useState<"all" | "container" | "virtual-machine">("all");
   const [pull, setPull] = useState(false);
-  const [open, setOpen] = useState<Image | null>(null);
+  const [imp, setImp] = useState(false);
+  // Keep only which image is open and look it up on every reload, so the
+  // sheet shows the server's answer after a change.
+  const [openKey, setOpen] = useState<{ server: string; fingerprint: string } | null>(null);
+  const open = (openKey && q.data?.find((i) => i.server === openKey.server && i.fingerprint === openKey.fingerprint)) || null;
   const rows = q.data?.filter((i) => (type === "all" || i.type === type) && matches(search, imageName(i), i.properties?.description, i.fingerprint, i.properties?.os));
 
   return (
     <>
       <PageHead title="Images">
+        <button className="btn btn-s press" onClick={() => setImp(true)}>
+          {ic.up}Import from file
+        </button>
         <button className="btn btn-p press" onClick={() => setPull(true)}>
           {ic.dl}Pull image
         </button>
@@ -48,13 +55,13 @@ export function Images() {
       <div className="fbar">
         <Search value={search} onChange={setSearch} placeholder="Filter by name, OS, fingerprint" />
         <Seg value={type} onChange={setType} label="Type" options={[{ v: "all", l: "All" }, { v: "container", l: "Containers" }, { v: "virtual-machine", l: "VMs" }]} />
-        <span className="dim fnote">Images on the server. New instances start from these without downloading again.</span>
       </div>
+      <p className="dim fnote">Images on the server. New instances start from these without downloading again.</p>
       <Table<Image>
         rows={rows}
         loading={q.loading}
         rowKey={(i) => i.server + i.fingerprint}
-        onRow={setOpen}
+        onRow={(i) => setOpen({ server: i.server, fingerprint: i.fingerprint })}
         empty={q.error || (search || type !== "all" ? "No images match." : "No images yet. Pull one, or create an instance and Incus keeps its image here.")}
         cols={[
           {
@@ -63,7 +70,10 @@ export function Images() {
             sort: (i) => i.properties?.description || imageName(i),
             cell: (i) => (
               <span className="nm">
-                <span className="nm2">{i.properties?.description || imageName(i)}</span>
+                <span className="nm2">
+                  {i.properties?.description || imageName(i)}
+                  {i.public && <span className="tag">Public</span>}
+                </span>
                 <small className="mono dim">{i.aliases?.map((a) => a.name).join(", ") || i.fingerprint.slice(0, 12)}</small>
               </span>
             ),
@@ -77,6 +87,7 @@ export function Images() {
         ]}
       />
       <PullSheet open={pull} onClose={() => setPull(false)} project={project} />
+      <ImportSheet open={imp} onClose={() => setImp(false)} project={project} />
       <ImageSheet img={open} onClose={() => setOpen(null)} project={project} onCreate={(i) => nav(`/instances?create=1&image=${i.fingerprint}&server=${i.server}`)} />
     </>
   );
@@ -97,7 +108,7 @@ function PullSheet({ open, onClose, project }: { open: boolean; onClose: () => v
   const [auto, setAuto] = useState(true);
 
   const go = async () => {
-    const isOci = src === "oci";
+    const isOci = src === "oci" && ociOk;
     const remoteAlias = isOci ? oci.ref.trim() : pick?.alias;
     if (!remoteAlias) return;
     const body: any = {
@@ -113,7 +124,12 @@ function PullSheet({ open, onClose, project }: { open: boolean; onClose: () => v
       setAlias("");
     }
   };
-  const ready = src === "oci" ? !!oci.ref.trim() : !!pick && (!vm || pick.img.vm);
+  const { info } = useServerArch(srv);
+  // OCI registries came with Incus 6.3. Until the server answers, assume yes.
+  const [maj, min] = String(info?.environment?.server_version || "").split(".").map(Number);
+  const ociOk = !info || (info.api_extensions || []).some((e: string) => /oci/.test(e)) || maj > 6 || (maj === 6 && min >= 3);
+  const mode = ociOk ? src : "remote";
+  const ready = mode === "oci" ? !!oci.ref.trim() : !!pick && (!vm || pick.img.vm);
 
   return (
     <Sheet
@@ -132,8 +148,12 @@ function PullSheet({ open, onClose, project }: { open: boolean; onClose: () => v
         </>
       }
     >
-      <Seg value={src} onChange={setSrc} label="Source" options={[{ v: "remote", l: "Image server" }, { v: "oci", l: "OCI registry" }]} />
-      {src === "remote" ? (
+      {ociOk ? (
+        <Seg value={src} onChange={setSrc} label="Source" options={[{ v: "remote", l: "Image server" }, { v: "oci", l: "OCI registry" }]} />
+      ) : (
+        <p className="dim fnote">Pulling from an OCI registry needs Incus 6.3 or newer. {srv} runs {info?.environment?.server_version}.</p>
+      )}
+      {mode === "remote" ? (
         <>
           <RemotePicker
             server={srv}
@@ -196,16 +216,14 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
   };
   const addAlias = async () => {
     if (!i || !alias.trim()) return;
-    await app.run("Adding name", () => incusOp(i.server, "/1.0/images/aliases", { method: "POST", project, body: { name: alias.trim(), target: i.fingerprint } }), `Named ${alias.trim()}`);
-    setAlias("");
+    const ok = await app.run("Adding name", () => incusOp(i.server, "/1.0/images/aliases", { method: "POST", project, body: { name: alias.trim(), target: i.fingerprint } }).then(() => true), `Named ${alias.trim()}`);
+    if (ok) setAlias("");
     invalidate("images:");
-    onClose();
   };
   const delAlias = async (name: string) => {
     if (!i) return;
     await app.run("Removing name", () => incusOp(i.server, `/1.0/images/aliases/${encodeURIComponent(name)}`, { method: "DELETE", project }), `Removed ${name}`);
     invalidate("images:");
-    onClose();
   };
   const del = async () => {
     if (!i) return;
@@ -268,7 +286,7 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
               .filter(([k]) => ["os", "release", "variant", "serial"].includes(k))
               .map(([k, v]) => (
                 <div key={k} style={{ display: "contents" }}>
-                  <dt>{k[0].toUpperCase() + k.slice(1)}</dt>
+                  <dt>{k === "os" ? "OS" : k[0].toUpperCase() + k.slice(1)}</dt>
                   <dd>{v}</dd>
                 </div>
               ))}
@@ -293,11 +311,121 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
             </div>
           </SheetSec>
           <SheetSec title="Options">
-            <TglRow title="Keep it up to date" note={i.update_source ? "Refreshes from its source every few hours." : "Only for images pulled from a server."} on={i.auto_update} onChange={(o) => patch({ auto_update: o }, o ? "Auto update on" : "Auto update off")} />
-            <TglRow title="Public" note="Other Incus servers can pull it from this one without a certificate." on={i.public} onChange={(o) => patch({ public: o }, o ? "Image is public" : "Image is private")} />
+            {i.update_source && <TglRow title="Keep it up to date" note="Refreshes from its source every few hours." on={i.auto_update} onChange={(o) => patch({ auto_update: o }, o ? "Auto update on" : "Auto update off")} />}
+            <TglRow title="Public" note="Other Incus servers can pull it from this one without a certificate." on={i.public}
+              onChange={async (o) => {
+                if (o && !(await confirmDialog({ title: "Make this image public?", body: "Anyone who can reach this server can download this image.", confirm: "Make public" }))) return;
+                patch({ public: o }, o ? "Image is public" : "Image is private");
+              }} />
           </SheetSec>
         </>
       )}
+    </Sheet>
+  );
+}
+
+// ImportSheet uploads an image from a file: one unified tarball, or the
+// metadata file plus a separate root filesystem.
+function ImportSheet({ open, onClose, project }: { open: boolean; onClose: () => void; project: string }) {
+  const app = useApp();
+  const servers = useScopedServers();
+  const [server, setServer] = useState("");
+  const srv = server || servers[0]?.name || "";
+  const [file, setFile] = useState<File | null>(null);
+  const [root, setRoot] = useState<File | null>(null);
+  const [alias, setAlias] = useState("");
+  const [pub, setPub] = useState(false);
+  const [frac, setFrac] = useState<number | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const rinput = useRef<HTMLInputElement>(null);
+  const pick = (f: File | undefined) => {
+    if (!f) return;
+    setFile(f);
+    setAlias((a) => a || f.name.replace(/\.(tar(\.(gz|xz|bz2|zst))?|tgz|squashfs|qcow2|img)$/i, "").replace(/[^a-zA-Z0-9_./-]/g, "-"));
+  };
+  const go = async () => {
+    if (!file) return;
+    const name = alias.trim();
+    setFrac(0);
+    const ok = await app.run(
+      `Importing ${file.name}`,
+      async (progress) => {
+        const headers: Record<string, string> = { "X-Incus-public": String(pub) };
+        let body: Blob | FormData = file;
+        if (root) {
+          // Split image: the browser sets the multipart type and boundary.
+          const fd = new FormData();
+          fd.append("metadata", file, file.name);
+          fd.append(/\.(qcow2|img)$/i.test(root.name) ? "rootfs.img" : "rootfs", root, root.name);
+          body = fd;
+        } else headers["Content-Type"] = "application/octet-stream";
+        const d = await upload(incusURL(srv, "/1.0/images", project), body as Blob, headers, (f) => {
+          setFrac(f);
+          progress(`${Math.round(f * 100)}%`);
+        });
+        let fp = d?.metadata?.fingerprint;
+        if (d?.type === "async") fp = (await waitOp(srv, d.metadata.id, project)).metadata?.fingerprint;
+        if (name && fp) await incusOp(srv, "/1.0/images/aliases", { method: "POST", project, body: { name, target: fp } });
+        return true;
+      },
+      "Image imported",
+    );
+    setFrac(null);
+    if (ok) {
+      invalidate("images:");
+      setFile(null);
+      setRoot(null);
+      setAlias("");
+      onClose();
+    }
+  };
+  const drop = (set: (f: File | undefined) => void) => ({
+    onDragOver: (e: React.DragEvent) => e.preventDefault(),
+    onDrop: (e: React.DragEvent) => (e.preventDefault(), set(e.dataTransfer.files[0])),
+  });
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Import image"
+      footer={
+        <>
+          <button className="btn btn-s press" onClick={onClose}>
+            {frac !== null ? "Hide" : "Cancel"}
+          </button>
+          <button className="btn btn-p press" disabled={!file || frac !== null} onClick={go}>
+            {ic.up}Import
+          </button>
+        </>
+      }
+    >
+      <div className="drop" onClick={() => input.current?.click()} {...drop(pick)}>
+        {ic.up}
+        <b>{file ? file.name : "Drop an image file here or click to choose"}</b>
+        <span className="dim">{file ? bytes(file.size) : "A single image tarball, or the metadata file of a split image."}</span>
+        <input ref={input} type="file" hidden onChange={(e) => pick(e.target.files?.[0])} />
+      </div>
+      <div className="drop slim" onClick={() => rinput.current?.click()} {...drop((f) => setRoot(f || null))}>
+        <b>{root ? root.name : "Root filesystem file"}</b>
+        <span className="dim">{root ? bytes(root.size) : "Only for split images. Leave empty for a single tarball."}</span>
+        <input ref={rinput} type="file" hidden onChange={(e) => setRoot(e.target.files?.[0] || null)} />
+      </div>
+      {frac !== null && (
+        <div className="prog">
+          <i style={{ transform: `scaleX(${frac})` }} />
+        </div>
+      )}
+      <div className="two">
+        <Field label="Name" hint="Optional. Lets you pick the image by name later.">
+          <Input mono value={alias} onChange={setAlias} />
+        </Field>
+        {servers.length > 1 && (
+          <Field label="Server">
+            <Select value={srv} onChange={setServer} options={servers.map((s) => s.name)} />
+          </Field>
+        )}
+      </div>
+      <TglRow title="Public" note="Other Incus servers can pull it from this one without a certificate." on={pub} onChange={setPub} />
     </Sheet>
   );
 }

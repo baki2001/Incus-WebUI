@@ -16,25 +16,30 @@
 </picture>
 
 > [!NOTE]
-> This is an early test release (0.1). It works against real servers, but expect rough edges and report them in [issues](https://github.com/baki2001/Incus-WebUI/issues).
+> This is an test release (0.4). It works against real servers, but expect rough edges and report them in [issues](https://github.com/baki2001/Incus-WebUI/issues).
 
 ## Features
 
-- Instances: create, start, stop, pause, snapshot, restore and delete, with filters that show counts per value. Pin the ones you use most to the sidebar.
+- An overview you can arrange: pick the tiles you want and where they go. The layout is saved per account.
+- Instances: create, start, stop, pause, snapshot, restore and delete, with filters that show counts per value and live in the URL. Bulk actions skip instances they should not touch. Rename, copy, move, publish as an image, and set snapshot expiry. Pin the ones you use most to the sidebar.
 - Create instances from an image server, an image already on the server, an OCI registry, or an ISO you uploaded.
 - Images: pull from an image server or OCI registry and keep them cached, with aliases and auto update.
 - Networks, ACLs and IPAM; storage pools, volumes, buckets and custom ISOs; profiles and projects with limits. Each one can be created, edited as a form or YAML, and deleted.
+- WireGuard tunnels for remote access to your networks, a homelab to VPS link with port publishing, or monitoring an existing tunnel. See [WireGuard tunnels](docs/tunnels.md).
 - Operations and warnings, so you can see what Incus is doing and what it noticed.
 - Terminal, console and files for every instance, each on its own tab:
   - Terminal opens a new shell inside the instance, the same as `incus exec`.
   - Console shows the instance's own screen, the same as `incus console`. VMs get a graphic mode (SPICE) and a text mode. Use it when the network or the OS inside is broken.
-  - File Explorer browses, uploads, downloads and edits files.
-- Hardware settings as a form (CPU, memory, disks, network cards, autostart, snapshot schedule), with a YAML view and a diff to review before anything is applied.
+  - File Explorer browses, uploads, downloads and edits files, and deletes folders recursively.
+  - The terminal keeps running when you switch tabs, and has a key row on phones.
+- Hardware settings as a form (CPU, memory, disks, network cards, port forwards, autostart, snapshot schedule), with a YAML view and a diff to review before anything is applied. If someone else changed the instance meanwhile, you see the conflict before saving.
 - Several Incus servers in one place. Connect a server by pasting a trust token.
-- Sign in with a password, with single sign-on (OIDC), or both.
+- Sign in with a password, with single sign-on (OIDC), or both. Signing out ends the session, changing a password ends the user's other sessions, and repeated failed logins lock out that user and address for a while.
 - Updates from the UI, for the UI itself and for Incus (IncusOS, or Debian and Ubuntu with a small helper).
 - Light and dark mode, plus a server-wide theme with your own accent colour.
-- A command menu on <kbd>Ctrl</kbd> <kbd>K</kbd> to jump to any instance or action.
+- A command menu on <kbd>Ctrl</kbd> <kbd>K</kbd> to search instances, networks, storage, images and more, and to run instance actions.
+
+The layout works on phones, and errors stay on screen until you dismiss them.
 
 ## Install
 
@@ -47,6 +52,10 @@ curl -fsSL https://raw.githubusercontent.com/baki2001/Incus-WebUI/main/install/i
 It prints the address and a one-time setup code. Open the address, enter the code and pick a username and password. Updates install from Settings, Updates and about.
 
 The [install guide](docs/install.md) explains each step, how to do it by hand, and the other ways to run it: as a plain binary on any Linux machine, or as an OCI image.
+
+## Upgrading to 0.4
+
+Everyone signs in once after the upgrade. Update from Settings, Updates and about, or install again with the script above.
 
 ## How it works
 

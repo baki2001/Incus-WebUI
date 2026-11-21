@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,12 +23,24 @@ type Config struct {
 	TLSKey        string `yaml:"tls_key,omitempty"`
 	SessionSecret string `yaml:"session_secret"`
 
-	Theme   Theme          `yaml:"theme"`
-	Users   []User         `yaml:"users"`
-	OIDC    *OIDCConfig    `yaml:"oidc,omitempty"`
-	Servers []ServerConfig `yaml:"servers"`
+	Theme Theme  `yaml:"theme"`
+	Users []User `yaml:"users"`
+	// Revoked lists sessions ended by logout; entries are dropped once the session would have expired.
+	Revoked []RevokedSession `yaml:"revoked_sessions,omitempty"`
+	OIDC    *OIDCConfig      `yaml:"oidc,omitempty"`
+	// OIDCGen must match the generation in an OIDC session cookie. It changes
+	// whenever the OIDC settings or the allowed lists change (see syncOIDCGen).
+	OIDCGen int64 `yaml:"oidc_gen,omitempty"`
+	// OIDCSum is a fingerprint of the OIDC settings, to notice edits made by hand.
+	OIDCSum string `yaml:"oidc_sum,omitempty"`
+	// TrustedProxies are the IPs or CIDRs of reverse proxies whose
+	// X-Forwarded-For header is believed (used for the login rate limit).
+	TrustedProxies []string       `yaml:"trusted_proxies,omitempty"`
+	Servers        []ServerConfig `yaml:"servers"`
 	// ImageServers are the simplestreams servers the UI offers images from.
 	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
+	// UIPrefs are per-user interface settings, keyed by user name (see prefs.go).
+	UIPrefs map[string]UIPrefs `yaml:"ui_prefs,omitempty"`
 }
 
 type Theme struct {
@@ -37,6 +51,14 @@ type Theme struct {
 type User struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+	// SessionGen must match the generation in a session cookie. It changes on
+	// password change and is a creation timestamp for new users.
+	SessionGen int64 `yaml:"session_gen,omitempty"`
+}
+
+type RevokedSession struct {
+	ID      string `yaml:"id"`
+	Expires int64  `yaml:"expires"`
 }
 
 type OIDCConfig struct {
@@ -91,6 +113,9 @@ func loadStore(dataDir string) (*Store, error) {
 		s.cfg.Theme.Name = "graphite"
 		changed = true
 	}
+	if syncOIDCGen(&s.cfg) {
+		changed = true
+	}
 	s.Fresh = err != nil
 	if changed || err != nil {
 		if err := s.saveLocked(); err != nil {
@@ -100,12 +125,32 @@ func loadStore(dataDir string) (*Store, error) {
 	return s, nil
 }
 
+// syncOIDCGen ends all OIDC sessions when the OIDC settings or allowed lists
+// differ from the last saved ones. It reports whether it changed anything.
+func syncOIDCGen(c *Config) bool {
+	sum := ""
+	if o := c.OIDC; o != nil {
+		cp := *o
+		cp.ButtonLabel = "" // a label change needs no sign-out
+		b, _ := json.Marshal(cp)
+		h := sha256.Sum256(b)
+		sum = hex.EncodeToString(h[:])
+	}
+	if sum == c.OIDCSum {
+		return false
+	}
+	c.OIDCSum = sum
+	c.OIDCGen = nextGen(c.OIDCGen)
+	return true
+}
+
 func (s *Store) Get() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.cfg
 	c.Users = append([]User(nil), s.cfg.Users...)
 	c.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
+	c.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	return c
 }
 
@@ -116,9 +161,11 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next := s.cfg
 	next.Users = append([]User(nil), s.cfg.Users...)
 	next.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
+	next.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	if err := fn(&next); err != nil {
 		return err
 	}
+	syncOIDCGen(&next)
 	prev := s.cfg
 	s.cfg = next
 	if err := s.saveLocked(); err != nil {

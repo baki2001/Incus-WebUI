@@ -65,7 +65,14 @@ export function RemotePicker({ server, type, value, onPick }: { server: string; 
         )}
       </div>
       <div className="ilist" role="listbox">
-        {list.error && <div className="emp">{list.error}</div>}
+        {list.error && (
+          <div className="emp">
+            <p style={{ margin: "0 0 10px" }}>{list.error}</p>
+            <button type="button" className="btn btn-s btn-sm press" disabled={list.loading} onClick={() => list.reload()}>
+              Retry
+            </button>
+          </div>
+        )}
         {!list.data && !list.error && (
           <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
             {[0, 1, 2, 3].map((i) => (

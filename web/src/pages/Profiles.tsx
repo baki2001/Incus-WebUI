@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { incusOp } from "../api";
+import { incus, incusOp, memBytes, spaced } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
-import { invalidate, useApp, useScopedServers } from "../state";
-import { useCollection, useCurrentProject, useNames } from "../data";
+import { invalidate, useApp, useData, useScopedServers } from "../state";
+import { useCollection, useCurrentProject, useManagedNetworks, useNames } from "../data";
 import { confirmDialog, Field, Input, KVEditor, Select, SheetSec, Table, TglRow } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
+import { SizeField } from "./cfgutil";
+import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 import { instanceKeys } from "./CreateInstance";
 
 type Dev = Record<string, string>;
@@ -26,7 +28,11 @@ export function Profiles() {
   const [server, setServer] = useState("");
   const srv = edit?.server || server || servers[0]?.name || "";
   const pools = useNames(create || edit ? srv : "", "storage-pools", project);
-  const nets = useNames(create || edit ? srv : "", "networks", project);
+  const nets = useManagedNetworks(create || edit ? srv : "", project);
+  useOpenParam(q.data, setEdit);
+  // A project without its own profiles shows the ones from project default.
+  const proj = useData<{ config: Record<string, string> }>(`project-cfg:${srv}:${project}`, () => incus(srv, `/1.0/projects/${encodeURIComponent(project)}`));
+  const shared = project !== "default" && !!proj.data && proj.data.config?.["features.profiles"] !== "true";
 
   const save = async (d: PPut) => {
     if (!edit) {
@@ -40,7 +46,7 @@ export function Profiles() {
     return ok;
   };
   const del = async (p: Profile) => {
-    if (!(await confirmDialog({ title: `Delete profile ${p.name}?`, body: p.used_by?.length ? `${p.used_by.length} instances use it; Incus refuses until they don't.` : "Nothing uses it.", confirm: "Delete", danger: true }))) return;
+    if (!(await confirmDialog({ title: `Delete profile ${p.name}?`, body: usedByBody(shared ? "Instances in several projects may use it. Incus refuses to delete it until they don't." : "These use it; Incus refuses to delete it until they don't.", p.used_by, p.server), confirm: "Delete", danger: true }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/profiles/${encodeURIComponent(p.name)}`, { method: "DELETE", project }).then(() => true), `Profile ${p.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -52,13 +58,19 @@ export function Profiles() {
     <>
       <PageHead title="Profiles">
         <button className="btn btn-p press" onClick={() => setCreate({ name: "", description: "", config: {}, devices: {} })}>
-          {ic.plus}Create profile
+          {ic.plus}
+          {shared ? "Create profile in default" : "Create profile"}
         </button>
       </PageHead>
       <div className="fbar">
         <Search value={search} onChange={setSearch} placeholder="Filter by name" />
         <span className="dim fnote">Settings and devices that instances share. Changes apply to every instance that uses the profile.</span>
       </div>
+      {shared && (
+        <div className="notice sm" style={{ marginBottom: 12 }}>
+          Project {project} has no profiles of its own, so these are the profiles from project default. Changing them changes them for every project that shares them.
+        </div>
+      )}
       <Table<Profile>
         rows={q.data?.filter((p) => matches(search, p.name, p.description))}
         loading={q.loading}
@@ -68,19 +80,29 @@ export function Profiles() {
         cols={[
           { k: "name", label: "Name", sort: (p) => p.name, cell: (p) => <NameCell name={p.name} sub={p.description} /> },
           { k: "server", label: "Server", sort: (p) => p.server, cell: (p) => p.server, hide: !multi, cls: "hide-m" },
-          { k: "limits", label: "Limits", cell: (p) => <span className="dim">{[p.config["limits.cpu"] && `${p.config["limits.cpu"]} CPU`, p.config["limits.memory"]].filter(Boolean).join(" · ") || "–"}</span>, cls: "hide-s" },
+          { k: "limits", label: "Limits", cell: (p) => <span className="dim">{[p.config["limits.cpu"] && `${p.config["limits.cpu"]} CPU`, p.config["limits.memory"] && spaced(p.config["limits.memory"])].filter(Boolean).join(" · ") || "–"}</span>, cls: "hide-s" },
           { k: "devices", label: "Devices", cell: (p) => <span className="keys">{Object.keys(p.devices || {}).map((d) => <code key={d}>{d}</code>)}</span>, cls: "hide-s" },
           { k: "used", label: "Used by", sort: (p) => p.used_by?.length || 0, cell: (p) => <UsedBy list={p.used_by} />, cls: "right" },
         ]}
       />
       <EditSheet<PPut>
+        validate={(d) => {
+          const m = d.config["limits.memory"];
+          return m && !m.endsWith("%") && memBytes(m) == null ? "Memory must be a number with a unit, like 2 GiB." : "";
+        }}
         open={!!create || !!edit}
         onClose={() => (setCreate(null), setEdit(null))}
-        title={edit ? `Profile ${edit.name}` : "Create profile"}
+        title={edit ? `Profile ${edit.name}` : shared ? "Create profile in default" : "Create profile"}
         create={!edit}
         value={edit ? { description: edit.description, config: edit.config, devices: edit.devices } : create}
         onSave={save}
         onDelete={edit && edit.name !== "default" ? () => del(edit) : undefined}
+        info={
+          <>
+            {!edit && shared && <div className="notice sm">Project {project} shares profiles with default, so this profile is created in project default and shows up in every project that shares them. To keep profiles separate, turn on "Own profiles" for the project.</div>}
+            {edit && <UsedBySec list={edit.used_by} server={edit.server} />}
+          </>
+        }
         form={(d, set) => (
           <>
             {!edit && (
@@ -100,7 +122,7 @@ export function Profiles() {
             <Field label="Description">
               <Input value={d.description} onChange={(v) => set((x) => void (x.description = v))} />
             </Field>
-            <ProfileForm d={d} set={set} pools={pools.data || []} nets={nets.data || []} />
+            <ProfileForm d={d} set={set} pools={pools.data || []} nets={(nets.data || []).map((n) => n.name)} />
           </>
         )}
       />
@@ -126,8 +148,12 @@ function ProfileForm({ d, set, pools, nets }: { d: PPut; set: (fn: (x: PPut) => 
           <Field label="CPU cores" hint="Empty means all.">
             <Input mono value={d.config["limits.cpu"] || ""} onChange={(v) => setCfg("limits.cpu", v.replace(/[^\d,-]/g, ""))} />
           </Field>
-          <Field label="Memory" hint="Like 2GiB. Empty means no limit.">
-            <Input mono value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} />
+          <Field label="Memory" hint="Empty means no limit.">
+            {/\d$|^$/.test(d.config["limits.memory"] || "") || /[KMGT]i?B$/i.test(d.config["limits.memory"] || "") ? (
+              <SizeField label="Memory" value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} bad={!!d.config["limits.memory"] && memBytes(d.config["limits.memory"]) == null} />
+            ) : (
+              <Input mono value={d.config["limits.memory"] || ""} onChange={(v) => setCfg("limits.memory", v)} />
+            )}
           </Field>
         </div>
       </SheetSec>

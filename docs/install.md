@@ -266,6 +266,14 @@ tls_key: /var/lib/incus-webui/tls/privkey.pem
 
 Behind a reverse proxy that handles TLS, set `tls: false` and let the proxy forward to port 8443 over plain HTTP. Make sure it sets `X-Forwarded-Proto: https` and passes WebSocket upgrades, or the terminal and console won't connect.
 
+Also tell the UI which proxies to trust, or every visitor will look like the proxy's address and share one login rate limit. List the proxy's address in `config.yaml`:
+
+```yaml
+trusted_proxies: ["127.0.0.1", "10.0.0.0/24"]
+```
+
+When a request comes from one of these addresses, the UI uses the client address from `X-Forwarded-For` (the right-most one that isn't another trusted proxy). Requests from anywhere else are never believed, so leave this empty if there's no proxy.
+
 ## Troubleshooting
 
 ### I lost the setup code

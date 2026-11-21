@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { incus, ui } from "./api";
+import { incus, incusOp, ui } from "./api";
 import { ic, Mark } from "./icons";
-import { useApp, useData, useScopedServers, type Mode } from "./state";
+import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
+import { canDo } from "./pages/Instances";
+import { askStop, StopHost } from "./pages/InstanceDialogs";
 import { usePins, useInstances, useProjects } from "./data";
 
 // ---------- breadcrumbs, set by each page ----------
@@ -104,6 +106,7 @@ export function Shell() {
       </div>
       <CmdK open={cmdk} onClose={() => setCmdk(false)} />
       <ConfirmHost />
+      <StopHost />
     </div>
   );
 }
@@ -180,6 +183,7 @@ const groups: NavGroup[] = [
       { to: "/networks", label: "Networks", end: true },
       { to: "/networks/acls", label: "ACLs" },
       { to: "/networks/ipam", label: "IPAM" },
+      { to: "/tunnels", label: "Tunnels" },
     ],
   },
   {
@@ -261,6 +265,20 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const [openG, toggleG] = useOpenGroups();
   const seg = useRef<HTMLDivElement>(null);
   useThumb(seg, 'button[aria-pressed="true"]', [app.mode, rail]);
+  // The menu scrolls between the scope picker and the footer; a fade hints at more below.
+  const navRef = useRef<HTMLElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const f = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+    f();
+    el.addEventListener("scroll", f, { passive: true });
+    const ro = new ResizeObserver(f);
+    ro.observe(el);
+    for (const c of Array.from(el.children)) ro.observe(c);
+    return () => (el.removeEventListener("scroll", f), ro.disconnect());
+  });
 
   return (
     <aside className={"side" + (rail ? " rail" : "")} aria-label="Sidebar">
@@ -272,7 +290,8 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         </button>
       </div>
       <Scope online={online} />
-      <nav className="nav">
+      <div className={"nav-wrap" + (more ? " more" : "")}>
+      <nav className="nav" ref={navRef}>
         <NavLink to="/" end className="ni" title="Overview">
           {ic.home}
           {lbl("Overview")}
@@ -324,9 +343,10 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         <NavLink to="/warnings" className="ni" title="Warnings">
           {ic.warn}
           {lbl("Warnings")}
-          {warnings > 0 && <span className="count warn">{warnings}</span>}
+          {warnings.n > 0 && <span className={"count" + (warnings.hot ? " warn" : "")}>{warnings.n}</span>}
         </NavLink>
       </nav>
+      </div>
       <div className="side-foot">
         <NavLink to="/settings" className="ni" title="Settings">
           {ic.gear}
@@ -350,15 +370,16 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
 function useWarningCount() {
   const servers = useScopedServers();
   const names = servers.map((s) => s.name).join(",");
-  const q = useData<number>(
+  const q = useData<{ n: number; hot: boolean }>(
     names ? `warnings-count:${names}` : null,
     async () => {
       const all = await Promise.all(servers.map((s) => incus<any[]>(s.name, "/1.0/warnings?recursion=1").catch(() => [])));
-      return all.flat().filter((w) => w.status === "new").length;
+      const fresh = all.flat().filter((w) => w.status === "new");
+      return { n: fresh.length, hot: fresh.some((w) => w.severity === "moderate" || w.severity === "high") };
     },
     60000,
   );
-  return q.data || 0;
+  return q.data || { n: 0, hot: false };
 }
 
 function Account() {
@@ -444,13 +465,50 @@ function Scope({ online }: { online: number }) {
 
 // ---------- command menu ----------
 type Cmd = { group: string; label: string; meta?: string; icon: ReactNode; run: () => void };
+type Found = { instances: { name: string; project: string; status: string; type: string; server: string }[]; things: { kind: string; name: string; server: string; project?: string; to: string }[] };
+
+// One fetch per server for everything the menu can find, across all projects.
+// Cached by useData, so reopening is instant and refreshes in the background.
+async function loadFound(servers: string[]): Promise<Found> {
+  const out: Found = { instances: [], things: [] };
+  const list = (s: string, path: string) => incus<any[]>(s, path).catch(() => [] as any[]);
+  await Promise.all(
+    servers.map(async (s) => {
+      const [inst, nets, pools, vols, profs, imgs, projs] = await Promise.all([
+        list(s, "/1.0/instances?recursion=1&all-projects=true"),
+        list(s, "/1.0/networks?recursion=1&all-projects=true"),
+        list(s, "/1.0/storage-pools?recursion=1"),
+        list(s, "/1.0/storage-volumes?recursion=1&all-projects=true"),
+        list(s, "/1.0/profiles?recursion=1&all-projects=true"),
+        list(s, "/1.0/images?recursion=1&all-projects=true"),
+        list(s, "/1.0/projects?recursion=1"),
+      ]);
+      for (const i of inst) out.instances.push({ name: i.name, project: i.project || "default", status: i.status, type: i.type, server: s });
+      for (const n of nets) if (n.managed) out.things.push({ kind: "Networks", name: n.name, server: s, project: n.project, to: "/networks" });
+      for (const p of pools) out.things.push({ kind: "Storage pools", name: p.name, server: s, to: "/storage" });
+      for (const v of vols) if (v.type === "custom") out.things.push({ kind: "Volumes", name: v.name, server: s, project: v.project, to: "/storage/volumes" });
+      for (const p of profs) out.things.push({ kind: "Profiles", name: p.name, server: s, project: p.project, to: "/profiles" });
+      for (const m of imgs) out.things.push({ kind: "Images", name: m.properties?.description || m.aliases?.[0]?.name || String(m.fingerprint).slice(0, 12), server: s, project: m.project, to: "/images" });
+      for (const p of projs) out.things.push({ kind: "Projects", name: p.name, server: s, to: "/projects" });
+    }),
+  );
+  out.instances.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+const groupOrder = ["Instances", "Instance actions", "Go to", "Actions", "Networks", "Storage pools", "Volumes", "Profiles", "Images", "Projects"];
+const idleOrder = ["Go to", "Actions", "Instances"];
+const groupIcon: Record<string, ReactNode> = { Networks: ic.net, "Storage pools": ic.disk, Volumes: ic.disk, Profiles: ic.prof, Images: ic.img, Projects: ic.folder };
 
 function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nav = useNavigate();
   const app = useApp();
-  const { data: rows } = useInstances();
+  const servers = useScopedServers();
+  const names = servers.map((s) => s.name).join(",");
+  const found = useData<Found>(open && names ? `cmdk:${names}` : null, () => loadFound(names.split(",")));
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (open) {
       setQ("");
@@ -458,6 +516,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
     }
   }, [open]);
   const go = (to: string) => () => (nav(to), onClose());
+  const multi = app.servers.length > 1;
   const cmds: Cmd[] = useMemo(() => {
     const list: Cmd[] = [
       { group: "Go to", label: "Overview", icon: ic.home, run: go("/") },
@@ -475,21 +534,66 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
       { group: "Go to", label: "Settings", icon: ic.gear, run: go("/settings") },
+      ...app.servers.map((s) => ({ group: "Go to", label: `Host ${s.name}`, icon: ic.host, run: go(`/hosts/${s.name}`) })),
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
       { group: "Actions", label: "Switch to dark mode", icon: ic.screen, run: () => (app.setMode("dark"), onClose()) },
       { group: "Actions", label: "Switch to light mode", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
     ];
-    for (const r of rows || []) {
-      list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${r.server}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(`/instances/${r.server}/${r.name}?project=${encodeURIComponent(r.project)}`) });
-      if (r.status === "Running") list.push({ group: "Instances", label: `Open terminal in ${r.name}`, icon: ic.term, run: go(`/instances/${r.server}/${r.name}/terminal?project=${encodeURIComponent(r.project)}`) });
+    const where = (project: string | undefined, server: string, always = false) => [project && (always || project !== "default") ? project : "", multi ? server : ""].filter(Boolean).join(" · ");
+    for (const r of found.data?.instances || []) {
+      const base = `/instances/${r.server}/${encodeURIComponent(r.name)}`;
+      const pq = `?project=${encodeURIComponent(r.project)}`;
+      const on = r.status === "Running";
+      const place = where(r.project, r.server, true);
+      const stop = async () => {
+        onClose();
+        const ans = await askStop([r]);
+        if (ans) power("stop", "Stopping", ans.force)();
+      };
+      const power = (action: "start" | "stop" | "restart" | "unfreeze", verb: string, force = false) => () => {
+        onClose();
+        app.run(`${verb} ${r.name}`, () =>
+          incusOp(r.server, `/1.0/instances/${encodeURIComponent(r.name)}/state`, { method: "PUT", project: r.project, body: { action, timeout: 30, force } }).finally(() => {
+            invalidate("instances:");
+            invalidate(`instance:${r.server}:${r.name}`);
+            invalidate("cmdk:");
+            app.touch();
+          }),
+        );
+      };
+      list.push({ group: "Instances", label: r.name, meta: `${r.status} · ${place}`, icon: r.type === "virtual-machine" ? ic.vm : ic.ct, run: go(base + pq) });
+      if (canDo("start", r.status)) list.push({ group: "Instance actions", label: `Start ${r.name}`, meta: place, icon: ic.play, run: power("start", "Starting") });
+      if (canDo("unfreeze", r.status)) list.push({ group: "Instance actions", label: `Resume ${r.name}`, meta: place, icon: ic.play, run: power("unfreeze", "Resuming") });
+      if (canDo("stop", r.status)) list.push({ group: "Instance actions", label: `${on ? "Stop" : "Force stop"} ${r.name}`, meta: place, icon: ic.stop, run: stop });
+      if (canDo("restart", r.status)) list.push({ group: "Instance actions", label: `Restart ${r.name}`, meta: place, icon: ic.restart, run: power("restart", "Restarting") });
+      if (on) list.push({ group: "Instance actions", label: `Open terminal in ${r.name}`, meta: place, icon: ic.term, run: go(base + "/terminal" + pq) });
     }
+    for (const t of found.data?.things || []) list.push({ group: t.kind, label: t.name, meta: where(t.project, t.server), icon: groupIcon[t.kind], run: go(t.to) });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
-  const ql = q.toLowerCase();
-  const shown = cmds.filter((c) => !ql || c.label.toLowerCase().includes(ql)).slice(0, 40);
+  }, [found.data, app.servers, multi]);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = useMemo(() => {
+    const idle = !words.length;
+    // Without a search, keep the menu short: pages, actions and instances.
+    const hit = cmds.filter((c) => (idle ? idleOrder.includes(c.group) : words.every((w) => (c.label + " " + c.group + " " + (c.meta || "")).toLowerCase().includes(w))));
+    // A query that starts like an action ("stop", "restart") puts actions above instances whose state text matches.
+    const verb = !idle && hit.some((c) => c.group === "Instance actions" && c.label.toLowerCase().startsWith(words[0]));
+    const order = idle ? idleOrder : verb ? ["Instance actions", ...groupOrder.filter((g) => g !== "Instance actions")] : groupOrder;
+    const score = (c: Cmd) => (idle || c.label.toLowerCase().startsWith(words[0]) ? 0 : 1);
+    return hit
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => order.indexOf(a.c.group) - order.indexOf(b.c.group) || score(a.c) - score(b.c) || a.i - b.i)
+      .map((x) => x.c)
+      .slice(0, 80);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmds, q]);
+  // Keep the selected row in view when moving with the arrow keys.
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [sel, shown]);
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") (e.preventDefault(), setSel((s) => Math.min(s + 1, shown.length - 1)));
     if (e.key === "ArrowUp") (e.preventDefault(), setSel((s) => Math.max(s - 1, 0)));
@@ -500,24 +604,24 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Dialog open={open} onClose={onClose}>
       <div className="cmdk-in">
         {ic.search}
-        <input autoFocus placeholder="Search instances, pages and actions" value={q} onChange={(e) => (setQ(e.target.value), setSel(0))} onKeyDown={onKey} />
+        <input autoFocus placeholder="Search instances, networks, storage and more" value={q} onChange={(e) => (setQ(e.target.value), setSel(0))} onKeyDown={onKey} />
         <kbd>esc</kbd>
       </div>
-      <div className="cmdk-list" role="listbox">
+      <div className="cmdk-list" role="listbox" ref={listRef}>
         {shown.map((c, i) => {
           const g = c.group !== lastGroup ? (lastGroup = c.group) : null;
           return (
-            <Fragment key={c.group + c.label}>
+            <Fragment key={c.group + c.label + (c.meta || "")}>
               {g && <div className="cmdk-g">{g}</div>}
-              <button className="cmdk-i" aria-selected={i === sel} onMouseMove={() => setSel(i)} onClick={c.run}>
+              <button className="cmdk-i" aria-selected={i === sel} onMouseMove={() => sel !== i && setSel(i)} onClick={c.run}>
                 {c.icon}
-                {c.label}
+                <span className="cmdk-l">{c.label}</span>
                 {c.meta && <span className="meta">{c.meta}</span>}
               </button>
             </Fragment>
           );
         })}
-        {!shown.length && <div className="cmdk-g">Nothing matches “{q}”.</div>}
+        {!shown.length && <div className="cmdk-g">{found.loading ? "Searching…" : `Nothing matches “${q}”.`}</div>}
       </div>
       <div className="cmdk-f">
         <span>

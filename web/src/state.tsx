@@ -1,18 +1,27 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiError, ui, type ServerStatus } from "./api";
+import { ic } from "./icons";
+import { friendlyError, ui, type ServerStatus } from "./api";
 
 // ---------- data fetching with a shared cache (stale-while-revalidate) ----------
 
-type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void> };
+type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void>; stale?: boolean };
 const cache = new Map<string, Entry>();
 const subs = new Map<string, Set<() => void>>();
 function notify(key: string) {
   subs.get(key)?.forEach((f) => f());
 }
+// While set, errors from app.run go here instead of a toast (a dialog shows them itself).
+let errSink: ((e: unknown) => void) | null = null;
+export function setErrorSink(fn: ((e: unknown) => void) | null) {
+  errSink = fn;
+}
+
 export function invalidate(prefix: string) {
   for (const k of cache.keys()) if (k.startsWith(prefix)) {
     const e = cache.get(k)!;
     e.at = 0;
+    // a load already in flight may carry data from before the change
+    if (e.p) e.stale = true;
     notify(k);
   }
 }
@@ -53,7 +62,8 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
       },
     ).finally(() => {
       entry.loading = false;
-      entry.at = Date.now();
+      entry.at = entry.stale ? 0 : Date.now();
+      entry.stale = false;
       entry.p = undefined;
       notify(key);
     });
@@ -87,7 +97,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 
 export type Mode = "auto" | "light" | "dark";
 export type Theme = { name: "graphite" | "harbor" | "custom"; accent?: string };
-type Toast = { id: number; msg: string; action?: { label: string; fn: () => void }; out?: boolean };
+type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
 
 type Ctx = {
@@ -105,6 +115,7 @@ type Ctx = {
   theme: Theme;
   setTheme: (t: Theme) => void;
   toast: (msg: string, action?: Toast["action"]) => void;
+  fail: (err: unknown, title?: string) => void;
   tasks: Task[];
   run: <T>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => Promise<T | undefined>;
   lastUpdate: number;
@@ -213,6 +224,13 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 6250 : 3750);
   }, []);
 
+  // Errors stay until dismissed.
+  const fail = useCallback((err: unknown, title?: string) => {
+    const msg = friendlyError(err);
+    const id = seq.current++;
+    setToasts((t) => [...t.filter((x) => !(x.err && x.msg === msg && x.title === title)).slice(-3), { id, msg, title, err: true }]);
+  }, []);
+
   const run = useCallback(
     async <T,>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => {
       const id = seq.current++;
@@ -223,13 +241,14 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
         if (done) toast(done);
         return r;
       } catch (e) {
-        toast(e instanceof ApiError || e instanceof Error ? e.message : String(e));
+        if (errSink) errSink(e);
+        else fail(e);
         return undefined;
       } finally {
         setTasks((t) => t.filter((x) => x.id !== id));
       }
     },
-    [toast],
+    [toast, fail],
   );
 
   const ctx: Ctx = {
@@ -256,6 +275,7 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
     theme,
     setTheme: setThemeS,
     toast,
+    fail,
     tasks,
     run,
     lastUpdate,
@@ -267,8 +287,20 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
       {children}
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={"toast" + (t.out ? " out" : "")}>
-            <span>{t.msg}</span>
+          <div key={t.id} className={"toast" + (t.out ? " out" : "") + (t.err ? " err" : "")} role={t.err ? "alert" : undefined}>
+            {t.err && <span className="ti">{ic.warn}</span>}
+            <span className="tm">
+              {t.title && <b>{t.title}</b>}
+              {t.msg}
+            </span>
+            {t.err && (
+              <button
+                aria-label="Dismiss"
+                onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
+              >
+                Dismiss
+              </button>
+            )}
             {t.action && (
               <button
                 onClick={() => {

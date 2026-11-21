@@ -54,7 +54,7 @@ html,body,#root{height:100%}
 .pathbar button{border:0;background:none;padding:3px 5px;border-radius:5px;color:var(--ink-2)}
 .pathbar button:hover{background:var(--s2);color:var(--ink)}
 .pathbar .pathedit{margin-left:auto;font:12px var(--f-ui);color:var(--ink-3)}
-.fname{display:flex;align-items:center;gap:10px}
+.fname{display:flex;align-items:center;gap:10px;min-width:0}
 .fic{color:var(--ink-3);display:inline-flex}
 .dropping{box-shadow:inset 0 0 0 2px var(--accent)}
 tbody tr td .qa{min-height:28px}
@@ -159,3 +159,196 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+
+/* error toasts: stay until dismissed, wrap long text */
+.toast.err{white-space:normal;max-width:min(520px,calc(100vw - 32px));align-items:flex-start;padding:10px 8px 10px 14px}
+.toast.err .ti{flex:none;display:flex;margin-top:2px;color:var(--err)}
+.toast.err .ti svg{width:16px;height:16px}
+.toast.err .tm{flex:1;min-width:0;overflow-wrap:anywhere}
+.toast.err .tm b{display:block;font-weight:600}
+.toast.err button{align-self:center}
+@media (max-width:640px){.toasts{left:16px;right:16px;transform:none;align-items:center}.toast.err{width:100%;max-width:none}.toast button{min-height:40px;min-width:40px}}
+/* ---------- touch & phone (WS8) ---------- */
+/* Row actions never sit invisible-but-tappable: no hover on touch, so show them. */
+@media (hover:none){
+  .qa{opacity:1}
+  .rrow .rgo{opacity:1;transform:none}
+}
+/* Touch targets >= 40px. Desktop density is untouched (only pointer:coarse changes). */
+@media (pointer:coarse){
+  .btn,.btn-sm{min-height:40px;height:40px}
+  .ib,.btn.ib{width:40px;min-width:40px}
+  tbody tr td .qa{min-height:40px;gap:4px}
+  .collapse,.copy,.chip-x,.menu-btn,.step button,.toast button,.sortb{min-width:40px;min-height:40px}
+  .chip{height:40px}
+  .chip-b{padding-left:14px}
+  .chip-x{width:40px;height:40px;margin-right:0}
+  .seg button,.theme-seg button{min-height:40px;height:40px}
+  .pre{height:40px}
+  .crumbs button,.crumbs a{display:inline-flex;align-items:center;min-height:40px;padding:0 8px}
+  .pathbar button{min-height:40px;padding:0 8px}
+  .tabs button,.views>button,.vtab,.set-nav button{min-height:40px;height:40px}
+  .ni{min-height:44px}
+  .menu button,.fopt,.pt label,.fbtn,.kbtn,.opsbtn,.scope{min-height:40px}
+  .menu button{height:40px}
+  input[type=checkbox],.radios input{width:20px;height:20px}
+  .chk{width:48px}
+}
+/* Scroll hint: a soft edge where a sideways scroller has more content. Pure CSS, no JS. */
+.tw,.views,.tabs,.fbar,.set-nav{--fb:var(--bg)}
+.tw{--fb:var(--s1)}
+.tw,.views,.tabs,.fbar,.set-nav{
+  background:
+    linear-gradient(to right,var(--fb) 30%,transparent) 0 0/36px 100% no-repeat local,
+    linear-gradient(to left,var(--fb) 30%,transparent) 100% 0/36px 100% no-repeat local,
+    linear-gradient(to right,var(--line-2),transparent) 0 0/14px 100% no-repeat scroll,
+    linear-gradient(to left,var(--line-2),transparent) 100% 0/14px 100% no-repeat scroll;
+  background-color:var(--fb);
+}
+/* Sideways-scrolling tables keep their first column in view. */
+.tw th:first-child,.tw td:first-child{position:sticky;left:0;z-index:1;background:var(--s1)}
+.tw tbody tr:hover td:first-child{background:var(--s2)}
+.tw tbody tr.sel td:first-child{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
+/* Long text never forces sideways scroll. */
+pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.diff div{white-space:pre-wrap;overflow-wrap:anywhere}
+/* Help notes in a filter bar: full width underneath instead of squeezed at the edge. */
+@media (max-width:560px){
+  .fbar:has(.fnote){flex-wrap:wrap;overflow-x:visible;padding-block:0;background:none}
+  .fbar .fnote{flex:1 1 100%;order:9}
+}
+/* Phone drawer: tall enough for the visible viewport, menu scrolls, footer stays below it. */
+@media (max-width:860px){
+  .side{height:100vh;height:100dvh;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+  .side .nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+  .side .side-foot{flex:none;background:var(--s1)}
+}
+/* ---- WS6: sidebar scroll, command menu, operations ---- */
+.side{height:100vh;height:100dvh}
+.nav-wrap{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.nav-wrap .nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.nav-wrap .nav>*{flex-shrink:0}
+.nav-wrap::after{content:"";position:absolute;left:0;right:0;bottom:0;height:28px;pointer-events:none;opacity:0;transition:opacity var(--t1);background:linear-gradient(to bottom,transparent,var(--bg))}
+.nav-wrap.more::after{opacity:1}
+:root[data-brand="harbor"] .side .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--side))}
+.side-foot{flex:none;margin-top:6px;border-top:1px solid var(--line)}
+.cmdk-i .cmdk-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdk-i .meta{flex:none;padding-left:12px;white-space:nowrap}
+.cmdk-list{scroll-padding:6px}
+.cmdk-i svg{width:16px;height:16px}
+.rlink{color:inherit;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:2px}
+.rlink:hover{color:var(--ink);text-decoration-color:currentColor}
+.hostlist{margin:0;padding:0;list-style:none}
+.hostlist li{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 16px;border-top:1px solid var(--line)}
+.hostlist li:first-child{border-top:0}
+.hostlist a{color:var(--ink);text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hostlist a:hover{text-decoration:underline}
+.hostlist .dim{white-space:nowrap;font-size:12.5px}
+@media (max-width:860px){
+  .side{background:var(--s1);padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+  .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--s1))}
+  .side .ni,.side .sub .ni{height:40px}
+  .side .theme-seg button{height:36px}
+  .side .acct{min-height:40px}
+  .side .collapse.slop{display:grid;width:40px;height:40px}
+  .cmdk-i{height:44px}
+}
+/* Used-by lists (storage), volume snapshot rows */
+.ulist{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
+.ul-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:28px}
+.ul-r a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
+.ul-r a:hover{text-decoration-color:var(--ink)}
+.snr{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--line);font-size:13.5px}
+.snr:first-child{border-top:0}
+.snr>span{flex:1;min-width:0;display:flex;flex-direction:column}
+@media (max-width:560px){.snr .btn,.ul-r .btn,.tt{min-height:40px}.snr .ib{min-width:40px}}
+.drop.slim{padding:14px 16px}
+p.fnote{align-self:flex-start;margin:0}
+@media (max-width:560px){dl.kv.tight dd{padding-left:12px}}
+.dlg .ulist{max-height:min(280px,40vh);overflow:auto;margin-top:8px;width:100%}
+/* terminal: ended overlay, options, fullscreen, phone key row */
+.term:fullscreen{height:100vh;height:100dvh}
+.term-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.term-end{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:color-mix(in srgb,var(--s1) 82%,transparent);text-align:center;padding:16px}
+.term-opts{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+.term-opts label{display:flex;flex-direction:column;gap:4px}
+.term-opts label.grow{flex:1 1 200px}
+.term-opts .field{width:130px}
+.term-opts label.grow .field{width:auto}
+.keyrow{display:none;gap:4px;padding:6px 8px;border-top:1px solid var(--line)}
+.keyrow .btn{flex:1 1 56px;min-width:40px;min-height:40px;padding:0 6px}
+.keyrow .btn.on{background:var(--accent-soft);color:var(--accent)}
+@media (pointer:coarse),(max-width:700px){
+  .keyrow{display:flex;flex-wrap:wrap}
+  .term{height:max(300px,calc(var(--vvh,100dvh) - 200px))}
+  .term-h{flex-wrap:wrap;height:auto;min-height:40px;padding:4px 6px 4px 14px}
+  .term-h .r{flex-wrap:wrap}
+  .term-h .btn-sm{min-height:40px}
+}
+/* ---------- WS2: instances list and detail ---------- */
+.qa-more,.qa-more-w{display:none}
+.qa-stop{margin-left:14px}
+.show-s-only{display:none}
+.check-row{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:13.5px;cursor:pointer}
+.check-row input{margin-top:3px}
+.check-row small{display:block;color:var(--ink-3);font-size:12.5px}
+.dlg-fields{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.dlg-fields .fl .hint{min-height:0}
+.bulk{flex-wrap:wrap;max-width:calc(100vw - 24px);justify-content:center}
+.snap-bar .field{flex:1 1 150px}
+.snap-err{flex-basis:100%;font-size:12.5px;color:var(--err)}
+.is-deleting{opacity:.5;pointer-events:none}
+@media (pointer:coarse){
+  .qa-inline{display:none}
+  .qa-more-w{display:flex;opacity:1}
+  .qa-more{display:inline-flex;min-width:40px;height:40px}
+  .inst-tw{overflow:visible}
+}
+@media (max-width:560px){
+  .show-s-only{display:inline}
+  .fbar .fsearch{flex:1 0 232px;min-width:232px}
+  .fsearch kbd{display:none}
+  .bulk{left:12px;right:12px;max-width:none;transform:none;animation:none;justify-content:flex-start;padding:8px 8px 8px 12px}
+  .bulk b{flex-basis:100%;margin:0 0 2px}
+  .bulk .btn{min-height:40px}
+  .bulk .vsep{display:none}
+  .bulk .btn.ib{margin-left:auto}
+}
+
+/* UX-A */
+.tw-menu{overflow:visible;background:none}
+.tabwrap{overflow:visible;overflow-x:clip}
+.menu-hint{padding:6px 10px 2px;font-size:12px;line-height:1.4;color:var(--ink-3)}
+.chk-l{display:inline-flex;align-items:center;justify-content:center}
+.st.frozen::before,.dots button.frozen,.st-dot[data-s="Frozen"]{background:var(--idle)}
+.ist.frozen{color:var(--ink-3)}
+@media (pointer:coarse){
+  .chk-l{width:40px;height:40px;margin:-10px 0 -10px -10px}
+  .iopt{min-height:44px}
+  .seg0.b-r>button{min-height:40px;padding:0 12px}
+  .chip{height:40px}
+  .chip-b{display:inline-flex;align-items:center}
+}
+@media (max-width:560px){
+  .fbar{flex-wrap:wrap;overflow-x:visible;margin:0;padding:0;background:none}
+  .fbar .fsearch{flex:1 1 100%;min-width:0}
+  .fbtns{flex-wrap:wrap}
+}
+/* UX-B */
+.nm2 .tag{margin-left:6px;vertical-align:1px}
+/* Empty-table message: a sticky first cell would shrink it to the first column. */
+tr.empty{display:table-row;padding:0}
+.tw td.emp{position:static;text-align:center}
+/* Add user form: stacked, full width. */
+.useradd{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:640px}
+.useradd .fl{margin:0}
+.useradd .fl .hint:empty{display:none}
+.useradd .btn{align-self:flex-start}
+@media (max-width:560px){
+  /* File explorer: the path gets its own full-width row. */
+  .toolbar .pathbar{order:-1;flex:1 1 100%}
+  .toolbar .pathbar .pathedit{white-space:nowrap}
+  /* Highlight the whole row, not just the sticky first cell. */
+  .tw tbody tr:hover td,.tw tbody tr:active td{background:var(--s2)}
+  .tw tbody tr.sel td{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
+}

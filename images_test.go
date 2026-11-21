@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -25,5 +28,19 @@ func TestParseProducts(t *testing.T) {
 	}
 	if img.Aliases[0] != "debian/13" {
 		t.Fatalf("shortest alias should come first: %v", img.Aliases)
+	}
+}
+
+func TestStreamsError(t *testing.T) {
+	cases := map[string]error{
+		"Can't reach images.example.org.":   errors.New("Get \"https://images.example.org/streams/v1/index.json\": dial tcp: lookup images.example.org: no such host"),
+		"images.example.org answered 503":   &statusError{"503 Service Unavailable"},
+		"took too long":                     context.DeadlineExceeded,
+		"sent an image list this app can't": &json.SyntaxError{},
+	}
+	for want, err := range cases {
+		if got := streamsError("https://images.example.org", err); !strings.Contains(got, want) {
+			t.Errorf("want %q in %q", want, got)
+		}
 	}
 }

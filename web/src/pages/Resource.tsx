@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import YAML from "yaml";
 import { ic } from "../icons";
+import { friendlyError } from "../api";
+import { setErrorSink } from "../state";
 import { Dialog, Seg, Sheet } from "../ui";
 import { diffLines } from "./Config";
 
@@ -19,6 +21,7 @@ export function EditSheet<T extends object>({
   create,
   saveLabel,
   yaml = true,
+  validate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -31,7 +34,9 @@ export function EditSheet<T extends object>({
   create?: boolean;
   saveLabel?: string;
   yaml?: boolean;
+  validate?: (draft: T) => string;
 }) {
+  const [applyErr, setApplyErr] = useState("");
   const [draft, setDraft] = useState<T | null>(value);
   const [view, setView] = useState<"form" | "yaml">("form");
   const [text, setText] = useState("");
@@ -53,15 +58,21 @@ export function EditSheet<T extends object>({
       fn(n);
       return n;
     });
-  const fromYaml = (): T | null => {
+  // Pure: it runs during render for the review dialog, so it must not set state
+  // (that caused a render loop, React error #301).
+  const parseYaml = (): { v: T | null; err: string } => {
     try {
       const v = YAML.parse(text) as T;
-      setErr("");
-      return v;
+      if (v === null || typeof v !== "object") return { v: null, err: "The YAML must describe an object." };
+      return { v, err: "" };
     } catch (e: any) {
-      setErr(e.message);
-      return null;
+      return { v: null, err: e.message };
     }
+  };
+  const fromYaml = (): T | null => {
+    const r = parseYaml();
+    setErr(r.err);
+    return r.v;
   };
   const switchView = (v: "form" | "yaml") => {
     if (v === "yaml") setText(YAML.stringify(draft));
@@ -74,15 +85,19 @@ export function EditSheet<T extends object>({
   };
   const current = () => (view === "yaml" ? fromYaml() : draft);
   const orig = value ? YAML.stringify(value) : "";
+  const dirty = open && !review && (view === "yaml" ? text !== YAML.stringify(draft) : !!draft && JSON.stringify(draft) !== JSON.stringify(value));
   const save = async (d: T) => {
     setBusy(true);
-    const ok = await onSave(d).finally(() => setBusy(false));
+    setApplyErr("");
+    // Errors show in the review dialog, not as a toast behind it.
+    if (review) setErrorSink((e) => setApplyErr(friendlyError(e)));
+    const ok = await onSave(d).finally(() => (setErrorSink(null), setBusy(false)));
     if (ok) {
       setReview(false);
       onClose();
     }
   };
-  const next = review ? current() : null;
+  const next = review ? (view === "yaml" ? parseYaml().v : draft) : null;
 
   return (
     <>
@@ -90,6 +105,7 @@ export function EditSheet<T extends object>({
         open={open}
         onClose={onClose}
         title={title}
+        dirty={dirty}
         wide
         head={
           yaml ? (
@@ -121,6 +137,9 @@ export function EditSheet<T extends object>({
               onClick={() => {
                 const d = current();
                 if (!d) return;
+                const bad = validate?.(d);
+                if (bad) return setErr(bad);
+                setErr("");
                 if (create) save(d);
                 else setReview(true);
               }}
@@ -131,15 +150,15 @@ export function EditSheet<T extends object>({
         }
       >
         {info}
-        {draft && view === "form" && form(draft, set)}
-        {view === "yaml" && (
-          <>
-            <textarea className="yaml box" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} style={{ minHeight: "50vh" }} />
-            {err && <div className="hint bad">{err}</div>}
-          </>
+        {err && (
+          <div className="hint bad" role="alert">
+            {err}
+          </div>
         )}
+        {draft && view === "form" && form(draft, set)}
+        {view === "yaml" && <textarea className="yaml box" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} style={{ minHeight: "50vh" }} />}
       </Sheet>
-      <Dialog open={review} onClose={() => setReview(false)} size="md">
+      <Dialog open={review} onClose={() => (setReview(false), setApplyErr(""))} size="md">
         <div className="dlg-b">
           <h2>Review changes</h2>
           {next && YAML.stringify(next) === orig ? (
@@ -156,13 +175,18 @@ export function EditSheet<T extends object>({
                   ))}
             </div>
           )}
+          {applyErr && (
+            <div className="cerr" role="alert">
+              {applyErr}
+            </div>
+          )}
         </div>
         <div className="dlg-f">
-          <button className="btn btn-s press" onClick={() => setReview(false)}>
+          <button className="btn btn-s press" onClick={() => (setReview(false), setApplyErr(""))}>
             Keep editing
           </button>
           <button className="btn btn-p press" disabled={busy || !next || YAML.stringify(next) === orig} onClick={() => next && save(next)}>
-            Apply
+            {applyErr ? "Try again" : "Apply"}
           </button>
         </div>
       </Dialog>

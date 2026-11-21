@@ -6,7 +6,7 @@ import "./extra.css";
 import { setUnauthorizedHandler, ui } from "./api";
 import { AppProvider, applyTheme, type Mode, type Theme } from "./state";
 import { Shell } from "./Shell";
-import { Login } from "./pages/Login";
+import { Login, takeNext } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Instances } from "./pages/Instances";
 import { InstancePage } from "./pages/Instance";
@@ -18,12 +18,21 @@ import { Projects } from "./pages/Projects";
 import { Operations, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
+import { Tunnels } from "./pages/Tunnels";
 
 type AuthInfo = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; theme: Theme; user?: string; method?: string };
 
 function Root() {
   const [auth, setAuth] = useState<AuthInfo | null>(null);
-  const load = () => ui<AuthInfo>("/auth").then(setAuth);
+  const load = () =>
+    ui<AuthInfo>("/auth").then((d) => {
+      // Back from single sign-on: go to the page that was open before signing in.
+      if (d.user && location.pathname === "/") {
+        const n = takeNext();
+        if (n) history.replaceState(null, "", n);
+      }
+      setAuth(d);
+    });
   useEffect(() => {
     load();
     setUnauthorizedHandler(() => load());
@@ -57,6 +66,7 @@ function Root() {
             <Route path="/networks" element={<Networks />} />
             <Route path="/networks/acls" element={<Acls />} />
             <Route path="/networks/ipam" element={<Ipam />} />
+            <Route path="/tunnels" element={<Tunnels />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/operations" element={<Operations />} />

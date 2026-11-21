@@ -37,12 +37,13 @@ export function incusURL(server: string, path: string, project?: string) {
   return `/api/s/${encodeURIComponent(server)}${withProject(path, project)}`;
 }
 
-type ReqOpts = { method?: string; body?: any; project?: string; headers?: Record<string, string>; raw?: BodyInit; signal?: AbortSignal };
+type ReqOpts = { method?: string; body?: any; project?: string; headers?: Record<string, string>; raw?: BodyInit; signal?: AbortSignal; etag?: string };
 
 // incus calls the Incus REST API and returns `metadata`; async operations are
 // returned as-is (use `incusOp` to wait for them).
 export async function incusRaw(server: string, path: string, o: ReqOpts = {}): Promise<Response> {
   const headers: Record<string, string> = { "X-Incus-UI": "1", ...(o.headers || {}) };
+  if (o.etag) headers["If-Match"] = o.etag;
   let body: BodyInit | undefined = o.raw;
   if (o.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -56,11 +57,25 @@ export async function incusRaw(server: string, path: string, o: ReqOpts = {}): P
   return res;
 }
 
+function fail(res: Response, data: any): never {
+  if (res.status === 412) throw new ApiError(412, "Someone else changed this while you were editing. Reload to see their change.");
+  throw new ApiError(res.status, data.error || res.statusText);
+}
+
 export async function incus<T = any>(server: string, path: string, o: ReqOpts = {}): Promise<T> {
   const res = await incusRaw(server, path, o);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.type === "error") throw new ApiError(res.status, data.error || res.statusText);
+  if (!res.ok || data.type === "error") fail(res, data);
   return data.metadata as T;
+}
+
+// incusWithETag also returns the ETag header. Pass it back as `etag` when saving
+// so a change made by someone else in the meantime is refused (412).
+export async function incusWithETag<T = any>(server: string, path: string, o: ReqOpts = {}): Promise<{ data: T; etag: string }> {
+  const res = await incusRaw(server, path, o);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.type === "error") fail(res, data);
+  return { data: data.metadata as T, etag: res.headers.get("ETag") || "" };
 }
 
 export type Operation = {
@@ -78,15 +93,24 @@ export type Operation = {
 export async function incusOp(server: string, path: string, o: ReqOpts = {}, onProgress?: (detail: string) => void): Promise<Operation | any> {
   const res = await incusRaw(server, path, o);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.type === "error") throw new ApiError(res.status, data.error || res.statusText);
+  if (!res.ok || data.type === "error") fail(res, data);
   if (data.type !== "async") return data.metadata;
   const op = data.metadata as Operation;
   return waitOp(server, op.id, o.project, onProgress);
 }
 
+// waitOp waits until the operation ends. A /wait that times out while the
+// operation still runs is not a failure: ask again.
 export async function waitOp(server: string, id: string, project?: string, onProgress?: (detail: string) => void): Promise<Operation> {
   for (;;) {
-    const op = await incus<Operation>(server, `/1.0/operations/${id}/wait?timeout=${onProgress ? 1 : 30}`, { project });
+    let op: Operation;
+    try {
+      op = await incus<Operation>(server, `/1.0/operations/${id}/wait?timeout=${onProgress ? 1 : 30}`, { project });
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status !== 404 && /deadline exceeded/i.test(e.message))) throw e;
+      // Incus 6.0 answers a timed-out /wait with an error body; read the operation for its progress.
+      op = await incus<Operation>(server, `/1.0/operations/${id}`, { project });
+    }
     if (op.status_code >= 200) {
       if (op.status_code !== 200) throw new ApiError(400, op.err || op.status);
       return op;
@@ -94,6 +118,38 @@ export async function waitOp(server: string, id: string, project?: string, onPro
     const p = opProgress(op);
     if (p && onProgress) onProgress(p);
   }
+}
+
+// friendlyError turns raw Incus, Go and SFTP errors into short readable text.
+const errRules: [RegExp, (m: RegExpExecArray) => string][] = [
+  [/UNIQUE constraint failed|already exists/i, () => "That name is already taken."],
+  [/SSH_FX_FAILURE/, () => "The server refused that file operation."],
+  [/dial tcp ([^\s:]+)/, (m) => `Can't reach ${m[1]}.`],
+  [/Forbidden \(agent proxy/i, () => "Can't reach the server."],
+  [/context deadline exceeded/i, () => "Timed out."],
+];
+export function friendlyError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  for (const [re, f] of errRules) {
+    const m = re.exec(msg);
+    if (m) return f(m);
+  }
+  return msg;
+}
+
+// memStr formats bytes as an Incus size: "512MiB", or "2GiB" when whole GiB.
+export function memStr(n: number): string {
+  const g = n / 1024 ** 3;
+  return Number.isInteger(g) && g >= 1 ? `${g}GiB` : `${Math.round(n / 1024 ** 2)}MiB`;
+}
+
+// spaced puts a space between number and unit for display: "5GiB" -> "5 GiB". Not for values sent to Incus.
+export const spaced = (s: string) => s.replace(/(\d)\s*([KMGTP]i?B)\b/g, "$1 $2");
+
+// memBytes parses an Incus memory/size string ("512MiB", "2GB", "1073741824").
+export function memBytes(s: string): number | null {
+  const v = parseBytes(s);
+  return v == null || !isFinite(v) ? null : Math.round(v);
 }
 
 // opProgress turns Incus' progress metadata into a short text.

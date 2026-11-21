@@ -59,7 +59,7 @@ function AptUpdates({ server, config }: { server: string; config: Record<string,
       await incus(server, "/1.0", { method: "PATCH", body: { config: { [REQ]: `${what}:${Date.now()}` } } });
       invalidate(`hostinfo:${server}`);
     } catch (e: any) {
-      app.toast(e.message);
+      app.fail(e, "Could not send that request.");
     }
   };
 
@@ -130,7 +130,7 @@ function IncusOSUpdates({ server }: { server: string }) {
       app.toast("IncusOS is checking for updates. New versions install on their own.");
       setTimeout(() => invalidate(`os-update:${server}`), 1500);
     } catch (e: any) {
-      app.toast(e.message);
+      app.fail(e, "Could not check for updates.");
     }
     setBusy(false);
   };
@@ -148,7 +148,7 @@ function IncusOSUpdates({ server }: { server: string }) {
       await incus(server, "/os/1.0/system/:reboot", { method: "POST", body: {} });
       app.toast(`${server} is restarting.`);
     } catch (e: any) {
-      app.toast(e.message);
+      app.fail(e, "Could not restart.");
     }
   };
 

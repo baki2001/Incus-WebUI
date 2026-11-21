@@ -120,6 +120,23 @@ export function useNames(server: string, what: "networks" | "storage-pools" | "p
   );
 }
 
+// Managed networks only (bridges, OVN...), not host interfaces.
+export type ManagedNet = { name: string; type: string };
+export function useManagedNetworks(server: string, project?: string) {
+  return useData<ManagedNet[]>(server ? `managednets:${server}:${project || ""}` : null, async () =>
+    ((await incus<any[]>(server, "/1.0/networks?recursion=1", { project })) || []).filter((n) => n.managed).map((n) => ({ name: n.name as string, type: n.type as string })),
+  );
+}
+
+// GET /1.0 for one server, cached.
+export type ServerInfo = { api_extensions?: string[]; environment?: Record<string, any>; [k: string]: any };
+export function useServerInfo(server: string) {
+  return useData<ServerInfo>(server ? `serverinfo:${server}` : null, () => incus<ServerInfo>(server, "/1.0"));
+}
+export function hasExt(info: ServerInfo | undefined, name: string) {
+  return !!info?.api_extensions?.includes(name);
+}
+
 export function nameOf(url: string) {
   return decodeURIComponent(url.split("?")[0].split("/").pop() || "");
 }

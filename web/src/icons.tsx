@@ -36,6 +36,12 @@ export const ic = {
       <rect x="2" y="2" width="8" height="8" rx="1.5" />
     </svg>
   ),
+  pause: (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+      <rect x="2.5" y="2" width="2.6" height="8" rx="1" />
+      <rect x="6.9" y="2" width="2.6" height="8" rx="1" />
+    </svg>
+  ),
   restart: sv(<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3" />, 14),
   snap: sv(<><path d="M2.5 5.5h2l1.2-2h4.6l1.2 2h2v8h-11z" /><circle cx="8" cy="9.3" r="2.3" /></>, 14),
   term: sv(<path d="m3 4.5 3.5 3.5L3 11.5M8.5 12H13" />, 14),

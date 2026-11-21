@@ -62,7 +62,7 @@ func main() {
 	app := &App{
 		store:      store,
 		backends:   &Backends{clientCert: clientCert, transports: map[string]*backend{}},
-		loginLimit: &limiter{hits: map[string][]time.Time{}},
+		loginLimit: &limiter{},
 		updater:    &updater{},
 		dataDir:    *dataDir,
 	}
@@ -191,9 +191,12 @@ func (a *App) routes() http.Handler {
 	mux.Handle("DELETE /api/ui/servers/{name}", auth(a.handleServerDelete))
 	mux.Handle("GET /api/ui/client-cert", auth(a.handleClientCert))
 	mux.Handle("GET /api/ui/users", auth(a.handleUsers))
+	mux.Handle("POST /api/ui/users", auth(a.handleUserCreate))
 	mux.Handle("PUT /api/ui/users/{name}", auth(a.handleUserPut))
 	mux.Handle("DELETE /api/ui/users/{name}", auth(a.handleUserDelete))
 	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
+	mux.Handle("GET /api/ui/prefs", auth(a.handlePrefsGet))
+	mux.Handle("PUT /api/ui/prefs", auth(a.handlePrefsPut))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
 
 	mux.Handle("GET /api/ui/image-servers", auth(a.handleImageServers))
@@ -201,6 +204,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
 	mux.Handle("POST /api/ui/update", auth(a.handleUpdateApply))
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))
+	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.handleRemoveAll))
+	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.handleDownload))
+	a.registerTunnelRoutes(mux, auth)
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })
 	mux.Handle("/", spaHandler())

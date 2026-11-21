@@ -1,34 +1,68 @@
 import { useEffect, useRef, useState } from "react";
-import { bytes, incusRaw, ui, type Instance } from "../api";
+import { useSearchParams } from "react-router-dom";
+import { bytes, friendlyError, incusRaw, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useApp } from "../state";
 import { confirmDialog, Dialog, MidTrunc } from "../ui";
 
-type Entry = { name: string; type: string; size: number; mode: string; modified: string; target?: string; uid: number; gid: number };
+type Entry = { name: string; type: string; size: number; mode: string; modified: string; target?: string; resolved?: string; uid: number; gid: number };
 
 const join = (dir: string, name: string) => (dir === "/" ? "/" + name : dir + "/" + name);
 const isDir = (e: Entry) => e.type === "directory" || e.type === "symlink-dir";
+const isLink = (e: Entry) => e.type === "symlink" || e.type === "symlink-dir";
+// A link is read and written through its target, never as the link itself.
+const filePath = (dir: string, e: Entry) => e.resolved || join(dir, e.name);
+const errMsg = async (r: Response) => (await r.json().catch(() => ({}))).error || r.statusText;
+// "a.txt" -> "a (1).txt" until the name is free
+const freeName = (name: string, taken: Set<string>) => {
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let i = 1; ; i++) if (!taken.has(`${stem} (${i})${ext}`)) return `${stem} (${i})${ext}`;
+};
+// Turns raw SFTP / Incus errors into something a person can act on.
+function readable(msg: string, p: string) {
+  if (/not a directory/i.test(msg)) return `${p} is a file, not a folder.`;
+  if (/no such file|not exist|not found/i.test(msg)) return `${p} doesn't exist.`;
+  if (/permission denied/i.test(msg)) return `Permission denied for ${p}.`;
+  if (/not empty/i.test(msg)) return "The folder is not empty.";
+  return friendlyError(new Error(msg));
+}
+
+type Choice = "replace" | "both" | "cancel";
 
 export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
   const app = useApp();
-  const [dir, setDir] = useState(inst.type === "virtual-machine" ? "/" : "/root");
+  // The folder lives in the URL (?path=) so it can be linked, and Back goes up.
+  const [params, setParams] = useSearchParams();
+  const dir = params.get("path") || (inst.type === "virtual-machine" ? "/" : "/root");
+  const setDir = (d: string) =>
+    setParams((p) => {
+      const n = new URLSearchParams(p);
+      n.set("path", d);
+      return n;
+    });
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [err, setErr] = useState("");
   const [editPath, setEditPath] = useState(false);
   const [pathInput, setPathInput] = useState(dir);
   const [open, setOpen] = useState<Entry | null>(null);
+  const [newFolder, setNewFolder] = useState(false);
+  const [clash, setClash] = useState<{ name: string; res: (v: Choice) => void } | null>(null);
   const [drag, setDrag] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const running = inst.status === "Running";
   const filesURL = (p: string) => `/1.0/instances/${encodeURIComponent(inst.name)}/files?path=${encodeURIComponent(p)}`;
   const o = { project: inst.project };
+  const apiBase = `/files/${encodeURIComponent(inst.server)}/${encodeURIComponent(inst.name)}`;
+  const q = (p: string) => `?project=${encodeURIComponent(inst.project)}&path=${encodeURIComponent(p)}`;
+  const list = (d: string) => ui<{ path: string; entries: Entry[] }>(apiBase + q(d));
 
   const load = (d = dir) => {
     setErr("");
-    ui<{ path: string; entries: Entry[] }>(`/files/${encodeURIComponent(inst.server)}/${encodeURIComponent(inst.name)}?project=${encodeURIComponent(inst.project)}&path=${encodeURIComponent(d)}`)
+    list(d)
       .then((r) => setEntries(r.entries))
       .catch((e) => {
-        setErr(e.message);
+        setErr(readable(e.message, d));
         setEntries([]);
       });
   };
@@ -49,45 +83,97 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
 
   const parts = dir.split("/").filter(Boolean);
   const uploadFiles = async (files: FileList | File[]) => {
+    const taken = new Set((entries || []).map((e) => e.name));
     for (const f of Array.from(files)) {
+      let name = f.name;
+      if (taken.has(name)) {
+        const choice = await new Promise<Choice>((res) => setClash({ name, res }));
+        setClash(null);
+        if (choice === "cancel") continue;
+        if (choice === "both") name = freeName(name, taken);
+      }
+      taken.add(name);
       await app.run(
-        `Uploading ${f.name}`,
+        `Uploading ${name}`,
         async () => {
-          const r = await incusRaw(inst.server, filesURL(join(dir, f.name)), { ...o, method: "POST", raw: f, headers: { "X-Incus-type": "file", "X-Incus-write": "overwrite", "Content-Type": "application/octet-stream" } });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+          const r = await incusRaw(inst.server, filesURL(join(dir, name)), { ...o, method: "POST", raw: f, headers: { "X-Incus-type": "file", "X-Incus-write": "overwrite", "Content-Type": "application/octet-stream" } });
+          if (!r.ok) throw new Error(await errMsg(r));
         },
-        `${f.name} uploaded`,
+        `${name} uploaded`,
       );
     }
     load();
   };
   const download = async (e: Entry) => {
-    const r = await incusRaw(inst.server, filesURL(join(dir, e.name)), o);
-    if (!r.ok) return app.toast(`Can't download ${e.name}`);
-    const url = URL.createObjectURL(await r.blob());
+    // Check the response headers first, so an error shows as a toast instead of replacing the page.
+    const href = `/api/ui${apiBase}/download${q(join(dir, e.name))}`; // the server follows links
+    const ac = new AbortController();
+    try {
+      const r = await fetch(href, { headers: { "X-Incus-UI": "1" }, signal: ac.signal });
+      if (!r.ok) throw new Error(await errMsg(r));
+      ac.abort(); // headers are enough; the browser downloads the file itself
+    } catch (err) {
+      return app.fail(readable(err instanceof Error ? err.message : String(err), join(dir, e.name)), `Can't download ${e.name}.`);
+    }
+    // The server sends a proper Content-Disposition, non-ASCII names too.
     const a = document.createElement("a");
-    a.href = url;
+    a.href = href;
     a.download = e.name;
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    a.remove();
   };
   const remove = async (e: Entry) => {
-    const folder = isDir(e) && e.type === "directory";
-    if (!(await confirmDialog({ title: `Delete ${e.name}?`, body: folder ? "Only empty folders can be deleted." : `${join(dir, e.name)} is removed from ${inst.name}.`, confirm: "Delete", danger: true }))) return;
-    await app.run(`Deleting ${e.name}`, async () => {
-      const r = await incusRaw(inst.server, filesURL(join(dir, e.name)), { ...o, method: "DELETE" });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-    });
+    const folder = e.type === "directory";
+    const p = join(dir, e.name);
+    if (!(await confirmDialog({ title: `Delete ${e.name}?`, body: `${p} is removed from ${inst.name}.`, confirm: "Delete", danger: true }))) return;
+    const r = await incusRaw(inst.server, filesURL(p), { ...o, method: "DELETE" }).catch(() => null);
+    if (r?.ok) {
+      app.toast(`${e.name} deleted`);
+      return load();
+    }
+    const msg = r ? await errMsg(r) : "The request failed.";
+    if (folder && /not empty|directory/i.test(msg) && !/permission|no such/i.test(msg)) {
+      if (await confirmDialog({ title: `${e.name} is not empty`, body: "Delete the folder and everything inside it? This can't be undone.", confirm: "Delete everything", danger: true })) {
+        await app.run(`Deleting ${e.name}`, () => ui(apiBase + q(p), { method: "DELETE" }), `${e.name} deleted`);
+      }
+    } else app.fail(readable(msg, p), `Can't delete ${e.name}.`);
     load();
   };
-  const mkdir = async () => {
-    const n = prompt("Folder name");
-    if (!n || n.includes("/")) return;
-    await app.run(`Creating ${n}`, async () => {
+  const mkdir = async (n: string) => {
+    const ok = await app.run(`Creating ${n}`, async () => {
       const r = await incusRaw(inst.server, filesURL(join(dir, n)), { ...o, method: "POST", headers: { "X-Incus-type": "directory", "X-Incus-mode": "0755" } });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      if (!r.ok) throw new Error(await errMsg(r));
+      return true;
     });
+    if (ok) setNewFolder(false);
     load();
+  };
+  // "Edit path": a folder opens, a file opens in the editor, anything else says why not.
+  const goPath = async (raw: string) => {
+    const p = "/" + raw.split("/").filter(Boolean).join("/");
+    try {
+      await list(p);
+      return setDir(p);
+    } catch (e: any) {
+      const parent = "/" + p.split("/").filter(Boolean).slice(0, -1).join("/");
+      const base = p.split("/").pop()!;
+      try {
+        const hit = (await list(parent)).entries.find((x) => x.name === base);
+        if (hit && !isDir(hit)) {
+          setDir(parent);
+          return setOpen(hit);
+        }
+      } catch {
+        /* fall through to the message */
+      }
+      app.fail(readable(e.message, p), `Can't open ${p}.`);
+    }
+  };
+  const openEntry = (e: Entry) => {
+    if (isDir(e)) return setDir(join(dir, e.name));
+    if (isLink(e) && !e.resolved) return app.toast(`${e.name} is a broken link${e.target ? ` to ${e.target}` : ""}.`);
+    setOpen(e);
   };
 
   return (
@@ -115,7 +201,7 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
             onSubmit={(e) => {
               e.preventDefault();
               setEditPath(false);
-              setDir("/" + pathInput.split("/").filter(Boolean).join("/"));
+              goPath(pathInput);
             }}
           >
             <input className="mono" autoFocus value={pathInput} onChange={(e) => setPathInput(e.target.value)} onBlur={() => setEditPath(false)} />
@@ -134,13 +220,22 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
             </button>
           </div>
         )}
-        <button className="btn btn-s press" onClick={mkdir}>
+        <button className="btn btn-s press" onClick={() => setNewFolder(true)}>
           {ic.folder}New folder
         </button>
         <button className="btn btn-p press" onClick={() => upload.current?.click()}>
           {ic.up}Upload
         </button>
-        <input ref={upload} type="file" multiple hidden onChange={(e) => e.target.files && uploadFiles(e.target.files)} />
+        <input
+          ref={upload}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) uploadFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
       </div>
       <div className={"panel tw" + (drag ? " dropping" : "")}>
         <table>
@@ -164,11 +259,19 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
                 </tr>
               ))}
             {entries?.map((e) => (
-              <tr key={e.name} onClick={() => (isDir(e) ? setDir(join(dir, e.name)) : setOpen(e))}>
-                <td className="fname">
-                  <span className="fic">{isDir(e) ? ic.folder : e.type === "symlink" ? ic.link : ic.file}</span>
+              <tr key={e.name} onClick={() => openEntry(e)}>
+                <td>
+                  <div className="fname">
+                  <span className="fic">{isLink(e) ? ic.link : isDir(e) ? ic.folder : ic.file}</span>
                   <MidTrunc text={e.name} max={48} />
-                  {e.target && <span className="dim mono"> → {e.target}</span>}
+                  {e.target && (
+                    <span className="dim mono" title={e.resolved ? `Link to ${e.target}` : "Broken link"}>
+                      {" "}
+                      → {e.target}
+                      {!e.resolved && " (broken)"}
+                    </span>
+                  )}
+                  </div>
                 </td>
                 <td className="right mono hide-s">{isDir(e) ? "" : bytes(e.size)}</td>
                 <td className="mono dim hide-m">{e.mode}</td>
@@ -200,8 +303,64 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
           </tbody>
         </table>
       </div>
-      <Editor inst={inst} path={open ? join(dir, open.name) : ""} entry={open} onClose={() => setOpen(null)} onSaved={() => load()} />
+      <NewFolder open={newFolder} existing={entries || []} onClose={() => setNewFolder(false)} onCreate={mkdir} />
+      <Dialog open={!!clash} onClose={() => clash?.res("cancel")} size="sm">
+        <div className="dlg-b">
+          <h2>{clash?.name} already exists</h2>
+          <p>Replace it with the file you are uploading, or keep both and give the new file another name.</p>
+        </div>
+        <div className="dlg-f">
+          <button className="btn btn-s press" onClick={() => clash?.res("cancel")}>
+            Cancel
+          </button>
+          <button className="btn btn-s press" onClick={() => clash?.res("both")}>
+            Keep both
+          </button>
+          <button className="btn btn-p press" onClick={() => clash?.res("replace")}>
+            Replace
+          </button>
+        </div>
+      </Dialog>
+      <Editor inst={inst} path={open ? filePath(dir, open) : ""} entry={open} onClose={() => setOpen(null)} onSaved={() => load()} />
     </div>
+  );
+}
+
+function NewFolder({ open, existing, onClose, onCreate }: { open: boolean; existing: Entry[]; onClose: () => void; onCreate: (n: string) => void }) {
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (open) setName("");
+  }, [open]);
+  const n = name.trim();
+  const bad = n.includes("/") ? "A folder name can't contain /." : n === "." || n === ".." ? "Choose another name." : existing.some((e) => e.name === n) ? `${n} already exists here.` : "";
+  return (
+    <Dialog open={open} onClose={onClose} size="sm">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (n && !bad) onCreate(n);
+        }}
+      >
+        <div className="dlg-b">
+          <h2>New folder</h2>
+          <div className="fl" style={{ marginTop: 10 }}>
+            <label>Name</label>
+            <div className={"field" + (bad ? " bad" : "")}>
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className={"hint" + (bad ? " bad" : "")}>{bad}</div>
+          </div>
+        </div>
+        <div className="dlg-f">
+          <button type="button" className="btn btn-s press" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-p press" disabled={!n || !!bad}>
+            Create
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 
@@ -212,6 +371,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
   const [text, setText] = useState<string | null>(null);
   const [orig, setOrig] = useState("");
   const [binary, setBinary] = useState(false);
+  const dirty = text !== null && text !== orig;
   const url = `/1.0/instances/${encodeURIComponent(inst.name)}/files?path=${encodeURIComponent(path)}`;
   useEffect(() => {
     setText(null);
@@ -222,13 +382,20 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
       return;
     }
     incusRaw(inst.server, url, { project: inst.project })
-      .then((r) => r.arrayBuffer())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await errMsg(r));
+        return r.arrayBuffer();
+      })
       .then((buf) => {
         const b = new Uint8Array(buf);
         if (b.slice(0, 8000).includes(0)) return setBinary(true);
         const t = new TextDecoder().decode(b);
         setText(t);
         setOrig(t);
+      })
+      .catch((e) => {
+        app.fail(e, `Can't open ${entry.name}.`);
+        onClose();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry]);
@@ -242,7 +409,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
           raw: text ?? "",
           headers: { "X-Incus-type": "file", "X-Incus-write": "overwrite", "X-Incus-mode": entry!.mode, "X-Incus-uid": String(entry!.uid), "X-Incus-gid": String(entry!.gid), "Content-Type": "application/octet-stream" },
         });
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+        if (!r.ok) throw new Error(await errMsg(r));
         return true;
       },
       `${entry?.name} saved`,
@@ -253,11 +420,18 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
     }
   };
   return (
-    <Dialog open={!!entry} onClose={onClose} size="md">
+    <Dialog open={!!entry} onClose={onClose} dirty={dirty} size="md">
       <div className="ptitle">
         <h2 className="mono">{path}</h2>
         <span className="r">{entry && bytes(entry.size)}</span>
       </div>
+      {entry && isLink(entry) && (
+        <div className="dlg-b" style={{ paddingBottom: 0 }}>
+          <p className="dim">
+            {entry.name} is a link. You are editing the file it points to.
+          </p>
+        </div>
+      )}
       {binary ? (
         <div className="dlg-b">
           <p>{entry && entry.size > MAX_EDIT ? "This file is too large to open here. Download it instead." : "This looks like a binary file. Download it instead."}</p>
@@ -274,7 +448,7 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
           Close
         </button>
         {!binary && text !== null && (
-          <button className="btn btn-p press" disabled={text === orig} onClick={save}>
+          <button className="btn btn-p press" disabled={!dirty} onClick={save}>
             Save
           </button>
         )}

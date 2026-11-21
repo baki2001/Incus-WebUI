@@ -1,17 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
-import { incus, incusOp, parseBytes, type Instance } from "../api";
+import { ApiError, bytes, friendlyError, incus, incusOp, incusWithETag, memBytes, memStr, type Instance } from "../api";
 import { ic } from "../icons";
 import { invalidate, useApp, useData } from "../state";
-import { Dialog, Seg } from "../ui";
+import { Dialog, Seg, shake } from "../ui";
+import { CONFLICT, cpuCount, cpuOK, SizeField, useNetworkList } from "./cfgutil";
+import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
+import "../cfg.css";
 
 type Inst = Instance & { server: string };
-type Put = { description: string; profiles: string[]; config: Record<string, string>; devices: Record<string, Record<string, string>> };
+type Put = { description: string; profiles: string[]; config: Record<string, string>; devices: Devs };
 
-function toPut(i: Inst): Put {
+const hidden = (k: string) => k.startsWith("volatile.") || k.startsWith("image.");
+function toPut(i: { description?: string; profiles: string[]; config?: Record<string, string>; devices?: Devs }): Put {
   const config: Record<string, string> = {};
-  for (const [k, v] of Object.entries(i.config || {})) if (!k.startsWith("volatile.") && !k.startsWith("image.")) config[k] = v;
+  for (const [k, v] of Object.entries(i.config || {})) if (!hidden(k)) config[k] = v;
   return { description: i.description || "", profiles: [...i.profiles], config, devices: JSON.parse(JSON.stringify(i.devices || {})) };
+}
+
+// Empty values mean "not set here"; they never go to the server or the diff.
+function clean(d: Put): Put {
+  return { ...d, config: Object.fromEntries(Object.entries(d.config).filter(([, v]) => v !== "")) };
 }
 
 // line diff (LCS), good enough for config-sized YAML
@@ -42,18 +51,64 @@ const sched = [
 ];
 const expiry = ["", "1d", "3d", "7d", "14d", "4w", "3M"];
 
+
+function validate(d: Put, cores?: number, hostMem?: number) {
+  const err: Record<string, string> = {},
+    warn: Record<string, string> = {};
+  const cpu = d.config["limits.cpu"];
+  if (cpu) {
+    if (!cpuOK(cpu)) err.cpu = cpu.startsWith("-") ? "Cores can't be negative." : cpu === "0" ? "Use at least 1 core, or remove the limit." : "Enter a number of cores like 2, or a range like 0-3.";
+    else if (cores && cpuCount(cpu) > cores) warn.cpu = `This host only has ${cores} threads.`;
+  }
+  const size = (v: string | undefined, what: string, key: string, max?: number) => {
+    if (!v || /^\d+(\.\d+)?%$/.test(v)) return;
+    const b = memBytes(v);
+    if (b == null || b <= 0) err[key] = v.startsWith("-") ? `${what} can't be negative.` : `Enter a size above 0, like 512 MiB or 2 GiB.`;
+    else if (max && b > max) warn[key] = `This host only has ${bytes(max)} of memory.`;
+  };
+  size(d.config["limits.memory"], "Memory", "mem", hostMem);
+  size(d.devices.root?.size, "Disk size", "root");
+  Object.assign(err, checkDevices(d.devices));
+  return { err, warn };
+}
+
+type NetDev = { n: string; d: Dev; from: string | null };
+
 export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) {
   const app = useApp();
-  const original = useMemo(() => toPut(inst), [inst]);
+  const { server, project, name } = inst;
+  const path = `/1.0/instances/${encodeURIComponent(name)}`;
+  const root = useRef<HTMLDivElement>(null);
+  const [base, setBase] = useState<{ obj: any; etag: string } | null>(null);
+  const srcObj = base?.obj ?? inst;
+  const original = useMemo(() => toPut(srcObj), [srcObj]);
   const [draft, setDraft] = useState<Put>(original);
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
   const [view, setView] = useState<"form" | "yaml">("form");
   const [yamlText, setYamlText] = useState("");
   const [yamlErr, setYamlErr] = useState("");
   const [review, setReview] = useState(false);
-  const host = useData<any>(`resources:${inst.server}`, () => incus(inst.server, "/1.0/resources"));
-  const pools = useData<string[]>(`pools:${inst.server}:${inst.project}`, async () => (await incus<string[]>(inst.server, "/1.0/storage-pools", { project: inst.project })).map((p) => p.split("/").pop()!));
-  const nets = useData<string[]>(`nets:${inst.server}:${inst.project}`, async () => (await incus<string[]>(inst.server, "/1.0/networks", { project: inst.project })).map((p) => decodeURIComponent(p.split("/").pop()!)));
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [applyErr, setApplyErr] = useState("");
+  const [conflict, setConflict] = useState(false);
+  const host = useData<any>(`resources:${server}`, () => incus(server, "/1.0/resources"));
+  const pools = useData<string[]>(`pools:${server}:${project}`, async () => (await incus<string[]>(server, "/1.0/storage-pools", { project })).map((p) => p.split("/").pop()!));
+  const nets = useNetworkList(server, project);
+  const profs = useData<any[]>(`profiles-full:${server}:${project}`, async () => (await incus<any[]>(server, "/1.0/profiles?recursion=1", { project })) || []);
+
+  // The version we edit from, with its ETag so a save can't overwrite someone else's change.
+  const loadBase = useCallback(async () => {
+    const r = await incusWithETag<any>(server, path, { project });
+    setBase((old) => (old && old.etag === r.etag && JSON.stringify(old.obj) === JSON.stringify(r.data) ? old : { obj: r.data, etag: r.etag }));
+  }, [server, path, project]);
+  useEffect(() => {
+    loadBase().catch(() => {});
+    const t = window.setInterval(() => !document.hidden && !dirtyRef.current && loadBase().catch(() => {}), 5000);
+    return () => clearInterval(t);
+  }, [loadBase]);
 
   // keep in sync with the server while nothing is edited
   useEffect(() => {
@@ -61,99 +116,200 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   }, [original, dirty]);
 
   const upd = (fn: (d: Put) => void) => {
-    const next: Put = JSON.parse(JSON.stringify(draft));
-    fn(next);
-    setDraft(next);
+    setDraft((prev) => {
+      const next: Put = JSON.parse(JSON.stringify(prev));
+      fn(next);
+      return next;
+    });
     setDirty(true);
   };
-  const setCfg = (k: string, v: string) =>
-    upd((d) => {
-      if (v === "") delete d.config[k];
-      else d.config[k] = v;
-    });
-  const ex = inst.expanded_config || {};
-  const from = (k: string) => (k in draft.config ? "Set on this instance" : ex[k] ? "From a profile" : "Not set");
-  const changed = (k: string) => (draft.config[k] ?? "") !== (original.config[k] ?? "");
+  const edit = (fn: (d: Devs) => void) => upd((d) => fn(d.devices));
+  const setCfg = (k: string, v: string) => upd((d) => void (d.config[k] = v));
+  const resetCfg = (k: string) => upd((d) => void delete d.config[k]);
+
+  // What the chosen profiles provide, in order (later ones win).
+  const prof = useMemo(() => {
+    const cfg: Record<string, string> = {},
+      cfgFrom: Record<string, string> = {},
+      dev: Devs = {},
+      devFrom: Record<string, string> = {};
+    if (profs.data) {
+      for (const pn of draft.profiles) {
+        const p = profs.data.find((x) => x.name === pn);
+        if (!p) continue;
+        for (const [k, v] of Object.entries<string>(p.config || {})) ((cfg[k] = v), (cfgFrom[k] = pn));
+        for (const [k, v] of Object.entries<Dev>(p.devices || {})) ((dev[k] = v), (devFrom[k] = pn));
+      }
+    } else {
+      Object.assign(cfg, srcObj.expanded_config || {});
+      Object.assign(dev, srcObj.expanded_devices || {});
+      for (const k of Object.keys(cfg)) cfgFrom[k] = "a profile";
+      for (const k of Object.keys(dev)) devFrom[k] = "a profile";
+    }
+    return { cfg, cfgFrom, dev, devFrom };
+  }, [profs.data, draft.profiles, srcObj]);
+
+  const cd = useMemo(() => clean(draft), [draft]);
+  const own = (k: string) => (draft.config[k] ?? "") !== "";
+  const val = (k: string) => (k in draft.config ? draft.config[k] : (prof.cfg[k] ?? ""));
+  const eff = (k: string) => draft.config[k] || prof.cfg[k] || "";
+  const from = (k: string) => (own(k) ? (k in prof.cfg ? `Set on this instance, overrides ${prof.cfgFrom[k]}` : "Set on this instance") : k in prof.cfg ? `From profile ${prof.cfgFrom[k]}` : "Not set");
+  const changed = (k: string) => (cd.config[k] ?? "") !== (original.config[k] ?? "");
+  const onlyProfile = (k: string) => !own(k) && k in prof.cfg;
+  const useProfile = (k: string) =>
+    own(k) && k in prof.cfg ? (
+      <button className="btn btn-s btn-sm" onClick={() => resetCfg(k)}>
+        Use profile value
+      </button>
+    ) : null;
 
   const origY = useMemo(() => YAML.stringify(original), [original]);
-    const nChanges = useMemo(() => {
+  const nChanges = useMemo(() => {
     const keys = (a: Record<string, unknown>, b: Record<string, unknown>) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).length;
-    return keys(original.config, draft.config) + keys(original.devices, draft.devices) + (original.description !== draft.description ? 1 : 0) + (original.profiles.join() !== draft.profiles.join() ? 1 : 0);
-  }, [original, draft]);
+    return keys(original.config, cd.config) + keys(original.devices, cd.devices) + (original.description !== cd.description ? 1 : 0) + (original.profiles.join() !== cd.profiles.join() ? 1 : 0);
+  }, [original, cd]);
 
+  const cores = host.data?.cpu?.total;
+  const hostMem = host.data?.memory?.total;
+  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem), [cd, cores, hostMem]);
+  const devErrs = tried ? errs : {};
+
+  const parseYaml = (): Put | null => {
+    try {
+      const p = YAML.parse(yamlText) as Put;
+      return { description: p?.description || "", profiles: p?.profiles || [], config: p?.config || {}, devices: p?.devices || {} };
+    } catch (e: any) {
+      setYamlErr(e.message);
+      return null;
+    }
+  };
   const switchView = (v: "form" | "yaml") => {
     if (v === "yaml") {
-      setYamlText(YAML.stringify(draft));
+      setYamlText(YAML.stringify(cd));
       setYamlErr("");
     } else if (view === "yaml") {
-      try {
-        const p = YAML.parse(yamlText) as Put;
-        setDraft({ description: p.description || "", profiles: p.profiles || [], config: p.config || {}, devices: p.devices || {} });
-        setDirty(true);
-      } catch (e: any) {
-        setYamlErr(e.message);
-        return;
-      }
+      const p = parseYaml();
+      if (!p) return;
+      setDraft(p);
+      setDirty(true);
     }
     setView(v);
   };
   const startReview = () => {
+    let d = cd;
     if (view === "yaml") {
-      try {
-        const p = YAML.parse(yamlText) as Put;
-        setDraft({ description: p.description || "", profiles: p.profiles || [], config: p.config || {}, devices: p.devices || {} });
-        setYamlErr("");
-      } catch (e: any) {
-        setYamlErr(e.message);
-        return;
-      }
+      const p = parseYaml();
+      if (!p) return;
+      setDraft(p);
+      setYamlErr("");
+      d = clean(p);
     }
+    const v = validate(d, cores, hostMem);
+    if (Object.keys(v.err).length) {
+      setTried(true);
+      if (view === "yaml") setYamlErr(Object.values(v.err)[0]);
+      else requestAnimationFrame(() => shake(root.current?.querySelector<HTMLElement>(".hc .field.bad, [data-bad]") ?? null));
+      return;
+    }
+    setApplyErr("");
     setReview(true);
   };
+
   const apply = async () => {
-    setReview(false);
-    const body = { ...draft, architecture: inst.architecture, ephemeral: inst.ephemeral, stateful: inst.stateful };
-    // keep volatile keys Incus manages
-    for (const [k, v] of Object.entries(inst.config)) if (k.startsWith("volatile.") || k.startsWith("image.")) body.config[k] = v;
-    const ok = await app.run(
-      `Applying changes to ${inst.name}`,
-      async () => {
-        await incusOp(inst.server, `/1.0/instances/${encodeURIComponent(inst.name)}`, { method: "PUT", project: inst.project, body });
-        return true;
-      },
-      "Changes applied",
-    );
-    if (ok) {
+    if (!base) return;
+    setBusy(true);
+    setApplyErr("");
+    // The server fills in volatile.* and image.* itself; send them back unchanged but keep them out of the draft.
+    const body = JSON.parse(JSON.stringify({ ...cd, architecture: srcObj.architecture, ephemeral: srcObj.ephemeral, stateful: srcObj.stateful }));
+    for (const [k, v] of Object.entries<string>(srcObj.config || {})) if (hidden(k)) body.config[k] = v;
+    for (const k of ["limits.memory", "limits.memory.swap"]) {
+      const b = body.config[k] && !body.config[k].endsWith("%") ? memBytes(body.config[k]) : null;
+      if (b) body.config[k] = memStr(Math.round(b));
+    }
+    const rs = body.devices.root?.size ? memBytes(body.devices.root.size) : null;
+    if (rs) body.devices.root.size = memStr(Math.round(rs));
+    const put = (etag: string) => incusOp(server, path, { method: "PUT", project, body, etag });
+    try {
+      try {
+        await put(base.etag);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 412)) throw e;
+        // volatile.* changes when the instance starts or stops; only a real change is a conflict
+        const fresh = await incusWithETag<any>(server, path, { project });
+        if (JSON.stringify(toPut(fresh.data)) !== JSON.stringify(original)) throw e;
+        for (const [k, v] of Object.entries<string>(fresh.data.config || {})) if (hidden(k)) body.config[k] = v;
+        await put(fresh.etag);
+      }
+      setReview(false);
       setDirty(false);
+      setTried(false);
+      app.toast("Changes applied");
       invalidate("instances:");
+      await loadBase().catch(() => {});
       reload();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 412) {
+        setReview(false);
+        setConflict(true);
+      } else setApplyErr(friendlyError(e));
+    } finally {
+      setBusy(false);
     }
   };
+  const reloadFromServer = async () => {
+    await loadBase().catch(() => {});
+    setDirty(false);
+    setTried(false);
+    setConflict(false);
+    setView("form");
+  };
 
-  const cores = host.data?.cpu?.total;
-  const hostMem = host.data?.memory?.total;
-  const cpu = draft.config["limits.cpu"] ?? "";
-  const memBytes = parseBytes(draft.config["limits.memory"] ?? ex["limits.memory"]);
-  const memGiB = memBytes ? Math.round((memBytes / 1024 ** 3) * 10) / 10 : "";
-  const hard = (draft.config["limits.memory.enforce"] ?? ex["limits.memory.enforce"] ?? "hard") === "hard";
+  // ----- derived values for the form -----
+  const cpu = val("limits.cpu");
+  const memV = val("limits.memory");
+  const memB = memBytes(memV);
+  const hard = (eff("limits.memory.enforce") || "hard") === "hard";
   const rootLocal = draft.devices.root;
-  const rootEff = rootLocal || inst.expanded_devices?.root || {};
-  const rootGiB = parseBytes(rootEff.size) ? Math.round(parseBytes(rootEff.size)! / 1024 ** 3) : "";
+  const rootEff = rootLocal || prof.dev.root || {};
+  const rootSize = rootLocal ? (rootLocal.size ?? "") : (prof.dev.root?.size ?? "");
   const isVM = inst.type === "virtual-machine";
-  const disks = Object.entries(draft.devices).filter(([n, d]) => d.type === "disk" && n !== "root");
-  const nics = Object.entries(draft.devices).filter(([, d]) => d.type === "nic");
-  const profNics = Object.entries(inst.expanded_devices || {}).filter(([n, d]) => d.type === "nic" && !draft.devices[n]);
-  const autostart = (draft.config["boot.autostart"] ?? ex["boot.autostart"] ?? "false") === "true";
+  const effDev: Devs = { ...prof.dev, ...draft.devices };
+  const inh = (type: string): Inherited => Object.entries(prof.dev).filter(([n, d]) => d.type === type && n !== "root" && !draft.devices[n]).map(([n, d]) => [n, d, prof.devFrom[n]]);
+  const nicRows: NetDev[] = Object.entries(effDev)
+    .filter(([, d]) => d.type === "nic")
+    .map(([n, d]) => ({ n, d, from: draft.devices[n] ? null : prof.devFrom[n] }));
+  const managed = (nets.data || []).filter((n) => n.managed).map((n) => n.name as string);
+  const hostNics = (nets.data || []).filter((n) => !n.managed).map((n) => n.name as string);
+  const autostart = (eff("boot.autostart") || "false") === "true";
+  const nesting = (eff("security.nesting") || "false") === "true";
+  const schedV = eff("snapshots.schedule");
+  const allProfiles = (profs.data || []).map((p) => p.name as string);
+  const chgDev = (n: string) => JSON.stringify(cd.devices[n]) !== JSON.stringify(original.devices[n]);
+
+  if (!base && !inst.config) return <div className="hw" />;
 
   return (
-    <div className="hw">
+    <div className="hw" ref={root}>
       <div className="cfg-h">
-        <span className="dim">Settings for {inst.name}. Values that come from a profile say so.</span>
+        <span className="dim">Settings for {name}. Values that come from a profile say so.</span>
         <Seg value={view} onChange={switchView} options={[{ v: "form", l: "Form" }, { v: "yaml", l: <span className="ac">YAML</span> }]} />
       </div>
+      {conflict && (
+        <div className="cfl" role="alert">
+          <span>
+            <b>{CONFLICT.split(" while")[0]}.</b> {name} changed while you were editing, so your changes were not applied. Reload to see their change, then make your edits again.
+          </span>
+          <button className="btn btn-s btn-sm press" onClick={() => setConflict(false)}>
+            Keep editing
+          </button>
+          <button className="btn btn-p btn-sm press" onClick={reloadFromServer}>
+            Reload
+          </button>
+        </div>
+      )}
       {view === "yaml" ? (
         <div className="panel">
-          <textarea className="yaml" spellCheck={false} value={yamlText} onChange={(e) => (setYamlText(e.target.value), setDirty(true))} />
+          <textarea className="yaml" spellCheck={false} aria-label="Instance configuration as YAML" value={yamlText} onChange={(e) => (setYamlText(e.target.value), setDirty(true))} />
           {yamlErr && <div className="pfoot bad">{yamlErr}</div>}
         </div>
       ) : (
@@ -163,11 +319,11 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               <h2>Compute</h2>
               {host.data && (
                 <p>
-                  {inst.server} · {host.data.cpu?.sockets?.[0]?.name || ""} {cores ? `· ${cores} threads` : ""} {hostMem ? `· ${Math.round(hostMem / 1024 ** 3)} GiB` : ""}
+                  {server} · {host.data.cpu?.sockets?.[0]?.name || ""} {cores ? `· ${cores} threads` : ""} {hostMem ? `· ${bytes(hostMem)}` : ""}
                 </p>
               )}
             </header>
-            <div className="hrow">
+            <div className={"hrow" + (errs.cpu ? " bad" : "")}>
               <div className="hl">
                 <b>CPU{changed("limits.cpu") && <span className="chg" />}</b>
                 <code>limits.cpu</code>
@@ -175,26 +331,34 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               </div>
               <div className="hc">
                 <div className="line">
-                  <div className="step">
-                    <button type="button" aria-label="Fewer" onClick={() => setCfg("limits.cpu", String(Math.max(1, (Number(cpu) || Number(ex["limits.cpu"]) || 1) - 1)))}>
+                  <div className={"step" + (errs.cpu ? " bad" : "")}>
+                    <button type="button" aria-label="Fewer" onClick={() => setCfg("limits.cpu", String(Math.max(1, (Number(cpu) || 2) - 1)))}>
                       −
                     </button>
-                    <input value={cpu} placeholder={ex["limits.cpu"] || "all"} onChange={(e) => setCfg("limits.cpu", e.target.value.replace(/[^\d,-]/g, ""))} />
-                    <button type="button" aria-label="More" onClick={() => setCfg("limits.cpu", String(Math.min(cores || 512, (Number(cpu) || Number(ex["limits.cpu"]) || 0) + 1)))}>
+                    <input aria-label="CPU cores" style={{ width: 64 }} value={cpu} placeholder="all" onChange={(e) => setCfg("limits.cpu", e.target.value.replace(/\s/g, ""))} />
+                    <button type="button" aria-label="More" onClick={() => setCfg("limits.cpu", String((Number(cpu) || 0) + 1))}>
                       +
                     </button>
                   </div>
                   {cores && <span className="dim">of {cores}</span>}
-                  {cpu && (
-                    <button className="btn btn-q btn-sm" onClick={() => setCfg("limits.cpu", "")}>
-                      No limit
+                  {own("limits.cpu") && !("limits.cpu" in prof.cfg) && (
+                    <button className="btn btn-s btn-sm" onClick={() => resetCfg("limits.cpu")}>
+                      Remove limit
                     </button>
                   )}
+                  {useProfile("limits.cpu")}
                 </div>
+                {errs.cpu ? (
+                  <span className="note bad" data-bad>
+                    {errs.cpu}
+                  </span>
+                ) : warns.cpu ? (
+                  <span className="note warn">{warns.cpu} You can still apply it.</span>
+                ) : null}
                 <span className="note">{isVM ? "Applies on the next restart for VMs." : "Applies right away, no restart."} Empty means all cores.</span>
               </div>
             </div>
-            <div className="hrow">
+            <div className={"hrow" + (errs.mem ? " bad" : "")}>
               <div className="hl">
                 <b>Memory{(changed("limits.memory") || changed("limits.memory.enforce")) && <span className="chg" />}</b>
                 <code>limits.memory, .enforce</code>
@@ -203,15 +367,37 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               <div className="hc">
                 <div className="line">
                   {hostMem && (
-                    <input type="range" min={0.25} max={Math.floor(hostMem / 1024 ** 3)} step={0.25} value={memGiB || 0} onChange={(e) => setCfg("limits.memory", e.target.value + "GiB")} />
+                    <input
+                      type="range"
+                      aria-label="Memory slider"
+                      min={256}
+                      max={Math.max(256, Math.floor(hostMem / 1024 ** 2))}
+                      step={256}
+                      value={memB ? Math.round(memB / 1024 ** 2) : 256}
+                      onChange={(e) => setCfg("limits.memory", memStr(Number(e.target.value) * 1024 ** 2))}
+                    />
                   )}
-                  <div className="unit">
-                    <div className="field">
-                      <input value={memGiB} placeholder="no limit" onChange={(e) => setCfg("limits.memory", e.target.value ? e.target.value.replace(/[^\d.]/g, "") + "GiB" : "")} />
+                  {/%$/.test(memV) ? (
+                    <div className="field" style={{ width: 110 }}>
+                      <input aria-label="Memory" className="mono" value={memV} onChange={(e) => setCfg("limits.memory", e.target.value)} />
                     </div>
-                    GiB
-                  </div>
+                  ) : (
+                    <SizeField label="Memory" value={memV} onChange={(v) => setCfg("limits.memory", v)} placeholder="no limit" bad={!!errs.mem} />
+                  )}
+                  {own("limits.memory") && !("limits.memory" in prof.cfg) && (
+                    <button className="btn btn-s btn-sm" onClick={() => resetCfg("limits.memory")}>
+                      Remove limit
+                    </button>
+                  )}
+                  {useProfile("limits.memory")}
                 </div>
+                {errs.mem ? (
+                  <span className="note bad" data-bad>
+                    {errs.mem}
+                  </span>
+                ) : warns.mem ? (
+                  <span className="note warn">{warns.mem} You can still apply it.</span>
+                ) : null}
                 {!isVM && (
                   <div className="line">
                     <Seg value={hard ? "hard" : "soft"} onChange={(v) => setCfg("limits.memory.enforce", v)} options={[{ v: "hard", l: "Hard limit" }, { v: "soft", l: "Soft limit" }]} />
@@ -226,85 +412,48 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             <header>
               <h2>Storage</h2>
             </header>
-            <div className="hrow">
+            <div className={"hrow" + (errs.root ? " bad" : "")}>
               <div className="hl">
-                <b>Root disk{JSON.stringify(draft.devices.root) !== JSON.stringify(original.devices.root) && <span className="chg" />}</b>
+                <b>Root disk{JSON.stringify(cd.devices.root) !== JSON.stringify(original.devices.root) && <span className="chg" />}</b>
                 <code>devices.root.size</code>
-                <span className="from">{rootLocal ? "Set on this instance" : "From a profile"}</span>
+                <span className="from">
+                  {rootLocal?.size ? (prof.dev.root?.size ? `Set on this instance, overrides ${prof.devFrom.root}` : "Set on this instance") : prof.dev.root?.size ? `From profile ${prof.devFrom.root}` : rootLocal ? "Set on this instance" : "Not set"}
+                </span>
               </div>
               <div className="hc">
                 <div className="line">
-                  <div className="unit">
-                    <div className="field">
-                      <input
-                        value={rootGiB}
-                        placeholder="pool default"
-                        onChange={(e) =>
-                          upd((d) => {
-                            const base = d.devices.root || { ...(inst.expanded_devices?.root || { type: "disk", path: "/", pool: pools.data?.[0] || "default" }) };
-                            const v = e.target.value.replace(/\D/g, "");
-                            if (v) base.size = v + "GiB";
-                            else delete base.size;
-                            d.devices.root = base;
-                          })
-                        }
-                      />
-                    </div>
-                    GiB on pool <span className="tag mono">{rootEff.pool || "–"}</span>
-                  </div>
+                  <SizeField
+                    label="Root disk size"
+                    value={rootSize}
+                    placeholder="pool default"
+                    bad={!!errs.root}
+                    onChange={(v) =>
+                      upd((d) => {
+                        const b = d.devices.root || { ...(prof.dev.root || { type: "disk", path: "/", pool: pools.data?.[0] || "default" }) };
+                        if (v) b.size = v;
+                        else delete b.size;
+                        d.devices.root = b;
+                      })
+                    }
+                  />
+                  <span className="dim">
+                    on pool <span className="tag mono">{rootEff.pool || "–"}</span>
+                  </span>
                 </div>
+                {errs.root && (
+                  <span className="note bad" data-bad>
+                    {errs.root}
+                  </span>
+                )}
                 <span className="note">Disks can grow, not shrink.</span>
               </div>
             </div>
             <div className="hrow">
               <div className="hl">
-                <b>Extra disks</b>
+                <b>Extra disks{[...new Set([...Object.keys(cd.devices), ...Object.keys(original.devices)])].some((n) => n !== "root" && (cd.devices[n]?.type === "disk" || original.devices[n]?.type === "disk") && chgDev(n)) && <span className="chg" />}</b>
                 <code>devices.*.type: disk</code>
               </div>
-              <div className="hc devl">
-                {disks.length > 0 && (
-                  <div className="dev">
-                    <span className="hdr">Name</span>
-                    <span className="hdr">Host path or volume</span>
-                    <span className="hdr">Path inside</span>
-                    <span />
-                    <span />
-                  </div>
-                )}
-                {disks.map(([n, d]) => (
-                  <div className="dev" key={n}>
-                    <div className="field mono-in">
-                      <input value={n} readOnly />
-                    </div>
-                    <div className="field mono-in">
-                      <input value={d.source || ""} onChange={(e) => upd((x) => void (x.devices[n].source = e.target.value))} placeholder="/srv/data" />
-                    </div>
-                    <div className="field mono-in">
-                      <input value={d.path || ""} onChange={(e) => upd((x) => void (x.devices[n].path = e.target.value))} placeholder="/mnt/data" />
-                    </div>
-                    <span className="dim mono" style={{ fontSize: 12 }}>
-                      {d.pool || ""}
-                    </span>
-                    <button className="btn btn-q ib btn-sm" aria-label={"Remove " + n} onClick={() => upd((x) => void delete x.devices[n])}>
-                      {ic.x}
-                    </button>
-                  </div>
-                ))}
-                <div>
-                  <button
-                    className="btn btn-s btn-sm press"
-                    onClick={() =>
-                      upd((x) => {
-                        let i = 1;
-                        while (x.devices["disk" + i]) i++;
-                        x.devices["disk" + i] = { type: "disk", source: "", path: "" };
-                      })
-                    }
-                  >
-                    {ic.plus}Add disk
-                  </button>
-                </div>
-              </div>
+              <DiskEditor devices={draft.devices} inherited={inh("disk")} edit={edit} server={server} project={project} errors={devErrs} />
             </div>
           </section>
 
@@ -316,69 +465,154 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               <div className="hl">
                 <b>Network cards</b>
                 <code>devices.*.type: nic</code>
-                {profNics.length > 0 && <span className="from">{profNics.map(([n]) => n).join(", ")} from profile</span>}
               </div>
               <div className="hc devl">
-                {[...profNics.map(([n, d]) => [n, d, true] as const), ...nics.map(([n, d]) => [n, d, false] as const)].map(([n, d, inherited]) => (
-                  <div className="dev n" key={n}>
-                    <div className="field mono-in">
-                      <input value={n} readOnly />
+                {nicRows.map(({ n, d, from: pf }) => {
+                  const hostMode = !d.network;
+                  const dis = pf != null;
+                  return (
+                    <div key={n} className="devgrp">
+                      <div className="dev n">
+                        <div className="field mono-in">
+                          <input value={n} readOnly aria-label="Device name" />
+                        </div>
+                        <div className="field">
+                          <select
+                            aria-label={`Network of ${n}`}
+                            value={hostMode ? "__host" : d.network}
+                            disabled={dis}
+                            onChange={(e) =>
+                              upd((x) => {
+                                x.devices[n] = e.target.value === "__host" ? { type: "nic", nictype: "macvlan", parent: hostNics[0] || "", name: d.name || n } : { type: "nic", network: e.target.value, name: d.name || n };
+                              })
+                            }
+                          >
+                            {managed.map((nn) => (
+                              <option key={nn}>{nn}</option>
+                            ))}
+                            {d.network && !managed.includes(d.network) && <option>{d.network}</option>}
+                            <option value="__host">Host interface (macvlan/physical)…</option>
+                          </select>
+                        </div>
+                        {hostMode ? (
+                          <span className="note">
+                            {d.nictype || "nic"} on {d.parent || "–"}
+                          </span>
+                        ) : (
+                          <div className="field mono-in">
+                            <input
+                              aria-label={`IPv4 address of ${n}`}
+                              value={d["ipv4.address"] || ""}
+                              placeholder="Automatic (DHCP)"
+                              disabled={dis}
+                              onChange={(e) =>
+                                upd((x) => {
+                                  if (e.target.value) x.devices[n]["ipv4.address"] = e.target.value;
+                                  else delete x.devices[n]["ipv4.address"];
+                                })
+                              }
+                            />
+                          </div>
+                        )}
+                        {dis ? (
+                          <button className="btn btn-q btn-sm" title={`From profile ${pf}. Copy to this instance to edit.`} onClick={() => upd((x) => void (x.devices[n] = { ...d }))}>
+                            Edit
+                          </button>
+                        ) : (
+                          <button className="btn btn-q ib btn-sm" aria-label={"Remove " + n} onClick={() => upd((x) => void delete x.devices[n])}>
+                            {ic.x}
+                          </button>
+                        )}
+                      </div>
+                      {hostMode && (
+                        <div className="line" style={{ marginTop: 6 }}>
+                          <div className="field" style={{ width: 150, height: 30 }}>
+                            <select aria-label={`Type of ${n}`} disabled={dis} value={d.nictype || "macvlan"} onChange={(e) => upd((x) => void (x.devices[n].nictype = e.target.value))}>
+                              <option value="macvlan">macvlan</option>
+                              <option value="physical">physical</option>
+                              <option value="bridged">bridged (host bridge)</option>
+                            </select>
+                          </div>
+                          <span className="dim">on host interface</span>
+                          <div className="field mono-in" style={{ width: 160, height: 30 }}>
+                            <input aria-label={`Host interface of ${n}`} list={"hn-" + n} disabled={dis} value={d.parent || ""} onChange={(e) => upd((x) => void (x.devices[n].parent = e.target.value))} placeholder="eth0" />
+                            <datalist id={"hn-" + n}>
+                              {hostNics.map((h) => (
+                                <option key={h} value={h} />
+                              ))}
+                            </datalist>
+                          </div>
+                        </div>
+                      )}
+                      {dis && <span className="note">From profile {pf}</span>}
                     </div>
-                    <div className="field">
-                      <select
-                        value={d.network || ""}
-                        disabled={inherited}
-                        onChange={(e) =>
-                          upd((x) => {
-                            x.devices[n] = { type: "nic", network: e.target.value, name: d.name || n };
-                          })
-                        }
-                      >
-                        {!d.network && <option value="">{d.parent ? `${d.nictype} on ${d.parent}` : "–"}</option>}
-                        {(nets.data || []).map((nn) => (
-                          <option key={nn}>{nn}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="field mono-in">
-                      <input
-                        value={d["ipv4.address"] || ""}
-                        placeholder="Automatic (DHCP)"
-                        disabled={inherited}
-                        onChange={(e) =>
-                          upd((x) => {
-                            if (e.target.value) x.devices[n]["ipv4.address"] = e.target.value;
-                            else delete x.devices[n]["ipv4.address"];
-                          })
-                        }
-                      />
-                    </div>
-                    {inherited ? (
-                      <button className="btn btn-q btn-sm" title="Copy to this instance to edit" onClick={() => upd((x) => void (x.devices[n] = { ...d }))}>
-                        Edit
-                      </button>
-                    ) : (
-                      <button className="btn btn-q ib btn-sm" aria-label={"Remove " + n} onClick={() => upd((x) => void delete x.devices[n])}>
-                        {ic.x}
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
                 <div>
                   <button
                     className="btn btn-s btn-sm press"
                     onClick={() =>
                       upd((x) => {
                         let i = 0;
-                        while (x.devices["eth" + i] || inst.expanded_devices?.["eth" + i]) i++;
-                        x.devices["eth" + i] = { type: "nic", network: nets.data?.[0] || "incusbr0", name: "eth" + i };
+                        while (x.devices["eth" + i] || prof.dev["eth" + i]) i++;
+                        x.devices["eth" + i] = { type: "nic", network: managed[0] || "incusbr0", name: "eth" + i };
                       })
                     }
                   >
                     {ic.plus}Add network card
                   </button>
                 </div>
-                <span className="note">A fixed IPv4 needs a managed bridge network.</span>
+                <span className="note">Only managed networks are listed. A fixed IPv4 needs a managed bridge network.</span>
+              </div>
+            </div>
+            <div className="hrow">
+              <div className="hl">
+                <b>Port forwarding</b>
+                <code>devices.*.type: proxy</code>
+              </div>
+              <ProxyEditor devices={draft.devices} inherited={inh("proxy")} edit={edit} server={server} errors={devErrs} />
+            </div>
+          </section>
+
+          <section className="hsec">
+            <header>
+              <h2>Profiles</h2>
+              <p>Applied in order. Later profiles win.</p>
+            </header>
+            <div className="hrow">
+              <div className="hl">
+                <b>Profiles{original.profiles.join() !== draft.profiles.join() && <span className="chg" />}</b>
+                <code>profiles</code>
+              </div>
+              <div className="hc devl">
+                {draft.profiles.map((p, i) => (
+                  <div className="dev pf" key={p}>
+                    <span className="idx">{i + 1}</span>
+                    <span className="mono">{p}</span>
+                    <button className="btn btn-q ib btn-sm" aria-label={`Move ${p} up`} disabled={i === 0} onClick={() => upd((x) => void x.profiles.splice(i - 1, 2, x.profiles[i], x.profiles[i - 1]))}>
+                      <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>{ic.down}</span>
+                    </button>
+                    <button className="btn btn-q ib btn-sm" aria-label={`Move ${p} down`} disabled={i === draft.profiles.length - 1} onClick={() => upd((x) => void x.profiles.splice(i, 2, x.profiles[i + 1], x.profiles[i]))}>
+                      {ic.down}
+                    </button>
+                    <button className="btn btn-q ib btn-sm" aria-label={"Remove profile " + p} onClick={() => upd((x) => void x.profiles.splice(i, 1))}>
+                      {ic.x}
+                    </button>
+                  </div>
+                ))}
+                {draft.profiles.length === 0 && <span className="note">No profiles. This instance only uses its own settings.</span>}
+                {allProfiles.some((p) => !draft.profiles.includes(p)) && (
+                  <div className="field" style={{ width: 220 }}>
+                    <select aria-label="Add profile" value="" onChange={(e) => e.target.value && upd((x) => void x.profiles.push(e.target.value))}>
+                      <option value="">Add a profile…</option>
+                      {allProfiles
+                        .filter((p) => !draft.profiles.includes(p))
+                        .map((p) => (
+                          <option key={p}>{p}</option>
+                        ))}
+                    </select>
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -398,11 +632,11 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                   <button className="toggle" role="switch" aria-checked={autostart} aria-label="Start with server" onClick={() => setCfg("boot.autostart", autostart ? "false" : "true")} />
                   <span className="dim">Order</span>
                   <div className="step">
-                    <button type="button" onClick={() => setCfg("boot.autostart.priority", String(Math.max(0, Number(draft.config["boot.autostart.priority"] || 0) - 1)))}>
+                    <button type="button" aria-label="Earlier" onClick={() => setCfg("boot.autostart.priority", String(Math.max(0, Number(eff("boot.autostart.priority") || 0) - 1)))}>
                       −
                     </button>
-                    <input value={draft.config["boot.autostart.priority"] || "0"} onChange={(e) => setCfg("boot.autostart.priority", e.target.value.replace(/\D/g, ""))} />
-                    <button type="button" onClick={() => setCfg("boot.autostart.priority", String(Number(draft.config["boot.autostart.priority"] || 0) + 1))}>
+                    <input aria-label="Start order" value={val("boot.autostart.priority") || "0"} onChange={(e) => setCfg("boot.autostart.priority", e.target.value.replace(/\D/g, ""))} />
+                    <button type="button" aria-label="Later" onClick={() => setCfg("boot.autostart.priority", String(Number(eff("boot.autostart.priority") || 0) + 1))}>
                       +
                     </button>
                   </div>
@@ -419,26 +653,29 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               <div className="hc">
                 <div className="line">
                   <div className="field">
-                    <select value={draft.config["snapshots.schedule"] ?? ""} onChange={(e) => setCfg("snapshots.schedule", e.target.value)}>
+                    <select aria-label="Snapshot schedule" value={schedV} onChange={(e) => setCfg("snapshots.schedule", e.target.value)}>
                       {sched.map((s) => (
                         <option key={s.v} value={s.v}>
                           {s.l}
                         </option>
                       ))}
-                      {draft.config["snapshots.schedule"] && !sched.some((s) => s.v === draft.config["snapshots.schedule"]) && <option>{draft.config["snapshots.schedule"]}</option>}
+                      {schedV && !sched.some((s) => s.v === schedV) && <option>{schedV}</option>}
                     </select>
                   </div>
                   <span className="dim">kept for</span>
                   <div className="field">
-                    <select value={draft.config["snapshots.expiry"] ?? ""} onChange={(e) => setCfg("snapshots.expiry", e.target.value)}>
+                    <select aria-label="Snapshot expiry" value={eff("snapshots.expiry")} onChange={(e) => setCfg("snapshots.expiry", e.target.value)}>
                       {expiry.map((s) => (
                         <option key={s} value={s}>
                           {s || "forever"}
                         </option>
                       ))}
+                      {eff("snapshots.expiry") && !expiry.includes(eff("snapshots.expiry")) && <option>{eff("snapshots.expiry")}</option>}
                     </select>
                   </div>
+                  {useProfile("snapshots.schedule")}
                 </div>
+                {onlyProfile("snapshots.schedule") && <span className="note">Profile {prof.cfgFrom["snapshots.schedule"]} sets this. Pick another schedule to override it here.</span>}
               </div>
             </div>
             {!isVM && (
@@ -450,14 +687,9 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                 </div>
                 <div className="hc">
                   <div className="line">
-                    <button
-                      className="toggle"
-                      role="switch"
-                      aria-label="Nesting"
-                      aria-checked={(draft.config["security.nesting"] ?? ex["security.nesting"]) === "true"}
-                      onClick={() => setCfg("security.nesting", (draft.config["security.nesting"] ?? ex["security.nesting"]) === "true" ? "false" : "true")}
-                    />
+                    <button className="toggle" role="switch" aria-label="Nesting" aria-checked={nesting} onClick={() => setCfg("security.nesting", nesting ? "false" : "true")} />
                     <span className="note">Needed to run Docker or Incus inside this container.</span>
+                    {useProfile("security.nesting")}
                   </div>
                 </div>
               </div>
@@ -468,7 +700,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               </div>
               <div className="hc">
                 <div className="field">
-                  <input value={draft.description} onChange={(e) => upd((d) => void (d.description = e.target.value))} placeholder="What runs here" />
+                  <input aria-label="Description" value={draft.description} onChange={(e) => upd((d) => void (d.description = e.target.value))} placeholder="What runs here" />
                 </div>
               </div>
             </div>
@@ -484,6 +716,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             onClick={() => {
               setDraft(original);
               setDirty(false);
+              setTried(false);
               setYamlText(origY);
             }}
           >
@@ -494,11 +727,18 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
           </button>
         </div>
       )}
-      <Dialog open={review} onClose={() => setReview(false)} size="md">
+      <Dialog open={review} onClose={() => !busy && setReview(false)} size="md">
         <div className="dlg-b">
-          <h2>Review changes to {inst.name}</h2>
+          <h2>Review changes to {name}</h2>
+          {Object.keys(warns).length > 0 && (
+            <ul className="wlist">
+              {Object.values(warns).map((w) => (
+                <li key={w}>{w} It is allowed, but check it is what you want.</li>
+              ))}
+            </ul>
+          )}
           <div className="diff">
-            {diffLines(origY, YAML.stringify(draft))
+            {diffLines(origY, YAML.stringify(cd))
               .filter((l, i, arr) => l.t !== "c" || arr.slice(Math.max(0, i - 2), i + 3).some((x) => x.t !== "c"))
               .map((l, i) => (
                 <div key={i} className={l.t}>
@@ -506,13 +746,18 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                 </div>
               ))}
           </div>
+          {applyErr && (
+            <div className="cerr" role="alert">
+              {applyErr}
+            </div>
+          )}
         </div>
         <div className="dlg-f">
-          <button className="btn btn-s press" onClick={() => setReview(false)}>
+          <button className="btn btn-s press" disabled={busy} onClick={() => setReview(false)}>
             Keep editing
           </button>
-          <button className="btn btn-p press" onClick={apply}>
-            Apply
+          <button className="btn btn-p press" disabled={busy} onClick={apply}>
+            {busy ? "Applying…" : applyErr ? "Try again" : "Apply"}
           </button>
         </div>
       </Dialog>
