@@ -21,10 +21,12 @@ type Config struct {
 	TLSKey        string `yaml:"tls_key,omitempty"`
 	SessionSecret string `yaml:"session_secret"`
 
-	Theme   Theme          `yaml:"theme"`
-	Users   []User         `yaml:"users"`
-	OIDC    *OIDCConfig    `yaml:"oidc,omitempty"`
-	Servers []ServerConfig `yaml:"servers"`
+	Theme Theme  `yaml:"theme"`
+	Users []User `yaml:"users"`
+	// Revoked lists sessions ended by logout; entries are dropped once the session would have expired.
+	Revoked []RevokedSession `yaml:"revoked_sessions,omitempty"`
+	OIDC    *OIDCConfig      `yaml:"oidc,omitempty"`
+	Servers []ServerConfig   `yaml:"servers"`
 	// ImageServers are the simplestreams servers the UI offers images from.
 	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
 }
@@ -37,6 +39,11 @@ type Theme struct {
 type User struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+}
+
+type RevokedSession struct {
+	ID      string `yaml:"id"`
+	Expires int64  `yaml:"expires"`
 }
 
 type OIDCConfig struct {
@@ -106,6 +113,7 @@ func (s *Store) Get() Config {
 	c := s.cfg
 	c.Users = append([]User(nil), s.cfg.Users...)
 	c.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
+	c.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	return c
 }
 
@@ -116,6 +124,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next := s.cfg
 	next.Users = append([]User(nil), s.cfg.Users...)
 	next.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
+	next.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	if err := fn(&next); err != nil {
 		return err
 	}

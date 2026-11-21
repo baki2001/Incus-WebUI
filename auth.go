@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ type Session struct {
 	User    string `json:"u"`
 	Method  string `json:"m"` // password | oidc
 	Expires int64  `json:"e"`
+	ID      string `json:"i"` // lets logout revoke this one session
 }
 
 func (a *App) signSession(s Session) string {
@@ -39,7 +41,7 @@ func (a *App) mac(v string) string {
 }
 
 func (a *App) setSession(w http.ResponseWriter, r *http.Request, user, method string) {
-	s := Session{User: user, Method: method, Expires: time.Now().Add(sessionTTL).Unix()}
+	s := Session{User: user, Method: method, Expires: time.Now().Add(sessionTTL).Unix(), ID: randHex(16)}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: a.signSession(s), Path: "/", HttpOnly: true,
 		Secure: a.secureCookies(r), SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
@@ -51,7 +53,8 @@ func (a *App) secureCookies(r *http.Request) bool {
 }
 
 // currentSession validates the cookie and re-checks that the user still exists,
-// so deleting a user or turning off OIDC ends their sessions.
+// so deleting a user or turning off OIDC ends their sessions. Logout adds the
+// session id to the revoked list in the config (kept until the cookie expires).
 func (a *App) currentSession(r *http.Request) (*Session, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
@@ -69,7 +72,15 @@ func (a *App) currentSession(r *http.Request) (*Session, bool) {
 	if json.Unmarshal(raw, &s) != nil || time.Now().Unix() > s.Expires {
 		return nil, false
 	}
+	if s.ID == "" {
+		return nil, false // issued before sessions were revocable
+	}
 	cfg := a.store.Get()
+	for _, rv := range cfg.Revoked {
+		if rv.ID == s.ID {
+			return nil, false
+		}
+	}
 	switch s.Method {
 	case "password":
 		for _, u := range cfg.Users {
@@ -116,30 +127,123 @@ func sameOriginOK(r *http.Request) bool {
 	return r.Header.Get("X-Incus-UI") == "1"
 }
 
-// --- login rate limiting: 10 attempts per 5 minutes per client IP ---
+// --- login rate limiting ---
+//
+// Failed logins are counted per username+IP, with a lockout that grows with
+// each further failure, so someone guessing the admin password from one
+// address cannot lock the admin out from another. A looser per-IP cap stops one
+// address from trying many usernames. Successful logins reset their own counter.
 
-type limiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
+const (
+	loginFreeTries   = 5                // failures per username+IP before lockouts start
+	loginBaseLockout = 30 * time.Second // doubles with every further failure
+	loginMaxLockout  = 15 * time.Minute
+	loginIPWindow    = 10 * time.Minute
+	loginIPMax       = 30 // failures per IP per window, any username
+)
+
+type failState struct {
+	n     int
+	until time.Time
+	last  time.Time
 }
 
-func (l *limiter) allow(key string) bool {
+type limiter struct {
+	mu    sync.Mutex
+	now   func() time.Time // tests replace this
+	pairs map[string]*failState
+	ips   map[string][]time.Time
+}
+
+func (l *limiter) clock() time.Time {
+	if l.now != nil {
+		return l.now()
+	}
+	return time.Now()
+}
+
+func pairKey(ip, user string) string { return ip + "\x00" + user }
+
+// check reports whether this attempt may go ahead and, if not, how long to wait.
+func (l *limiter) check(ip, user string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now()
-	cut := now.Add(-5 * time.Minute)
-	h := l.hits[key][:0]
-	for _, t := range l.hits[key] {
+	now := l.clock()
+	if f := l.pairs[pairKey(ip, user)]; f != nil && now.Before(f.until) {
+		return false, f.until.Sub(now)
+	}
+	h := l.recent(ip, now)
+	if len(h) >= loginIPMax {
+		return false, h[0].Add(loginIPWindow).Sub(now)
+	}
+	return true, 0
+}
+
+func (l *limiter) recent(ip string, now time.Time) []time.Time {
+	cut := now.Add(-loginIPWindow)
+	h := l.ips[ip][:0]
+	for _, t := range l.ips[ip] {
 		if t.After(cut) {
 			h = append(h, t)
 		}
 	}
-	if len(h) >= 10 {
-		l.hits[key] = h
-		return false
+	if len(h) == 0 {
+		delete(l.ips, ip)
+	} else {
+		l.ips[ip] = h
 	}
-	l.hits[key] = append(h, now)
-	return true
+	return h
+}
+
+func (l *limiter) fail(ip, user string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.clock()
+	if l.pairs == nil {
+		l.pairs, l.ips = map[string]*failState{}, map[string][]time.Time{}
+	}
+	if len(l.pairs) > 10000 { // forget stale entries
+		for k, f := range l.pairs {
+			if now.Sub(f.last) > time.Hour {
+				delete(l.pairs, k)
+			}
+		}
+	}
+	k := pairKey(ip, user)
+	f := l.pairs[k]
+	if f == nil || now.Sub(f.last) > time.Hour {
+		f = &failState{}
+		l.pairs[k] = f
+	}
+	f.n++
+	f.last = now
+	if f.n > loginFreeTries {
+		d := loginBaseLockout
+		for i := loginFreeTries + 1; i < f.n && d < loginMaxLockout; i++ {
+			d *= 2
+		}
+		if d > loginMaxLockout {
+			d = loginMaxLockout
+		}
+		f.until = now.Add(d)
+	}
+	l.ips[ip] = append(l.recent(ip, now), now)
+}
+
+func (l *limiter) reset(ip, user string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.pairs, pairKey(ip, user))
+}
+
+func tooMany(w http.ResponseWriter, wait time.Duration) {
+	secs := int(wait.Seconds()) + 1
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	msg := "Too many attempts. Try again in a few minutes."
+	if secs <= 90 {
+		msg = "Too many attempts. Try again in a minute."
+	}
+	jsonError(w, http.StatusTooManyRequests, msg)
 }
 
 func clientIP(r *http.Request) string {
@@ -158,13 +262,14 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "bad request origin")
 		return
 	}
-	if !a.loginLimit.allow(clientIP(r)) {
-		jsonError(w, http.StatusTooManyRequests, "Too many attempts. Try again in a few minutes.")
-		return
-	}
 	var req struct{ Username, Password string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	ip := clientIP(r)
+	if ok, wait := a.loginLimit.check(ip, req.Username); !ok {
+		tooMany(w, wait)
 		return
 	}
 	hash := dummyHash
@@ -175,14 +280,29 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) != nil || !found {
+		a.loginLimit.fail(ip, req.Username)
 		jsonError(w, http.StatusUnauthorized, "Wrong username or password.")
 		return
 	}
+	a.loginLimit.reset(ip, req.Username)
 	a.setSession(w, r, req.Username, "password")
 	writeJSON(w, map[string]string{"user": req.Username})
 }
 
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s, ok := a.currentSession(r); ok {
+		now := time.Now().Unix()
+		_ = a.store.Update(func(c *Config) error {
+			keep := c.Revoked[:0:0]
+			for _, rv := range c.Revoked {
+				if rv.Expires > now {
+					keep = append(keep, rv)
+				}
+			}
+			c.Revoked = append(keep, RevokedSession{ID: s.ID, Expires: s.Expires})
+			return nil
+		})
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -232,8 +352,9 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "bad request origin")
 		return
 	}
-	if !a.loginLimit.allow(clientIP(r)) {
-		jsonError(w, http.StatusTooManyRequests, "Too many attempts. Try again in a few minutes.")
+	ip := clientIP(r)
+	if ok, wait := a.loginLimit.check(ip, "\x00setup"); !ok {
+		tooMany(w, wait)
 		return
 	}
 	var req struct{ Token, Username, Password string }
@@ -242,6 +363,7 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.setupToken == "" || subtle.ConstantTimeCompare([]byte(req.Token), []byte(a.setupToken)) != 1 {
+		a.loginLimit.fail(ip, "\x00setup")
 		jsonError(w, http.StatusForbidden, "That setup code is not right. It is printed in the server log.")
 		return
 	}
@@ -281,30 +403,54 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// handleUserPut changes the password of an existing user.
 func (a *App) handleUserPut(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	var req struct{ Password string }
+	a.saveUser(w, r, r.PathValue("name"), false)
+}
+
+// handleUserCreate adds a user and refuses a name that is already taken.
+func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	a.saveUser(w, r, "", true)
+}
+
+func (a *App) saveUser(w http.ResponseWriter, r *http.Request, name string, create bool) {
+	var req struct{ Username, Password string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
+	}
+	if create {
+		name = req.Username
 	}
 	if err := validateCredentials(name, req.Password); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	code := 0
 	err := a.store.Update(func(c *Config) error {
 		for i := range c.Users {
 			if c.Users[i].Username == name {
+				if create {
+					code = http.StatusConflict
+					return errors.New("A user with that name already exists. Use Change password on their row instead.")
+				}
 				c.Users[i].PasswordHash = string(hash)
 				return nil
 			}
+		}
+		if !create {
+			code = http.StatusNotFound
+			return errors.New("No such user.")
 		}
 		c.Users = append(c.Users, User{Username: name, PasswordHash: string(hash)})
 		return nil
 	})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
+		if code == 0 {
+			code = http.StatusInternalServerError
+		}
+		jsonError(w, code, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -312,12 +458,21 @@ func (a *App) handleUserPut(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if s, ok := a.currentSession(r); ok && s.Method == "password" && s.User == name {
+		jsonError(w, http.StatusBadRequest, "You can't remove your own account. Ask another user to do it.")
+		return
+	}
+	code := http.StatusBadRequest
 	err := a.store.Update(func(c *Config) error {
-		out := c.Users[:0]
+		out := c.Users[:0:0]
 		for _, u := range c.Users {
 			if u.Username != name {
 				out = append(out, u)
 			}
+		}
+		if len(out) == len(c.Users) {
+			code = http.StatusNotFound
+			return errors.New("No such user.")
 		}
 		if len(out) == 0 && c.OIDC == nil {
 			return errors.New("You can't remove the last user while SSO is off.")
@@ -326,7 +481,7 @@ func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		jsonError(w, http.StatusBadRequest, err.Error())
+		jsonError(w, code, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

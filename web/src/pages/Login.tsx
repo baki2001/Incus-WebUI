@@ -11,6 +11,40 @@ const ssoErrors: Record<string, string> = {
   sso_unreachable: "The sign-in provider can't be reached right now.",
 };
 
+const NEXT_KEY = "iwui.next";
+
+// The page the person asked for, as a same-origin path. Anything else becomes "/".
+export function safeNext(p: string | null | undefined): string {
+  if (!p || !p.startsWith("/") || p.startsWith("//") || p.startsWith("/\\") || /[\u0000-\u001f]/.test(p)) return "/";
+  if (p === "/login" || p.startsWith("/api/")) return "/";
+  return p;
+}
+
+function wanted(): string {
+  const q = new URLSearchParams(location.search);
+  q.delete("error");
+  const qs = q.toString();
+  return safeNext(location.pathname + (qs ? "?" + qs : "") + location.hash);
+}
+
+function rememberNext() {
+  try {
+    sessionStorage.setItem(NEXT_KEY, wanted());
+  } catch {
+    /* ignore */
+  }
+}
+
+export function takeNext(): string | null {
+  try {
+    const n = sessionStorage.getItem(NEXT_KEY);
+    sessionStorage.removeItem(NEXT_KEY);
+    return n ? safeNext(n) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
   const setup = info.setup_required;
   const [user, setUser] = useState("");
@@ -27,7 +61,8 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
     try {
       if (setup) await ui("/setup", { method: "POST", body: { token: token.trim(), username: user, password: pass } });
       else await ui("/login", { method: "POST", body: { username: user, password: pass } });
-      history.replaceState(null, "", "/");
+      takeNext(); // drop any leftover single sign-on target
+      history.replaceState(null, "", wanted());
       onDone();
     } catch (e: any) {
       setErr(e.message);
@@ -79,7 +114,7 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
         {info.oidc && (
           <>
             {info.password && <div className="login-or">or</div>}
-            <a className="btn btn-s press" href="/api/ui/oidc/login" style={{ width: "100%", height: 36, textDecoration: "none" }}>
+            <a className="btn btn-s press" href="/api/ui/oidc/login" onClick={rememberNext} style={{ width: "100%", height: 36, textDecoration: "none" }}>
               {info.oidc_label || "Sign in with SSO"}
             </a>
           </>
