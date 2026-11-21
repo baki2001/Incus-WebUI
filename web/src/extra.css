@@ -159,3 +159,34 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+
+/* ---- WS6: sidebar scroll, command menu, operations ---- */
+.side{height:100vh;height:100dvh}
+.nav-wrap{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.nav-wrap .nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.nav-wrap .nav>*{flex-shrink:0}
+.nav-wrap::after{content:"";position:absolute;left:0;right:0;bottom:0;height:28px;pointer-events:none;opacity:0;transition:opacity var(--t1);background:linear-gradient(to bottom,transparent,var(--bg))}
+.nav-wrap.more::after{opacity:1}
+:root[data-brand="harbor"] .side .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--side))}
+.side-foot{flex:none;margin-top:6px;border-top:1px solid var(--line)}
+.cmdk-i .cmdk-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdk-i .meta{flex:none;padding-left:12px;white-space:nowrap}
+.cmdk-list{scroll-padding:6px}
+.cmdk-i svg{width:16px;height:16px}
+.rlink{color:inherit;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:2px}
+.rlink:hover{color:var(--ink);text-decoration-color:currentColor}
+.hostlist{margin:0;padding:0;list-style:none}
+.hostlist li{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 16px;border-top:1px solid var(--line)}
+.hostlist li:first-child{border-top:0}
+.hostlist a{color:var(--ink);text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hostlist a:hover{text-decoration:underline}
+.hostlist .dim{white-space:nowrap;font-size:12.5px}
+@media (max-width:860px){
+  .side{background:var(--s1);padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+  .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--s1))}
+  .side .ni,.side .sub .ni{height:40px}
+  .side .theme-seg button{height:36px}
+  .side .acct{min-height:40px}
+  .side .collapse.slop{display:grid;width:40px;height:40px}
+  .cmdk-i{height:44px}
+}

@@ -1,13 +1,56 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ic } from "../icons";
 import { incusOp } from "../api";
 import { Field, Input, KVEditor, SheetSec } from "../ui";
 import { EditSheet } from "./Resource";
-import { bytes, incus } from "../api";
+import { bytes, incus, incusRaw, type Instance } from "../api";
 import { useCrumbs } from "../Shell";
 import { useApp, useData, cacheGet, invalidate } from "../state";
 import { hostBusy, HostUpdates } from "./HostUpdates";
+
+// Incus has no host uptime or load average in its API, so show how long Incus itself has been running.
+function dur(sec: number) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+
+type Nic = { name: string; state: string; addrs: string[] };
+
+// Host NICs that are not managed by Incus (the managed bridges show up under Networks).
+async function loadNics(server: string): Promise<Nic[]> {
+  const nets = ((await incus<any[]>(server, "/1.0/networks?recursion=1").catch(() => [])) || []).filter((n) => !n.managed && n.type !== "loopback");
+  return Promise.all(
+    nets.map(async (n) => {
+      const st = await incus<any>(server, `/1.0/networks/${encodeURIComponent(n.name)}/state`).catch(() => null);
+      const addrs = (st?.addresses || []).filter((a: any) => a.scope === "global").map((a: any) => `${a.address}/${a.netmask}`);
+      return { name: n.name as string, state: (st?.state as string) || "", addrs };
+    }),
+  );
+}
+
+async function loadPools(server: string) {
+  const pools = (await incus<any[]>(server, "/1.0/storage-pools?recursion=1").catch(() => [])) || [];
+  return Promise.all(
+    pools.map(async (p) => {
+      const r = await incus<any>(server, `/1.0/storage-pools/${encodeURIComponent(p.name)}/resources`).catch(() => null);
+      return { name: p.name as string, driver: p.driver as string, used: r?.space?.used as number | undefined, total: r?.space?.total as number | undefined };
+    }),
+  );
+}
+
+// Incus leaves the uptime line out of some metrics replies, so ask again a couple of times and keep the last value.
+async function loadUptime(server: string): Promise<number | null> {
+  for (let i = 0; i < 3; i++) {
+    const res = await incusRaw(server, "/1.0/metrics").catch(() => null);
+    const m = res?.ok ? /^incus_uptime_seconds\s+([\d.e+]+)/m.exec(await res.text()) : null;
+    if (m) return parseFloat(m[1]);
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  return cacheGet<number | null>(`host-uptime:${server}`) ?? null;
+}
 
 export function Host() {
   const { server = "" } = useParams();
@@ -17,6 +60,11 @@ export function Host() {
   const prev = cacheGet<any>(`hostinfo:${server}`);
   const info = useData<any>(ok ? `hostinfo:${server}` : null, () => incus(server, "/1.0"), hostBusy(prev?.config) ? 3000 : 0);
   const res = useData<any>(ok ? `res:full:${server}` : null, () => incus(server, "/1.0/resources"), 15000);
+  const nics = useData<Nic[]>(ok ? `host-nics:${server}` : null, () => loadNics(server), 30000);
+  const pools = useData<Awaited<ReturnType<typeof loadPools>>>(ok ? `host-pools:${server}` : null, () => loadPools(server), 30000);
+  const up = useData<number | null>(ok ? `host-uptime:${server}` : null, () => loadUptime(server), 60000);
+  const insts = useData<Instance[]>(ok ? `host-insts:${server}` : null, async () => (await incus<Instance[]>(server, "/1.0/instances?recursion=1&all-projects=true")) || [], 10000);
+  const [allInst, setAllInst] = useState(false);
   if (!s) return <div className="dim">Unknown server.</div>;
   const env = info.data?.environment || {};
   const r = res.data;
@@ -58,8 +106,53 @@ export function Host() {
                 <dd>{(env.instance_types || []).join(", ") || "container"}</dd>
                 <dt>Address</dt>
                 <dd className="mono">{(env.addresses || []).join(", ") || s.url}</dd>
+                {up.data != null && (
+                  <>
+                    <dt>Incus running for</dt>
+                    <dd>{dur(up.data)}</dd>
+                  </>
+                )}
               </dl>
             </div>
+            {!!nics.data?.length && (
+              <div className="panel">
+                <div className="ptitle">
+                  <h2>Network interfaces</h2>
+                </div>
+                <dl className="kv">
+                  {nics.data.map((n) => (
+                    <div key={n.name} style={{ display: "contents" }}>
+                      <dt className="mono">{n.name}</dt>
+                      <dd className="mono">{n.addrs.join(", ") || <span className="dim">{n.state ? `No address, ${n.state}` : "No address"}</span>}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+            {!!pools.data?.length && (
+              <div className="panel">
+                <div className="ptitle">
+                  <h2>Storage pools</h2>
+                </div>
+                <dl className="kv">
+                  {pools.data.map((p) => (
+                    <div key={p.name} style={{ display: "contents" }}>
+                      <dt>
+                        {p.name} <span className="dim">({p.driver})</span>
+                      </dt>
+                      <dd>
+                        {p.total ? `${bytes(p.used)} used of ${bytes(p.total)}` : "–"}
+                        {!!p.total && (
+                          <div className="bar" style={{ marginTop: 6, maxWidth: 260 }} role="img" aria-label={`${Math.round(((p.used || 0) / p.total) * 100)}% used`}>
+                            <i className={(p.used || 0) / p.total > 0.9 ? "hot" : ""} style={{ width: `${Math.min(100, ((p.used || 0) / p.total) * 100)}%` }} />
+                          </div>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
           </div>
           <div className="col">
             <div className="panel">
@@ -80,6 +173,35 @@ export function Host() {
                 <dt>Network cards</dt>
                 <dd>{r?.network?.cards?.flatMap((c: any) => c.ports?.map((p: any) => p.id) || []).join(", ") || "–"}</dd>
               </dl>
+            </div>
+            <div className="panel">
+              <div className="ptitle">
+                <h2>Instances</h2>
+                <span className="r dim">{insts.data?.length ?? ""}</span>
+              </div>
+              {insts.data?.length ? (
+                <>
+                  <ul className="hostlist">
+                    {(allInst ? insts.data : insts.data.slice(0, 8)).map((i) => (
+                      <li key={i.project + i.name}>
+                        <Link to={`/instances/${server}/${encodeURIComponent(i.name)}?project=${encodeURIComponent(i.project || "default")}`}>{i.name}</Link>
+                        <span className="dim">{i.project && i.project !== "default" ? i.project + " · " : ""}{i.status}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {insts.data.length > 8 && (
+                    <div className="pfoot">
+                      <button className="btn btn-q btn-sm" onClick={() => setAllInst(!allInst)}>
+                        {allInst ? "Show fewer" : `Show all ${insts.data.length}`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="pfoot" style={{ borderTop: 0 }}>
+                  {insts.loading ? "Loading…" : "No instances on this server."}
+                </div>
+              )}
             </div>
             {info.data && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
             {info.data && <ServerConfig server={server} config={info.data.config || {}} onSaved={() => info.reload()} />}

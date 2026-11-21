@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { dateTime, incus, opProgress, since } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
@@ -32,7 +33,7 @@ export function Operations() {
   );
   const [show, setShow] = useState<"all" | "running" | "failed">("all");
   const [search, setSearch] = useState("");
-  const rows = q.data?.filter((o) => (show === "all" || (show === "running" ? o.status_code < 200 : o.status_code >= 400)) && matches(search, o.description, o.class, resourceText(o)));
+  const rows = q.data?.filter((o) => (show === "all" || (show === "running" ? o.status_code < 200 : o.status_code >= 400)) && matches(search, o.description, o.class, resourceText(o, true)));
   const cancel = async (o: Op) => {
     if (!(await confirmDialog({ title: `Cancel “${o.description}”?`, body: "Incus stops it where it can.", confirm: "Cancel operation", danger: true }))) return;
     await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE" }), "Cancelled");
@@ -70,7 +71,7 @@ export function Operations() {
             cell: (o) => (
               <span className="nm">
                 <span className="nm2">{o.description}</span>
-                <small className="dim">{resourceText(o) || o.class}</small>
+                <small className="dim">{resourceLinks(o)}</small>
               </span>
             ),
           },
@@ -79,14 +80,14 @@ export function Operations() {
             label: "State",
             sort: (o) => o.status,
             cell: (o) => (
-              <span className="nm">
+              <span className="nm" style={{ display: "block" }}>
                 <span className={"st " + (o.status_code === 200 ? "running" : o.status_code >= 400 ? "error" : "busy")}>{o.status}</span>
-                {(o.err || (o.status_code < 200 && opProgress(o as any))) && <small className={o.err ? "bad" : "dim"}>{o.err || opProgress(o as any)}</small>}
+                {(o.err || (o.status_code < 200 && opProgress(o as any))) && <small className={o.err ? "bad" : "dim"} style={{ display: "block" }}>{o.err || opProgress(o as any)}</small>}
               </span>
             ),
           },
           { k: "server", label: "Server", sort: (o) => o.server, cell: (o) => o.server, hide: !multi, cls: "hide-m" },
-          { k: "when", label: "Started", sort: (o) => o.created_at, cell: (o) => <span className="dim" title={dateTime(o.created_at)}>{since(o.created_at)} ago</span>, cls: "hide-s" },
+          { k: "when", label: "Started", sort: (o) => o.created_at, cell: (o) => <span className="dim" title={dateTime(o.created_at)}>{ago(o.created_at)}</span>, cls: "hide-s" },
           {
             k: "act",
             label: "",
@@ -103,12 +104,59 @@ export function Operations() {
   );
 }
 
-function resourceText(o: Op) {
-  return Object.values(o.resources || {})
-    .flat()
-    .map((u) => decodeURIComponent(u.split("?")[0].split("/").slice(2).join(" ")))
-    .join(", ");
+const kinds: Record<string, string> = { instances: "instance", containers: "instance", virtual_machines: "instance", profiles: "profile", networks: "network", "storage-pools": "pool", images: "image", projects: "project", "storage-volumes": "volume" };
+
+// The things an operation touches, once each ("instances" and "containers" list the same one).
+function resourceItems(o: Op) {
+  const seen = new Set<string>();
+  const out: { kind: string; name: string; to?: string }[] = [];
+  for (const [key, urls] of Object.entries(o.resources || {})) {
+    for (const u of urls || []) {
+      const [path, qs = ""] = u.split("?");
+      const parts = path.split("/").filter(Boolean).slice(1); // drop "1.0"
+      const name = decodeURIComponent(parts[parts.length - 1] || "");
+      if (!name) continue;
+      const kind = kinds[parts[0] || key] || parts[0] || key;
+      const id = kind + "/" + name + "/" + qs;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const project = new URLSearchParams(qs).get("project") || "default";
+      const to =
+        kind === "instance" ? `/instances/${o.server}/${encodeURIComponent(name)}?project=${encodeURIComponent(project)}` :
+        { profile: "/profiles", network: "/networks", pool: "/storage", image: "/images", project: "/projects", volume: "/storage/volumes" }[kind];
+      out.push({ kind, name, to });
+    }
+  }
+  return out;
 }
+
+function resourceText(o: Op, name = false) {
+  return resourceItems(o).map((r) => (name ? r.name : `${r.kind} ${r.name}`)).join(", ");
+}
+
+function resourceLinks(o: Op) {
+  const items = resourceItems(o);
+  if (!items.length) return o.class;
+  return items.map((r, i) => (
+    <span key={i}>
+      {i > 0 && ", "}
+      {r.kind}{" "}
+      {r.to ? (
+        <Link to={r.to} className="rlink" onClick={(e) => e.stopPropagation()}>
+          {r.name}
+        </Link>
+      ) : (
+        r.name
+      )}
+    </span>
+  ));
+}
+
+// "3 min ago", but "just now" stands alone.
+const ago = (iso: string) => {
+  const t = since(iso);
+  return t === "just now" || t === "–" ? t : t + " ago";
+};
 
 type Warning = { uuid: string; type: string; status: string; severity: string; count: number; first_seen_at: string; last_seen_at: string; last_message: string; project: string; entity_url: string; location: string; server: string };
 
@@ -128,7 +176,12 @@ export function Warnings() {
     await app.run("Acknowledging", () => incus(w.server, `/1.0/warnings/${w.uuid}`, { method: "PATCH", body: { status: "acknowledged" } }), "Acknowledged");
     invalidate("warnings");
   };
+  const reopen = async (w: Warning) => {
+    await app.run("Marking as new", () => incus(w.server, `/1.0/warnings/${w.uuid}`, { method: "PATCH", body: { status: "new" } }), "Marked as new");
+    invalidate("warnings");
+  };
   const del = async (w: Warning) => {
+    if (!(await confirmDialog({ title: "Delete this warning?", body: `${w.type}: Incus may raise it again if the problem is still there.`, confirm: "Delete", danger: true }))) return;
     await app.run("Deleting warning", () => incus(w.server, `/1.0/warnings/${w.uuid}`, { method: "DELETE" }), "Warning deleted");
     invalidate("warnings");
   };
@@ -160,8 +213,9 @@ export function Warnings() {
             ),
           },
           { k: "sev", label: "Severity", sort: (w) => ["low", "moderate", "high"].indexOf(w.severity), cell: (w) => <span className={"st " + (w.severity === "high" ? "error" : w.severity === "moderate" ? "busy" : "")}>{w.severity}</span>, cls: "hide-s" },
+          { k: "status", label: "Status", sort: (w) => w.status, cell: (w) => <span className={"st " + (w.status === "new" ? "busy" : "")}>{w.status === "new" ? "New" : w.status === "acknowledged" ? "Acknowledged" : w.status}</span>, hide: show !== "all", cls: "hide-s" },
           { k: "count", label: "Times", sort: (w) => w.count, cell: (w) => w.count, cls: "right hide-s" },
-          { k: "seen", label: "Last seen", sort: (w) => w.last_seen_at, cell: (w) => <span className="dim" title={dateTime(w.last_seen_at)}>{since(w.last_seen_at)} ago</span>, cls: "hide-m" },
+          { k: "seen", label: "Last seen", sort: (w) => w.last_seen_at, cell: (w) => <span className="dim" title={dateTime(w.last_seen_at)}>{ago(w.last_seen_at)}</span>, cls: "hide-m" },
           { k: "server", label: "Server", sort: (w) => w.server, cell: (w) => w.server, hide: !multi, cls: "hide-m" },
           {
             k: "act",
@@ -171,6 +225,11 @@ export function Warnings() {
                 {w.status === "new" && (
                   <button className="btn btn-q btn-sm" onClick={() => ack(w)}>
                     Acknowledge
+                  </button>
+                )}
+                {w.status === "acknowledged" && (
+                  <button className="btn btn-q btn-sm" onClick={() => reopen(w)}>
+                    Mark as new
                   </button>
                 )}
                 <button className="btn btn-q ib btn-sm" aria-label="Delete warning" onClick={() => del(w)}>
