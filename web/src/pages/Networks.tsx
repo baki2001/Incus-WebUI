@@ -3,7 +3,7 @@ import { ApiError, incus, incusOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { useCollection, useCurrentProject } from "../data";
+import { useCollection, useCurrentProject, useServerInfo } from "../data";
 import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, SheetSec, Table, TglRow, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
@@ -109,8 +109,8 @@ export function Networks() {
           { k: "name", label: "Name", sort: (n) => n.name, cell: (n) => <NameCell name={n.name} sub={n.description} /> },
           { k: "type", label: "Type", sort: (n) => n.type, cell: (n) => n.type },
           ServerCol<Net>(multi),
-          { k: "v4", label: "IPv4", sort: (n) => n.config["ipv4.address"], cell: (n) => <span className="mono">{n.config["ipv4.address"] || "–"}</span>, cls: "hide-s" },
-          { k: "v6", label: "IPv6", sort: (n) => n.config["ipv6.address"], cell: (n) => <span className="mono dim">{n.config["ipv6.address"] || "–"}</span>, cls: "hide-m" },
+          { k: "v4", label: "IPv4", sort: (n) => n.config["ipv4.address"], cell: (n) => <span className="mono">{!n.config["ipv4.address"] || n.config["ipv4.address"] === "none" ? "–" : n.config["ipv4.address"]}</span>, cls: "hide-s" },
+          { k: "v6", label: "IPv6", sort: (n) => n.config["ipv6.address"], cell: (n) => <span className="mono dim">{!n.config["ipv6.address"] || n.config["ipv6.address"] === "none" ? "–" : n.config["ipv6.address"]}</span>, cls: "hide-m" },
           { k: "status", label: "State", sort: (n) => n.status, cell: (n) => <span className={"st " + (n.status === "Created" ? "running" : n.status === "Pending" ? "busy" : "error")}>{netState(n.status)}</span> },
           { k: "used", label: "Used by", sort: (n) => n.used_by?.length || 0, cell: (n) => <UsedBy list={n.used_by} />, cls: "right" },
         ]}
@@ -335,9 +335,15 @@ function Forwards({ net, project }: { net: Net; project: string }) {
 
   const save = async (f: Fwd) => {
     if (!f.listen_address.trim()) return void app.toast("Enter the listen address, an address on this server like 192.168.1.20.");
-    const ports = f.ports.filter((p) => p.listen_port.trim()).map((p) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "" && v !== undefined)));
-    if (!ports.length && !f.config.target_address) return void app.toast("Add a port, or a target address that gets all traffic.");
-    const config = f.config.target_address ? { target_address: f.config.target_address } : {};
+    const dflt = f.config.target_address?.trim() || "";
+    // Incus wants a target on every port and refuses one that equals the default
+    // target, so a port without its own target gets the default, and then the
+    // default itself (the catch-all for other traffic) is left out.
+    const ports = f.ports
+      .filter((p) => p.listen_port.trim())
+      .map((p) => Object.fromEntries(Object.entries({ ...p, target_address: p.target_address?.trim() || dflt }).filter(([, v]) => v !== "" && v !== undefined)));
+    if (!ports.length && !dflt) return void app.toast("Add a port, or a target address that gets all traffic.");
+    const config = dflt && !ports.some((p) => p.target_address === dflt) ? { target_address: dflt } : {};
     const body = { listen_address: f.listen_address.trim(), description: f.description, config, ports };
     const ok = await app.run(
       isNew ? "Adding port forward" : "Saving port forward",
@@ -402,25 +408,113 @@ function Forwards({ net, project }: { net: Net; project: string }) {
         )}
       </SheetSec>
       <Dialog open={!!edit} onClose={close} size="md">
-        {edit && <FwdForm key={isNew ? "new" : edit.listen_address} init={edit} isNew={isNew} onSave={save} onDelete={() => del(edit)} onClose={close} />}
+        {edit && <FwdForm key={isNew ? "new" : edit.listen_address} net={net} project={project} init={edit} isNew={isNew} onSave={save} onDelete={() => del(edit)} onClose={close} />}
       </Dialog>
     </>
   );
 }
 
-function FwdForm({ init, isNew, onSave, onDelete, onClose }: { init: Fwd; isNew: boolean; onSave: (f: Fwd) => void; onDelete: () => void; onClose: () => void }) {
+// "10.115.217.1/24" -> "10.115.217.10", an example inside the subnet.
+function subnetExample(cidr?: string) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr || "");
+  if (!m) return "10.0.0.10";
+  const ip = ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0;
+  const bits = +m[5];
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  const net = (ip & mask) >>> 0;
+  const host = bits >= 30 ? ip + 1 : net + 10;
+  return [host >>> 24, (host >>> 16) & 255, (host >>> 8) & 255, host & 255].join(".");
+}
+
+type Addr = { v: string; l: string };
+
+// Addresses on this server a forward can listen on: its API addresses and global addresses of its physical networks.
+function useHostAddrs(server: string, project: string) {
+  const info = useServerInfo(server);
+  const q = useData<string[]>(`hostaddrs:${server}:${project}`, async () => {
+    const nets = (await incus<{ name: string; managed: boolean; type: string }[]>(server, "/1.0/networks?recursion=1", { project })) || [];
+    const out: string[] = [];
+    for (const n of nets.filter((x) => !x.managed && x.type !== "loopback")) {
+      const st = await incus<{ addresses?: { address: string; family: string; scope: string }[] }>(server, `/1.0/networks/${encodeURIComponent(n.name)}/state`, { project }).catch(() => null);
+      for (const a of st?.addresses || []) if (a.scope === "global") out.push(a.address);
+    }
+    return out;
+  });
+  const api = ((info.data?.environment?.addresses as string[]) || []).map((a) => a.replace(/^\[(.*)\]:\d+$/, "$1").replace(/:\d+$/, "")).filter((a) => a && a !== "::" && a !== "0.0.0.0" && !a.startsWith("127.") && a !== "::1");
+  return [...new Set([...(q.data || []), ...api])];
+}
+
+type Inst = { name: string; expanded_devices?: Record<string, Record<string, string>>; state?: { network?: Record<string, { addresses: { address: string; family: string; scope: string }[] }> } };
+
+// Instances attached to this network, with their IPv4 address.
+function useNetInstances(net: Net, project: string) {
+  const q = useData<Addr[]>(`netinst:${net.server}:${project}:${net.name}`, async () => {
+    const list = (await incus<Inst[]>(net.server, "/1.0/instances?recursion=2", { project })) || [];
+    const out: Addr[] = [];
+    for (const i of list)
+      for (const [dev, d] of Object.entries(i.expanded_devices || {})) {
+        if (d.type !== "nic" || (d.network !== net.name && d.parent !== net.name)) continue;
+        const ip = i.state?.network?.[dev]?.addresses.find((a) => a.family === "inet" && a.scope === "global")?.address;
+        if (ip) out.push({ v: ip, l: `${i.name} (${ip})` });
+      }
+    return out;
+  });
+  return q.data || [];
+}
+
+// A select of suggestions with an "Other" entry that turns into a text box.
+function AddrPick({ value, onChange, options, placeholder, label, readOnly, autoFocus }: { value: string; onChange: (v: string) => void; options: Addr[]; placeholder: string; label: string; readOnly?: boolean; autoFocus?: boolean }) {
+  const known = options.some((o) => o.v === value);
+  const [other, setOther] = useState(!!value && !known);
+  if (!options.length || readOnly || other)
+    return (
+      <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ flex: 1 }}>
+          <Input mono value={value} readOnly={readOnly} autoFocus={autoFocus} onChange={onChange} placeholder={placeholder} aria-label={label} />
+        </div>
+        {other && !readOnly && options.length > 0 && (
+          <button type="button" className="btn btn-s btn-sm press" onClick={() => (setOther(false), onChange(""))}>
+            List
+          </button>
+        )}
+      </div>
+    );
+  return (
+    <Select
+      value={known ? value : ""}
+      onChange={(v) => (v === "__other" ? (setOther(true), onChange("")) : onChange(v))}
+      options={[{ v: "", l: "Choose…" }, ...options, { v: "__other", l: "Other…" }]}
+      aria-label={label}
+    />
+  );
+}
+
+function FwdForm({ net, project, init, isNew, onSave, onDelete, onClose }: { net: Net; project: string; init: Fwd; isNew: boolean; onSave: (f: Fwd) => void; onDelete: () => void; onClose: () => void }) {
   const [f, setF] = useState(init);
+  const [tried, setTried] = useState(false);
+  const hostAddrs = useHostAddrs(net.server, project);
+  const insts = useNetInstances(net, project);
+  const eg = subnetExample(net.config["ipv4.address"]);
+  const dflt = f.config.target_address?.trim() || "";
+  const listenErr = tried && !f.listen_address.trim() ? "Choose or enter an address on this server." : "";
+  const noTarget = (p: FPort) => !!p.listen_port.trim() && !dflt && !p.target_address?.trim();
+  const defErr = tried && !f.ports.some((p) => p.listen_port.trim()) && !dflt ? "Enter a target address, or add a port." : "";
+  const submit = () => {
+    setTried(true);
+    if (!f.listen_address.trim() || f.ports.some(noTarget) || (!f.ports.some((p) => p.listen_port.trim()) && !dflt)) return;
+    onSave(f);
+  };
   const setPort = (i: number, k: keyof FPort, v: string) => setF({ ...f, ports: f.ports.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
   return (
     <>
       <div className="dlg-b fdlg">
         <h2>{isNew ? "Add port forward" : "Port forward " + f.listen_address}</h2>
         <div className="two" style={{ marginTop: 12 }}>
-          <Field label="Listen address" hint="An address on the server, like 192.168.1.20.">
-            <Input mono autoFocus={isNew} readOnly={!isNew} value={f.listen_address} onChange={(v) => setF({ ...f, listen_address: v })} placeholder="192.168.1.20" />
+          <Field label="Listen address" bad={!!listenErr} hint={listenErr || "An address on the server."}>
+            <AddrPick label="Listen address" readOnly={!isNew} autoFocus={isNew} value={f.listen_address} onChange={(v) => setF({ ...f, listen_address: v })} options={hostAddrs.map((a) => ({ v: a, l: a }))} placeholder="192.168.1.20" />
           </Field>
-          <Field label="Target address" hint="Instance address that gets the traffic. Ports can use their own.">
-            <Input mono value={f.config.target_address || ""} onChange={(v) => setF({ ...f, config: { target_address: v } })} placeholder="10.250.1.10" />
+          <Field label="Target address" bad={!!defErr} hint={defErr || "Gets the ports that have no target of their own, or all traffic if there are no ports."}>
+            <AddrPick label="Target address" value={f.config.target_address || ""} onChange={(v) => setF({ ...f, config: { target_address: v } })} options={insts} placeholder={eg} />
           </Field>
         </div>
         <Field label="Description">
@@ -448,7 +542,7 @@ function FwdForm({ init, isNew, onSave, onDelete, onClose }: { init: Fwd; isNew:
                   <Select value={p.protocol} onChange={(v) => setPort(i, "protocol", v)} options={["tcp", "udp"]} aria-label="Protocol" />
                   <Input mono value={p.listen_port} onChange={(v) => setPort(i, "listen_port", v.replace(/[^\d,-]/g, ""))} placeholder="80 or 8000-8010" aria-label="Listen port" />
                   <Input mono value={p.target_port || ""} onChange={(v) => setPort(i, "target_port", v.replace(/[^\d,-]/g, ""))} placeholder="same" aria-label="Target port" />
-                  <Input mono value={p.target_address || ""} onChange={(v) => setPort(i, "target_address", v)} placeholder="default" aria-label="Target address" />
+                  <Input mono bad={tried && noTarget(p)} list={`fwd-t-${net.name}`} value={p.target_address || ""} onChange={(v) => setPort(i, "target_address", v)} placeholder={dflt || eg} aria-label="Target address" />
                   <button className="btn btn-q ib btn-sm" aria-label="Remove port" onClick={() => setF({ ...f, ports: f.ports.filter((_, j) => j !== i) })}>
                     {ic.x}
                   </button>
@@ -456,6 +550,14 @@ function FwdForm({ init, isNew, onSave, onDelete, onClose }: { init: Fwd; isNew:
               ))}
             </div>
           )}
+          <datalist id={`fwd-t-${net.name}`}>
+            {insts.map((o) => (
+              <option key={o.v} value={o.v}>
+                {o.l}
+              </option>
+            ))}
+          </datalist>
+          {tried && f.ports.some(noTarget) && <div className="hint bad">Each port needs a target address, or set one above for all ports.</div>}
         </SheetSec>
       </div>
       <div className="dlg-f">
@@ -467,7 +569,7 @@ function FwdForm({ init, isNew, onSave, onDelete, onClose }: { init: Fwd; isNew:
         <button className="btn btn-s press" onClick={onClose}>
           Cancel
         </button>
-        <button className="btn btn-p press" onClick={() => onSave(f)}>
+        <button className="btn btn-p press" onClick={submit}>
           {isNew ? "Add" : "Save"}
         </button>
       </div>
@@ -574,6 +676,14 @@ export function Acls() {
         value={edit ? { description: edit.description, ingress: edit.ingress || [], egress: edit.egress || [], config: edit.config || {}, networks: attached(edit.name) } : create ? { name: "", description: "", ingress: [], egress: [], config: {}, networks: [] } : null}
         info={edit && <UsedBySec list={edit.used_by} server={edit.server} />}
         onSave={save}
+        validate={(d) => {
+          for (const [dir, rules] of [["Ingress", d.ingress], ["Egress", d.egress]] as const)
+            for (const [i, r] of (rules || []).entries()) {
+              const bad = r.destination_port && badPorts(r.destination_port);
+              if (bad) return `${dir} rule ${i + 1}: ${bad}`;
+            }
+          return "";
+        }}
         onDelete={edit ? () => del(edit) : undefined}
         form={(d, set) => (
           <>
@@ -624,6 +734,16 @@ export function Acls() {
       />
     </>
   );
+}
+
+// Ports are numbers, ranges like 80-90, or comma lists of both. Returns a message when not.
+export function badPorts(v: string) {
+  for (const part of v.split(",").map((x) => x.trim())) {
+    const m = /^(\d{1,5})(?:-(\d{1,5}))?$/.exec(part);
+    const [a, b] = m ? [+m[1], m[2] ? +m[2] : +m[1]] : [0, 0];
+    if (!m || a < 1 || b > 65535 || a > b) return `"${v}" is not a valid port. Use numbers like 22, ranges like 80-90, or a comma list like 80,443.`;
+  }
+  return "";
 }
 
 function cleanRule(r: Rule): Rule {

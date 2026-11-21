@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -302,16 +303,32 @@ func newerVersion(a, b string) bool {
 			return pa.n[i] > pb.n[i]
 		}
 	}
-	// 1.2.3 is newer than 1.2.3-rc1.
-	if pa.pre == "" || pb.pre == "" {
-		return pa.pre == "" && pb.pre != ""
+	// Same numbers: rc1 < release < a build made after the release.
+	if ra, rb := pa.rank(), pb.rank(); ra != rb {
+		return ra > rb
 	}
-	return pa.pre > pb.pre
+	if pa.rank() == 0 {
+		return pa.pre > pb.pre
+	}
+	return false
 }
 
 type semver struct {
 	n   [3]int
 	pre string
+}
+
+// git describe names a build after the release as v0.3.0-21-gd22bd77[-dirty].
+var describeRe = regexp.MustCompile(`^\d+-g[0-9a-f]+(-dirty)?$`)
+
+func (v semver) rank() int {
+	switch {
+	case v.pre == "":
+		return 1
+	case describeRe.MatchString(v.pre):
+		return 2
+	}
+	return 0
 }
 
 func parseVersion(s string) (semver, bool) {

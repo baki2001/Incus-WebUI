@@ -143,6 +143,9 @@ export function memStr(n: number): string {
   return Number.isInteger(g) && g >= 1 ? `${g}GiB` : `${Math.round(n / 1024 ** 2)}MiB`;
 }
 
+// spaced puts a space between number and unit for display: "5GiB" -> "5 GiB". Not for values sent to Incus.
+export const spaced = (s: string) => s.replace(/(\d)\s*([KMGTP]i?B)\b/g, "$1 $2");
+
 // memBytes parses an Incus memory/size string ("512MiB", "2GB", "1073741824").
 export function memBytes(s: string): number | null {
   const v = parseBytes(s);

@@ -356,10 +356,12 @@ export function ConsoleTab({ inst, onStart }: { inst: Inst; onStart: () => void 
             Graphic
           </label>
         )}
-        <label>
-          <input type="radio" name="cmode" checked={mode === "text"} onChange={() => setMode("text")} />
-          Text console
-        </label>
+        {isVM && (
+          <label>
+            <input type="radio" name="cmode" checked={mode === "text"} onChange={() => setMode("text")} />
+            Text console
+          </label>
+        )}
         <span className="dim" style={{ fontSize: 12.5 }}>
           {mode === "vga" ? "The VM's screen, like a monitor plugged into it." : "The boot and login console. Works even when the network inside is down."}
         </span>

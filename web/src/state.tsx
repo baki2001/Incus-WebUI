@@ -10,6 +10,12 @@ const subs = new Map<string, Set<() => void>>();
 function notify(key: string) {
   subs.get(key)?.forEach((f) => f());
 }
+// While set, errors from app.run go here instead of a toast (a dialog shows them itself).
+let errSink: ((e: unknown) => void) | null = null;
+export function setErrorSink(fn: ((e: unknown) => void) | null) {
+  errSink = fn;
+}
+
 export function invalidate(prefix: string) {
   for (const k of cache.keys()) if (k.startsWith(prefix)) {
     const e = cache.get(k)!;
@@ -232,7 +238,8 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
         if (done) toast(done);
         return r;
       } catch (e) {
-        fail(e);
+        if (errSink) errSink(e);
+        else fail(e);
         return undefined;
       } finally {
         setTasks((t) => t.filter((x) => x.id !== id));

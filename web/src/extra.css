@@ -314,3 +314,22 @@ p.fnote{align-self:flex-start;margin:0}
   .bulk .vsep{display:none}
   .bulk .btn.ib{margin-left:auto}
 }
+
+/* UX-B */
+.nm2 .tag{margin-left:6px;vertical-align:1px}
+/* Empty-table message: a sticky first cell would shrink it to the first column. */
+tr.empty{display:table-row;padding:0}
+.tw td.emp{position:static;text-align:center}
+/* Add user form: stacked, full width. */
+.useradd{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:640px}
+.useradd .fl{margin:0}
+.useradd .fl .hint:empty{display:none}
+.useradd .btn{align-self:flex-start}
+@media (max-width:560px){
+  /* File explorer: the path gets its own full-width row. */
+  .toolbar .pathbar{order:-1;flex:1 1 100%}
+  .toolbar .pathbar .pathedit{white-space:nowrap}
+  /* Highlight the whole row, not just the sticky first cell. */
+  .tw tbody tr:hover td,.tw tbody tr:active td{background:var(--s2)}
+  .tw tbody tr.sel td{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
+}

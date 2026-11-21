@@ -308,7 +308,7 @@ function Users() {
         <div className="panel">
           {users.map((x) => (
             <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
-              <span className="av">{x.username.slice(0, 2).toUpperCase()}</span>
+              <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
               <span>
                 {x.username}
                 {x.username === app.user && <span className="dim"> · you</span>}
@@ -351,7 +351,7 @@ function Users() {
       </section>
       <section className="set-sec">
         <h2>Add a user</h2>
-        <div className="panel" style={{ padding: 16, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", maxWidth: 640 }}>
+        <div className="panel useradd">
           <Field label="Username">
             <div className="field">
               <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
@@ -366,7 +366,6 @@ function Users() {
             <button className="btn btn-p press" disabled={!u || !p} style={{ minHeight: 40 }} onClick={add}>
               Add user
             </button>
-            <div className="hint" />
           </div>
           {err && <div className="bad" style={{ width: "100%" }}>{err}</div>}
         </div>
