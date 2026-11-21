@@ -434,7 +434,7 @@ function TypeSeg({ type, setType, vmOK, why }: { type: "container" | "virtual-ma
       />
       {!vmOK && type === "virtual-machine" && (
         <span className="hint bad" style={{ fontSize: 12.5, flexBasis: "100%" }}>
-          Incus on this server can't start VMs{why ? `: ${why.replace(/\.$/, "")}.` : "."} VMs need KVM (virtualization turned on in the BIOS, or nested virtualization if the host is itself a VM) and QEMU installed with Incus. Containers work without them.
+          This server can't start VMs{why ? `: ${why.replace(/\.$/, "")}.` : "."} Turn on virtualization in the BIOS (or nested virtualization if the host is a VM) and install QEMU. Containers still work.
         </span>
       )}
     </div>
