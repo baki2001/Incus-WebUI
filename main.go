@@ -195,6 +195,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("PUT /api/ui/users/{name}", auth(a.handleUserPut))
 	mux.Handle("DELETE /api/ui/users/{name}", auth(a.handleUserDelete))
 	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
+	mux.Handle("GET /api/ui/prefs", auth(a.handlePrefsGet))
+	mux.Handle("PUT /api/ui/prefs", auth(a.handlePrefsPut))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
 
 	mux.Handle("GET /api/ui/image-servers", auth(a.handleImageServers))
