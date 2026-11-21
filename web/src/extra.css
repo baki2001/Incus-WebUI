@@ -159,3 +159,16 @@ th .sortb{position:relative}
 th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50%);width:auto}
 .nav{overflow-y:auto;overflow-x:hidden;min-height:0;flex:1 1 auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
 .side-foot{flex:none}
+/* Used-by lists (storage), volume snapshot rows */
+.ulist{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
+.ul-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:28px}
+.ul-r a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
+.ul-r a:hover{text-decoration-color:var(--ink)}
+.snr{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--line);font-size:13.5px}
+.snr:first-child{border-top:0}
+.snr>span{flex:1;min-width:0;display:flex;flex-direction:column}
+@media (max-width:560px){.snr .btn,.ul-r .btn,.tt{min-height:40px}.snr .ib{min-width:40px}}
+.drop.slim{padding:14px 16px}
+p.fnote{align-self:flex-start;margin:0}
+@media (max-width:560px){dl.kv.tight dd{padding-left:12px}}
+.dlg .ulist{max-height:min(280px,40vh);overflow:auto;margin-top:8px;width:100%}
