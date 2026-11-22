@@ -157,14 +157,13 @@ func TestIncusVM(t *testing.T) {
 		t.Log("no KVM: the image import worked, skipping the boot")
 		return
 	}
-	args := []string{"init", name, name, "--vm"}
+	// Devices go in at creation, like the importer does: a root disk resized
+	// afterwards can't shrink below the pool's default size.
+	args := []string{"init", name, name, "--vm", "-d", "root,size=" + p.Devices["root"]["size"]}
 	for k, v := range p.Config {
 		args = append(args, "-c", k+"="+v)
 	}
 	run(args...)
-	if sz := p.Devices["root"]["size"]; sz != "" {
-		run("config", "device", "override", name, "root", "size="+sz)
-	}
 	run("config", "device", "override", name, "eth0", "hwaddr="+p.Devices["eth0"]["hwaddr"])
 	run("start", name)
 	deadline := time.Now().Add(4 * time.Minute)
