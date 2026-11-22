@@ -16,7 +16,7 @@
 </picture>
 
 > [!NOTE]
-> This is an test release (0.4). It works against real servers, but expect rough edges and report them in [issues](https://github.com/baki2001/Incus-WebUI/issues).
+> This is a test release (0.5). It works against real servers, but expect rough edges and report them in [issues](https://github.com/baki2001/Incus-WebUI/issues).
 
 ## Features
 
@@ -25,6 +25,10 @@
 - Create instances from an image server, an image already on the server, an OCI registry, or an ISO you uploaded.
 - Images: pull from an image server or OCI registry and keep them cached, with aliases and auto update.
 - Networks, ACLs and IPAM; storage pools, volumes, buckets and custom ISOs; profiles and projects with limits. Each one can be created, edited as a form or YAML, and deleted.
+- Backups to a directory or an S3 bucket, by hand or on a daily schedule that keeps a number of daily and weekly backups. Each backup has a checksum that restores check, and a schedule can test-restore its backups every week. See [Backups](docs/backups.md).
+- Import from Proxmox (VM and container backup files) and from Docker Compose files. A preview shows what each part becomes and what doesn't carry over; a failed import cleans up after itself. See [Import](docs/migrate.md).
+- Roles per server and project (viewer, operator, manager, admin), for local users, SSO users and SSO groups, and an audit log of every change and sign-in. See [Roles and the audit log](docs/roles.md).
+- A week of CPU, memory, network and disk history for every instance and host, kept by the UI itself.
 - WireGuard tunnels for remote access to your networks, a homelab to VPS link with port publishing, or monitoring an existing tunnel. See [WireGuard tunnels](docs/tunnels.md).
 - Operations and warnings, so you can see what Incus is doing and what it noticed.
 - Terminal, console and files for every instance, each on its own tab:
@@ -53,15 +57,15 @@ It prints the address and a one-time setup code. Open the address, enter the cod
 
 The [install guide](docs/install.md) explains each step, how to do it by hand, and the other ways to run it: as a plain binary on any Linux machine, or as an OCI image.
 
-## Upgrading to 0.4
+## Upgrading to 0.5
 
-Everyone signs in once after the upgrade. Update from Settings, Updates and about, or install again with the script above.
+Nothing changes for existing users: everyone keeps full access until an admin sets up roles under Settings, Users and roles. Update from Settings, Updates and about, or install again with the script above.
 
 ## How it works
 
 The binary serves the interface and forwards API calls to each Incus server over HTTPS, using its own client certificate. Your browser never talks to Incus directly and never holds an Incus certificate. Settings, users and the list of servers live in one `config.yaml` file.
 
-Everyone who signs in can do everything on every connected server. Per-user permissions are planned.
+Long tasks such as backups and imports run in the binary, not in the browser, so they keep going when you close the tab. Metric history and the audit log are files in the data folder next to `config.yaml`.
 
 ## Development
 

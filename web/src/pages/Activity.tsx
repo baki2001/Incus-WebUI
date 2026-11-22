@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { dateTime, incus, opProgress, since } from "../api";
+import { dateTime, incus, opProgress, since, ui } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Seg, Table } from "../ui";
+import { confirmDialog, Seg, Select, Table } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
 
 type Op = { id: string; class: string; description: string; created_at: string; updated_at: string; status: string; status_code: number; resources: Record<string, string[]> | null; metadata: any; may_cancel: boolean; err: string; location: string; server: string; project?: string };
@@ -36,7 +36,7 @@ export function Operations() {
   const rows = q.data?.filter((o) => (show === "all" || (show === "running" ? o.status_code < 200 : o.status_code >= 400)) && matches(search, o.description, o.class, resourceText(o, true)));
   const cancel = async (o: Op) => {
     if (!(await confirmDialog({ title: `Cancel “${o.description}”?`, body: "Incus stops it where it can.", confirm: "Cancel operation", danger: true }))) return;
-    await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE" }), "Cancelled");
+    await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE", project: o.project }), "Cancelled");
     invalidate("operations:");
   };
   const running = q.data?.filter((o) => o.status_code < 200).length || 0;
@@ -239,6 +239,55 @@ export function Warnings() {
               </div>
             ),
           },
+        ]}
+      />
+    </>
+  );
+}
+
+type AuditEntry = { time: string; user: string; method?: string; ip: string; action: string; server?: string; project?: string; status: number };
+
+// Audit log: every change made through the UI and every sign-in. Admins only.
+export function Audit() {
+  useCrumbs([{ label: "Audit log" }]);
+  const [month, setMonth] = useState("");
+  const q = useData<{ month: string; months: string[]; entries: AuditEntry[] }>(`audit:${month}`, () => ui(`/audit${month ? `?month=${month}` : ""}`), 15000);
+  const [search, setSearch] = useState("");
+  const [show, setShow] = useState<"all" | "failed" | "logins">("all");
+  const rows = q.data?.entries.filter(
+    (e) => (show === "all" || (show === "failed" ? e.status >= 400 : e.action.startsWith("login"))) && matches(search, e.user, e.action, e.server || "", e.project || "", e.ip),
+  );
+  const months = q.data?.months || [];
+  return (
+    <>
+      <PageHead title="Audit log" />
+      <div className="fbar">
+        <Search value={search} onChange={setSearch} placeholder="Filter by user, action or address" />
+        <Seg
+          value={show}
+          onChange={setShow}
+          label="Show"
+          options={[
+            { v: "all", l: "All" },
+            { v: "failed", l: "Failed" },
+            { v: "logins", l: "Sign-ins" },
+          ]}
+        />
+        {months.length > 1 && <Select aria-label="Month" value={q.data?.month || ""} onChange={setMonth} options={months} />}
+        <span className="dim fnote">Kept for 12 months. Request bodies are never stored.</span>
+      </div>
+      <Table<AuditEntry>
+        rows={rows}
+        loading={q.loading}
+        rowKey={(e) => e.time + e.action + e.ip}
+        empty={q.error || "Nothing logged this month."}
+        initial={{ k: "when", asc: false }}
+        cols={[
+          { k: "when", label: "When", sort: (e) => e.time, cell: (e) => <span className="dim" title={dateTime(e.time)}>{ago(e.time)}</span> },
+          { k: "user", label: "Who", sort: (e) => e.user, cell: (e) => <span className="nm"><span className="nm2">{e.user || "unknown"}</span><small className="dim">{e.ip}</small></span> },
+          { k: "action", label: "What", sort: (e) => e.action, cell: (e) => <span className="mono">{e.action}</span> },
+          { k: "where", label: "Where", sort: (e) => (e.server || "") + (e.project || ""), cell: (e) => (e.server ? `${e.server}${e.project ? " / " + e.project : ""}` : ""), cls: "hide-s" },
+          { k: "status", label: "Result", sort: (e) => e.status, cell: (e) => (e.status >= 400 ? <span className="bad">{e.status}</span> : <span className="dim">{e.status}</span>) },
         ]}
       />
     </>

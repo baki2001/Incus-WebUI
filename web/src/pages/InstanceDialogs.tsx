@@ -69,7 +69,7 @@ export function StopHost() {
 
 // ---------- small form shell ----------
 
-function DlgForm({ title, intro, confirm, disabled, onClose, onSubmit, children }: { title: string; intro?: string; confirm: string; disabled?: boolean; onClose: () => void; onSubmit: () => void; children: React.ReactNode }) {
+export function DlgForm({ title, intro, confirm, disabled, onClose, onSubmit, children }: { title: string; intro?: string; confirm: string; disabled?: boolean; onClose: () => void; onSubmit: () => void; children: React.ReactNode }) {
   return (
     <form
       onSubmit={(e) => {
@@ -94,7 +94,7 @@ function DlgForm({ title, intro, confirm, disabled, onClose, onSubmit, children 
   );
 }
 
-function F({ label, hint, bad, children }: { label: string; hint?: React.ReactNode; bad?: boolean; children: React.ReactNode }) {
+export function F({ label, hint, bad, children }: { label: string; hint?: React.ReactNode; bad?: boolean; children: React.ReactNode }) {
   return (
     <div className="fl">
       <label>{label}</label>

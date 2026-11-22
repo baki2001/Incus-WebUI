@@ -2,20 +2,23 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
 import { useCrumbs } from "../Shell";
-import { accentPair, contrast, invalidate, useApp, useData, type Mode, type Theme } from "../state";
-import { confirmDialog, CopyBtn, Field, Seg } from "../ui";
+import { BackupSettings } from "./Backups";
+import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
+import { confirmDialog, CopyBtn, Field, Input, Seg, Select } from "../ui";
 
-type Section = "appearance" | "servers" | "users" | "about";
-const sections: { v: Section; l: string }[] = [
+type Section = "appearance" | "servers" | "users" | "backups" | "about";
+const sections: { v: Section; l: string; admin?: boolean }[] = [
   { v: "appearance", l: "Appearance" },
-  { v: "servers", l: "Servers" },
-  { v: "users", l: "Users and sign-in" },
+  { v: "servers", l: "Servers", admin: true },
+  { v: "users", l: "Users and roles", admin: true },
+  { v: "backups", l: "Backups", admin: true },
   { v: "about", l: "Updates and about" },
 ];
 
 export function Settings() {
   const { section = "appearance" } = useParams();
   const nav = useNavigate();
+  const { admin } = useApp();
   useCrumbs([{ label: "Settings", to: "/settings" }, { label: sections.find((s) => s.v === section)?.l || "" }]);
   return (
     <>
@@ -24,7 +27,7 @@ export function Settings() {
       </div>
       <div className="set">
         <nav className="set-nav">
-          {sections.map((s) => (
+          {sections.filter((s) => admin || !s.admin).map((s) => (
             <button key={s.v} aria-current={section === s.v ? "page" : undefined} onClick={() => nav(`/settings/${s.v}`)}>
               {s.l}
             </button>
@@ -32,8 +35,9 @@ export function Settings() {
         </nav>
         <div className="set-body">
           {section === "appearance" && <Appearance />}
-          {section === "servers" && <Servers />}
-          {section === "users" && <Users />}
+          {section === "servers" && admin && <Servers />}
+          {section === "users" && admin && <Users />}
+          {section === "backups" && admin && <BackupSettings />}
           {section === "about" && <About />}
         </div>
       </div>
@@ -70,7 +74,7 @@ function Appearance() {
         <p>Auto follows your system setting.</p>
         <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "auto", l: "Auto" }, { v: "light", l: "Light" }, { v: "dark", l: "Dark" }]} />
       </section>
-      <section className="set-sec">
+      {app.admin && <section className="set-sec">
         <h2>
           Theme<span className="scope-tag">For everyone using this server</span>
         </h2>
@@ -135,7 +139,7 @@ function Appearance() {
             </div>
           </div>
         )}
-      </section>
+      </section>}
     </>
   );
 }
@@ -266,14 +270,16 @@ function Users() {
   const q = useData<{ users: { username: string }[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
   const [u, setU] = useState("");
   const [p, setP] = useState("");
+  const [role, setRole] = useState<RoleName>("viewer");
   const [err, setErr] = useState("");
   const [pw, setPw] = useState<{ name: string; pass: string; err: string } | null>(null);
   const users = q.data?.users || [];
   const add = async () => {
     setErr("");
     try {
-      await ui("/users", { method: "POST", body: { username: u, password: p } });
-      app.toast(`${u} added`);
+      await ui("/users", { method: "POST", body: { username: u, password: p, role } });
+      app.toast(`${u} added as ${role}`);
+      invalidate("ui-access");
       setU("");
       setP("");
       invalidate("ui-users");
@@ -304,7 +310,6 @@ function Users() {
     <>
       <section className="set-sec">
         <h2>Local users</h2>
-        <p>Everyone who signs in can manage every connected server. Roles come later.</p>
         <div className="panel">
           {users.map((x) => (
             <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
@@ -362,6 +367,9 @@ function Users() {
               <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" />
             </div>
           </Field>
+          <Field label="Role" hint="On every server and project. Narrow it under Roles.">
+            <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
+          </Field>
           <div className="fl">
             <button className="btn btn-p press" disabled={!u || !p} style={{ minHeight: 40 }} onClick={add}>
               Add user
@@ -370,6 +378,7 @@ function Users() {
           {err && <div className="bad" style={{ width: "100%" }}>{err}</div>}
         </div>
       </section>
+      <Roles />
       <section className="set-sec">
         <h2>
           Single sign-on <span className="ac">(OIDC)</span>
@@ -387,6 +396,83 @@ function Users() {
         )}
       </section>
     </>
+  );
+}
+
+const roleOptions = [
+  { v: "viewer", l: "Viewer: only look" },
+  { v: "operator", l: "Operator: start, stop, console, files" },
+  { v: "manager", l: "Manager: create, change, delete" },
+  { v: "admin", l: "Admin: everything, also users and servers" },
+];
+
+// Roles lists every access entry and saves them in one go.
+function Roles() {
+  const app = useApp();
+  const q = useData<{ access: AccessEntry[] }>("ui-access", () => ui("/access"));
+  const [rows, setRows] = useState<AccessEntry[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => setRows(q.data?.access || null), [q.data]);
+  if (!rows) return null;
+  const dirty = JSON.stringify(rows) !== JSON.stringify(q.data?.access);
+  const set = (i: number, k: keyof AccessEntry, v: string) => {
+    setErr("");
+    setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v, ...(k === "role" && v === "admin" ? { server: "*", project: "*" } : {}) } : r)));
+  };
+  const save = async () => {
+    try {
+      await ui("/access", { method: "PUT", body: { access: rows } });
+      app.toast("Roles saved");
+      invalidate("ui-access");
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+  const servers = ["*", ...app.servers.map((s) => s.name)];
+  return (
+    <section className="set-sec">
+      <h2>Roles</h2>
+      <p>
+        Who is <span className="mono">user:name</span> for a local user, <span className="mono">sso:name</span> for a single sign-on user, <span className="mono">group:name</span> for an SSO group, or{" "}
+        <span className="mono">*</span> for everyone who can sign in. Someone with several entries gets the highest role that fits.
+      </p>
+      <div className="panel roles">
+        <div className="roles-h">
+          <span>Who</span>
+          <span>Server</span>
+          <span>Project</span>
+          <span>Role</span>
+          <span />
+        </div>
+        {rows.map((r, i) => (
+          <div className="roles-r" key={i}>
+            <Input mono aria-label="Who" value={r.who} onChange={(v) => set(i, "who", v)} />
+            <Select aria-label="Server" disabled={r.role === "admin"} value={r.server} onChange={(v) => set(i, "server", v)} options={servers.includes(r.server) ? servers : [...servers, r.server]} />
+            <Input mono aria-label="Project" disabled={r.role === "admin"} value={r.project} onChange={(v) => set(i, "project", v)} placeholder="*" />
+            <Select aria-label="Role" value={r.role} onChange={(v) => set(i, "role", v)} options={roleOptions.map((o) => ({ v: o.v, l: o.v[0].toUpperCase() + o.v.slice(1) }))} />
+            <button className="btn btn-q btn-sm" aria-label={`Remove ${r.who}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+              Remove
+            </button>
+          </div>
+        ))}
+        <div className="roles-f">
+          <button className="btn btn-q btn-sm" onClick={() => setRows([...rows, { who: "user:", server: "*", project: "*", role: "viewer" }])}>
+            Add entry
+          </button>
+          <span className="r">
+            {dirty && (
+              <button className="btn btn-q btn-sm" onClick={() => setRows(q.data?.access || [])}>
+                Discard
+              </button>
+            )}
+            <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
+              Save roles
+            </button>
+          </span>
+        </div>
+        {err && <div className="bad">{err}</div>}
+      </div>
+    </section>
   );
 }
 
@@ -469,7 +555,7 @@ function About() {
                 : ""}
         </p>
         <div className="upd-row">
-          {u?.newer && u.can_update && (
+          {u?.newer && u.can_update && app.admin && (
             <button className="btn btn-p press" disabled={!!busy || u.updating} onClick={update}>
               {busy === "update" ? "Downloading…" : busy === "restart" ? "Restarting…" : `Update to ${u.latest!.tag}`}
             </button>

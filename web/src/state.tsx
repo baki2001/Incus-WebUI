@@ -100,9 +100,17 @@ export type Theme = { name: "graphite" | "harbor" | "custom"; accent?: string };
 type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
 
+export type RoleName = "viewer" | "operator" | "manager" | "admin";
+export type AccessEntry = { who: string; server: string; project: string; role: RoleName };
+const roleRank: Record<string, number> = { viewer: 1, operator: 2, manager: 3, admin: 4 };
+
 type Ctx = {
   user: string;
   method: string;
+  admin: boolean;
+  // can tells whether you have at least this role on a server and project.
+  // The backend checks too; this only decides what to show.
+  can: (server: string, project: string, role: RoleName) => boolean;
   servers: ServerStatus[];
   serversLoaded: boolean;
   reloadServers: () => Promise<void>;
@@ -200,6 +208,17 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lastUpdate, setLast] = useState(Date.now());
   const seq = useRef(1);
+  const [me, setMe] = useState<{ admin: boolean; access: AccessEntry[] }>({ admin: false, access: [] });
+  useEffect(() => {
+    ui<{ admin: boolean; access: AccessEntry[] }>("/me").then(setMe, () => {});
+  }, []);
+  const can = useCallback(
+    (server: string, project: string, role: RoleName) => {
+      if (me.admin) return true;
+      return me.access.some((a) => roleRank[a.role] >= roleRank[role] && (a.server === "*" || a.server === server) && (a.project === "*" || a.project === project || project === "*"));
+    },
+    [me],
+  );
 
   const reloadServers = useCallback(async () => {
     try {
@@ -254,6 +273,8 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const ctx: Ctx = {
     user,
     method,
+    admin: me.admin,
+    can,
     servers,
     serversLoaded,
     reloadServers,

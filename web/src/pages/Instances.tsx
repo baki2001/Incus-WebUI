@@ -7,6 +7,7 @@ import { invalidate, mutateCache, useApp } from "../state";
 import { confirmDialog, Menu, Seg, SkRows, SortTh, Status, useOutside } from "../ui";
 import { PinButton } from "./Instance";
 import { CreateInstance } from "./CreateInstance";
+import { ImportSheet } from "./Import";
 import { askStop } from "./InstanceDialogs";
 import { isPinned, projectFor, togglePin, useInstances, usePins, type Row } from "../data";
 
@@ -288,6 +289,11 @@ export function Instances() {
       <div className="ph">
         <h1>Instances</h1>
         <div className="r">
+          {app.servers.some((s) => app.can(s.name, "*", "manager")) && (
+            <button className="btn btn-s press" onClick={() => patch({ import: "1" })}>
+              Import
+            </button>
+          )}
           <button className="btn btn-p press" onClick={() => patch({ create: "1" })}>
             {ic.plus}Create instance
           </button>
@@ -495,6 +501,7 @@ export function Instances() {
           </button>
         </div>
       )}
+      <ImportSheet open={params.get("import") === "1"} onClose={() => patch({ import: null })} />
       <CreateInstance
         open={params.get("create") === "1"}
         onClose={() => patch({ create: null })}

@@ -31,6 +31,10 @@ type App struct {
 	setupToken string
 	updater    *updater
 	dataDir    string
+	audit      *auditLog
+	jobs       jobs
+	metrics    *metricStore
+	sched      scheduler
 }
 
 func main() {
@@ -65,7 +69,12 @@ func main() {
 		loginLimit: &limiter{},
 		updater:    &updater{},
 		dataDir:    *dataDir,
+		audit:      &auditLog{dir: filepath.Join(*dataDir, "audit")},
+		metrics:    &metricStore{dir: filepath.Join(*dataDir, "metrics")},
 	}
+	go app.collectMetrics(context.Background())
+	app.sched.load(filepath.Join(*dataDir, "backup-schedules.json"))
+	go app.runSchedules(context.Background())
 
 	// Running on the Incus host itself: use the local socket automatically.
 	if store.Fresh && len(store.Get().Servers) == 0 {
@@ -177,7 +186,8 @@ func envOr(k, d string) string {
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	auth := func(h http.HandlerFunc) http.Handler { return a.requireAuth(h) }
+	auth := func(h http.HandlerFunc) http.Handler { return a.requireAuth(a.audited(h)) }
+	admin := func(h http.HandlerFunc) http.Handler { return auth(a.requireAdmin(h)) }
 
 	mux.HandleFunc("GET /api/ui/auth", a.handleAuthInfo)
 	mux.HandleFunc("POST /api/ui/login", a.handleLogin)
@@ -187,14 +197,14 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/ui/oidc/callback", a.handleOIDCCallback)
 
 	mux.Handle("GET /api/ui/servers", auth(a.handleServers))
-	mux.Handle("POST /api/ui/servers", auth(a.handleServerAdd))
-	mux.Handle("DELETE /api/ui/servers/{name}", auth(a.handleServerDelete))
-	mux.Handle("GET /api/ui/client-cert", auth(a.handleClientCert))
-	mux.Handle("GET /api/ui/users", auth(a.handleUsers))
-	mux.Handle("POST /api/ui/users", auth(a.handleUserCreate))
-	mux.Handle("PUT /api/ui/users/{name}", auth(a.handleUserPut))
-	mux.Handle("DELETE /api/ui/users/{name}", auth(a.handleUserDelete))
-	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
+	mux.Handle("POST /api/ui/servers", admin(a.handleServerAdd))
+	mux.Handle("DELETE /api/ui/servers/{name}", admin(a.handleServerDelete))
+	mux.Handle("GET /api/ui/client-cert", admin(a.handleClientCert))
+	mux.Handle("GET /api/ui/users", admin(a.handleUsers))
+	mux.Handle("POST /api/ui/users", admin(a.handleUserCreate))
+	mux.Handle("PUT /api/ui/users/{name}", admin(a.handleUserPut))
+	mux.Handle("DELETE /api/ui/users/{name}", admin(a.handleUserDelete))
+	mux.Handle("PUT /api/ui/theme", admin(a.handleTheme))
 	mux.Handle("GET /api/ui/prefs", auth(a.handlePrefsGet))
 	mux.Handle("PUT /api/ui/prefs", auth(a.handlePrefsPut))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
@@ -202,11 +212,35 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/image-servers", auth(a.handleImageServers))
 	mux.Handle("GET /api/ui/remote-images", auth(a.handleRemoteImages))
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
-	mux.Handle("POST /api/ui/update", auth(a.handleUpdateApply))
-	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))
-	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.handleRemoveAll))
-	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.handleDownload))
-	a.registerTunnelRoutes(mux, auth)
+	mux.Handle("POST /api/ui/update", admin(a.handleUpdateApply))
+	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleListDir)))
+	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleRemoveAll)))
+	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.requireRole(RoleOperator, a.handleDownload)))
+	mux.Handle("GET /api/ui/me", auth(a.handleMe))
+	mux.Handle("GET /api/ui/access", admin(a.handleAccessGet))
+	mux.Handle("PUT /api/ui/access", admin(a.handleAccessPut))
+	mux.Handle("GET /api/ui/audit", admin(a.handleAudit))
+	mux.Handle("GET /api/ui/jobs", auth(a.handleJobs))
+	mux.Handle("GET /api/ui/metrics/{server}", auth(a.handleMetrics))
+	mux.Handle("DELETE /api/ui/jobs/{id}", auth(a.handleJobCancel))
+	mux.Handle("GET /api/ui/backup-config", admin(a.handleBackupConfigGet))
+	mux.Handle("PUT /api/ui/backup-config", admin(a.handleBackupConfigPut))
+	mux.Handle("POST /api/ui/backup-targets/test", admin(a.handleBackupTest))
+	mux.Handle("GET /api/ui/backup-targets", auth(a.handleBackupTargets))
+	mux.Handle("POST /api/ui/backup-schedules/{name}/run", admin(a.handleScheduleRun))
+	mux.Handle("GET /api/ui/backups/{server}", auth(a.requireRole(RoleViewer, a.handleBackups)))
+	mux.Handle("POST /api/ui/backups/{server}", auth(a.handleBackupRun))
+	mux.Handle("GET /api/ui/backup/download", auth(a.handleBackupDownload))
+	mux.Handle("DELETE /api/ui/backup", auth(a.handleBackupDelete))
+	mux.Handle("POST /api/ui/backup/restore", auth(a.handleBackupRestore))
+	mux.Handle("POST /api/ui/compose/plan", auth(a.handleComposePlan))
+	mux.Handle("POST /api/ui/compose/run", auth(a.handleComposeRun))
+	mux.Handle("GET /api/ui/imports", auth(a.handleImports))
+	mux.Handle("POST /api/ui/imports", auth(a.handleImportUpload))
+	mux.Handle("GET /api/ui/imports/{id}/plan", auth(a.handleImportPlan))
+	mux.Handle("POST /api/ui/imports/{id}/run", auth(a.handleImportRun))
+	mux.Handle("DELETE /api/ui/imports/{id}", auth(a.handleImportDelete))
+	a.registerTunnelRoutes(mux, func(h http.HandlerFunc) http.Handler { return admin(h) })
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })
 	mux.Handle("/", spaHandler())

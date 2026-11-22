@@ -1,0 +1,132 @@
+name: Incus integration
+# Backs up and restores instances on a real Incus, against a directory and
+# an S3 server. Imports Proxmox backups into a real Incus and boots them. The VM backups are
+# made with Proxmox's own vma tool, so the reader is checked against the real
+# format and not only against our test writer.
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths: ["internal/**", "migrate*.go", "backup*.go", "compose*.go", "s3.go", "tunnels.go", ".github/workflows/migration.yml"]
+  pull_request:
+    paths: ["internal/**", "migrate*.go", "backup*.go", "compose*.go", "s3.go", "tunnels.go", ".github/workflows/migration.yml"]
+  workflow_dispatch:
+
+jobs:
+  proxmox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Incus and tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus qemu-system-x86 qemu-utils ovmf seabios zstd
+          sudo chmod 666 /dev/kvm
+          # Legacy BIOS VMs boot with SeaBIOS. Ubuntu's Incus package looks for it
+          # next to OVMF but the seabios package puts it elsewhere.
+          sudo ln -sf /usr/share/seabios/bios-256k.bin /usr/share/OVMF/seabios.bin
+          sudo incus admin init --minimal
+          sudo chmod 666 /var/lib/incus/unix.socket
+          incus info | grep -E 'server_version|driver:'
+      - name: Get a cloud image
+        run: |
+          mkdir -p /tmp/fx && cd /tmp/fx
+          curl -fsSLO https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64.img
+          curl -fsSLO https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz
+          qemu-img convert -O raw ubuntu-24.04-minimal-cloudimg-amd64.img disk.raw
+          qemu-img resize -f raw disk.raw 4G
+      - name: Make VM backups with Proxmox's vma tool
+        run: |
+          cd /tmp/fx
+          for fw in seabios ovmf; do
+            # The UEFI VM also gets a data disk, which becomes a custom volume.
+            extra=""; [ $fw = ovmf ] && extra="bios: ovmf\nefidisk0: local-lvm:vm-100-disk-1,efitype=4m,size=4M\nscsi1: local-lvm:vm-100-disk-2,size=64M\n"
+            printf "boot: order=scsi0;net0\ncores: 2\nmemory: 2048\nname: ubuntu-$fw\nnet0: virtio=BC:24:11:12:34:5$([ $fw = ovmf ] && echo 7 || echo 6),bridge=vmbr0\nostype: l26\nscsi0: local-lvm:vm-100-disk-0,size=4G\nscsihw: virtio-scsi-single\n$extra" > qemu-server-$fw.conf
+          done
+          docker run --rm -v /tmp/fx:/fx debian:bookworm bash -ec '
+            apt-get update -qq && apt-get install -y -qq wget ca-certificates >/dev/null
+            wget -qO /etc/apt/trusted.gpg.d/proxmox.gpg https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
+            echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/pve.list
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends pve-qemu-kvm zstd >/dev/null
+            cd /fx
+            truncate -s 4M efi.raw
+            truncate -s 64M data.raw
+            printf "data disk" | dd of=data.raw bs=1M seek=3 conv=notrunc status=none
+            # vzdump stores the config as qemu-server.conf, so name it that way.
+            mkdir -p seabios ovmf
+            cp qemu-server-seabios.conf seabios/qemu-server.conf
+            cp qemu-server-ovmf.conf ovmf/qemu-server.conf
+            vma create vzdump-qemu-seabios.vma -c seabios/qemu-server.conf drive-scsi0=disk.raw
+            vma create vzdump-qemu-ovmf.vma -c ovmf/qemu-server.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw drive-scsi1=data.raw
+            vma config vzdump-qemu-seabios.vma
+            zstd -q -T0 vzdump-qemu-ovmf.vma
+            vma verify vzdump-qemu-seabios.vma
+            chmod 644 /fx/*'
+          ls -la /tmp/fx
+      - name: Make a container backup
+        run: |
+          cd /tmp/fx
+          python3 "$GITHUB_WORKSPACE/.github/scripts/mkct.py" ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz vzdump-lxc.tar 100000
+          zstd -q -T0 --rm vzdump-lxc.tar
+      - name: Unit tests
+        run: INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/...
+      - name: Import and boot the BIOS VM
+        run: INCUS_WEBUI_PVE_VM=/tmp/fx/vzdump-qemu-seabios.vma INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/proxmox -run TestIncusVM -v -timeout 15m
+      - name: Import and boot the UEFI VM
+        run: INCUS_WEBUI_PVE_VM=/tmp/fx/vzdump-qemu-ovmf.vma.zst INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/proxmox -run TestIncusVM -v -timeout 15m
+      - name: Import and start the container
+        run: INCUS_WEBUI_PVE_CT=/tmp/fx/vzdump-lxc.tar.zst go test ./internal/proxmox -run TestIncusContainer -v -timeout 10m
+      - name: Volume backups for data disks
+        # The UI is embedded from web/dist; these tests don't need a real build.
+        run: |
+          mkdir -p web/dist && touch web/dist/index.html
+          INCUS_WEBUI_INCUS=1 go test . -run TestVolumeBackupIncus -v
+      - name: Import with the UI's importer (BIOS VM, UEFI VM with a data disk, container)
+        run: |
+          for f in vzdump-qemu-seabios.vma vzdump-qemu-ovmf.vma.zst vzdump-lxc.tar.zst; do
+            INCUS_WEBUI_IMPORT=/tmp/fx/$f go test . -run TestImportIncus -v -timeout 15m
+          done
+      - name: A BIOS VM on an Incus without SeaBIOS boots with UEFI
+        run: |
+          sudo rm /usr/share/OVMF/seabios.bin
+          INCUS_WEBUI_IMPORT=/tmp/fx/vzdump-qemu-seabios.vma INCUS_WEBUI_IMPORT_NOTE="boots with UEFI" go test . -run TestImportIncus -v -timeout 15m
+      - name: Backups to a directory and to S3
+        run: |
+          # MinIO no longer publishes images, so build it.
+          go install github.com/minio/minio@latest
+          mkdir -p /tmp/minio-data
+          MINIO_ROOT_USER=testkey MINIO_ROOT_PASSWORD=testsecret123 nohup ~/go/bin/minio server /tmp/minio-data --address 127.0.0.1:9000 > /tmp/minio.log 2>&1 &
+          incus launch images:alpine/3.21 bk1
+          for i in $(seq 60); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          INCUS_WEBUI_INCUS=1 INCUS_WEBUI_BACKUP_INST=bk1 INCUS_WEBUI_S3=http://testkey:testsecret123@127.0.0.1:9000/backups \
+            go test . -run 'TestBackupIncus|TestS3Store|TestDirStore' -v -timeout 10m
+
+  compose:
+    # Docker images need Incus 6.3 or newer, so this job uses the Zabbly
+    # packages instead of Ubuntu's Incus 6.0.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Incus from Zabbly
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+          printf 'Enabled: yes\nTypes: deb\nURIs: https://pkgs.zabbly.com/incus/stable\nSuites: noble\nComponents: main\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/zabbly.asc\n' | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus skopeo umoci
+          sudo -H incus admin init --minimal
+          sudo chmod 666 /var/lib/incus/unix.socket
+          sudo rm -rf ~/.config/incus
+          incus info | grep -E 'server_version|instance_oci'
+      - name: Import a compose stack
+        run: |
+          mkdir -p web/dist && touch web/dist/index.html
+          INCUS_WEBUI_REGISTRY=1 go test ./internal/compose -run TestImageEntrypoint -v
+          INCUS_WEBUI_COMPOSE=1 go test . -run TestComposeIncus -v -timeout 15m

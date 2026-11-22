@@ -605,6 +605,10 @@ func (c *incusConn) do(ctx context.Context, method, p, project string, body io.R
 		return nil, err
 	}
 	for k, v := range hdr {
+		if k == "Content-Length" {
+			req.ContentLength, _ = strconv.ParseInt(v, 10, 64)
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	return c.be.transport.RoundTrip(req)
@@ -634,6 +638,11 @@ func (c *incusConn) call(ctx context.Context, method, p, project string, body an
 		rd = bytes.NewReader(b)
 		hdr["Content-Type"] = "application/json"
 	}
+	return c.send(ctx, method, p, project, rd, hdr)
+}
+
+// send is call with a body of any type (uploads of images and backups).
+func (c *incusConn) send(ctx context.Context, method, p, project string, rd io.Reader, hdr map[string]string) (json.RawMessage, error) {
 	resp, err := c.do(ctx, method, p, project, rd, hdr)
 	if err != nil {
 		return nil, err

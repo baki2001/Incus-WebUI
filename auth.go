@@ -29,6 +29,8 @@ type Session struct {
 	ID      string `json:"i"`            // lets logout revoke this one session
 	OIDCGen int64  `json:"og,omitempty"` // oidc sessions: must match the config's OIDCGen
 	Gen     int64  `json:"g"`            // the user's session generation; a password change or re-creation ends older sessions
+	// Groups are the SSO groups at sign-in, used for access entries like "group:ops".
+	Groups []string `json:"gr,omitempty"`
 }
 
 func (a *App) signSession(s Session) string {
@@ -43,8 +45,11 @@ func (a *App) mac(v string) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 
-func (a *App) setSession(w http.ResponseWriter, r *http.Request, user, method string) {
-	s := Session{User: user, Method: method, Expires: time.Now().Add(sessionTTL).Unix(), ID: randHex(16)}
+func (a *App) setSession(w http.ResponseWriter, r *http.Request, user, method string, groups ...string) {
+	if len(groups) > 32 {
+		groups = groups[:32] // keeps the cookie small
+	}
+	s := Session{User: user, Method: method, Expires: time.Now().Add(sessionTTL).Unix(), ID: randHex(16), Groups: groups}
 	if method == "oidc" {
 		s.OIDCGen = a.store.Get().OIDCGen
 	}
@@ -354,10 +359,12 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) != nil || !found {
+		a.auditLogin(r, req.Username, "password", false)
 		jsonError(w, http.StatusUnauthorized, "Wrong username or password.")
 		return
 	}
 	a.loginLimit.release(ip, req.Username)
+	a.auditLogin(r, req.Username, "password", true)
 	a.setSession(w, r, req.Username, "password")
 	writeJSON(w, map[string]string{"user": req.Username})
 }
@@ -454,6 +461,8 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return errors.New("already set up")
 		}
 		c.Users = append(c.Users, User{Username: req.Username, PasswordHash: string(hash)})
+		// The first account is the admin. Others get roles from that admin.
+		c.Access = []Access{{Who: "user:" + req.Username, Server: "*", Project: "*", Role: "admin"}}
 		return nil
 	})
 	if err != nil {
@@ -491,13 +500,20 @@ func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) saveUser(w http.ResponseWriter, r *http.Request, name string, create bool) {
-	var req struct{ Username, Password string }
+	var req struct{ Username, Password, Role string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 	if create {
 		name = req.Username
+		if req.Role == "" {
+			req.Role = "viewer"
+		}
+		if _, ok := roleNames[req.Role]; !ok {
+			jsonError(w, http.StatusBadRequest, "Unknown role.")
+			return
+		}
 	}
 	if err := validateCredentials(name, req.Password); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -523,6 +539,7 @@ func (a *App) saveUser(w http.ResponseWriter, r *http.Request, name string, crea
 			return errors.New("No such user.")
 		}
 		c.Users = append(c.Users, User{Username: name, PasswordHash: string(hash), SessionGen: nextGen(0)})
+		c.Access = append(c.Access, Access{Who: "user:" + name, Server: "*", Project: "*", Role: req.Role})
 		return nil
 	})
 	if err != nil {
@@ -561,6 +578,13 @@ func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 			return errors.New("You can't remove the last user while SSO is off.")
 		}
 		c.Users = out
+		keep := c.Access[:0:0]
+		for _, e := range c.Access {
+			if e.Who != "user:"+name {
+				keep = append(keep, e)
+			}
+		}
+		c.Access = keep
 		if _, ok := c.UIPrefs[name]; ok {
 			m := make(map[string]UIPrefs, len(c.UIPrefs))
 			for k, v := range c.UIPrefs {

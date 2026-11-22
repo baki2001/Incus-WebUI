@@ -8,6 +8,7 @@ import { bytes, incus, incusRaw, type Instance } from "../api";
 import { useCrumbs } from "../Shell";
 import { useApp, useData, cacheGet, invalidate } from "../state";
 import { hostBusy, HostUpdates } from "./HostUpdates";
+import { MetricsPanel } from "./Charts";
 import { instanceTypes } from "./ImagePicker";
 
 // Incus has no host uptime or load average in its API, so show how long Incus itself has been running.
@@ -56,7 +57,8 @@ async function loadUptime(server: string): Promise<number | null> {
 export function Host() {
   const { server = "" } = useParams();
   useCrumbs([{ label: "Hosts" }, { label: server }]);
-  const s = useApp().servers.find((x) => x.name === server);
+  const app = useApp();
+  const s = app.servers.find((x) => x.name === server);
   const ok = !!s?.online && !!s.trusted;
   const prev = cacheGet<any>(`hostinfo:${server}`);
   const info = useData<any>(ok ? `hostinfo:${server}` : null, () => incus(server, "/1.0"), hostBusy(prev?.config) ? 3000 : 0);
@@ -204,8 +206,9 @@ export function Host() {
                 </div>
               )}
             </div>
-            {info.data && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
-            {info.data && <ServerConfig server={server} config={info.data.config || {}} onSaved={() => info.reload()} />}
+            <MetricsPanel server={server} />
+            {info.data && app.admin && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
+            {info.data && app.admin && <ServerConfig server={server} config={info.data.config || {}} onSaved={() => info.reload()} />}
           </div>
         </div>
       )}
