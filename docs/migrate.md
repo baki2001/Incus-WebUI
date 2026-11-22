@@ -60,7 +60,7 @@ An admin can put the stack in a new project named after it. Services then reach 
 | --- | --- |
 | `image` | The same image, pulled from its registry |
 | `environment` and `${VAR}` substitution | `environment.*` |
-| `command`, `entrypoint`, `working_dir`, numeric `user` | `oci.cmd`, `oci.entrypoint`, `oci.cwd`, `oci.uid` (Incus 6.13 or newer) |
+| `command`, `entrypoint`, `working_dir`, numeric `user` | `oci.entrypoint`, `oci.cwd`, `oci.uid` (Incus 6.13 or newer). A `command` alone runs after the image's own entrypoint, which the UI reads from the registry. |
 | `ports` | Proxy devices that listen on the Incus server |
 | Named volumes | Custom volumes, named after the stack |
 | `depends_on` | Start order and autostart priority |
