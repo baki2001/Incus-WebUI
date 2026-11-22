@@ -12,9 +12,10 @@ import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
 import { MetricsPanel } from "./Charts";
+import { BackupsTab } from "./Backups";
 
-type Tab = "overview" | "history" | "configuration" | "snapshots" | "files" | "terminal" | "console" | "logs";
-const tabOrder: Tab[] = ["overview", "history", "configuration", "snapshots", "files", "terminal", "console", "logs"];
+type Tab = "overview" | "history" | "configuration" | "snapshots" | "backups" | "files" | "terminal" | "console" | "logs";
+const tabOrder: Tab[] = ["overview", "history", "configuration", "snapshots", "backups", "files", "terminal", "console", "logs"];
 
 export function InstancePage() {
   const { server = "", name = "", tab = "overview" } = useParams();
@@ -183,6 +184,7 @@ export function InstancePage() {
           { v: "history", l: "History" },
           { v: "configuration", l: "Configuration" },
           { v: "snapshots", l: "Snapshots" },
+          { v: "backups", l: "Backups" },
           { v: "files", l: "File Explorer" },
           { v: "terminal", l: "Terminal" },
           { v: "console", l: "Console" },
@@ -195,6 +197,7 @@ export function InstancePage() {
           {tab === "history" && <MetricsPanel server={server!} project={inst.project} instance={inst.name} />}
           {tab === "configuration" && <ConfigTab inst={inst} reload={reload} />}
           {tab === "snapshots" && <SnapshotsTab inst={inst} reload={reload} />}
+          {tab === "backups" && <BackupsTab inst={inst} />}
           {tab === "files" && <FilesTab inst={inst} />}
           {tab === "console" && <ConsoleTab inst={inst} onStart={() => act("start")} />}
           {tab === "logs" && <LogsTab inst={inst} />}

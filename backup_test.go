@@ -70,9 +70,12 @@ func TestDue(t *testing.T) {
 		{day.Add(9 * time.Hour), day.Add(3 * time.Hour), false},
 	}
 	for _, c := range cases {
-		if got := due(sc, scheduleState{LastRun: c.last}, c.now); got != c.want {
+		if got := due(sc, scheduleState{LastRun: c.last, Since: day.Add(-48 * time.Hour)}, c.now); got != c.want {
 			t.Errorf("now %v last %v = %v", c.now, c.last, got)
 		}
+	}
+	if due(sc, scheduleState{Since: day.Add(4 * time.Hour)}, day.Add(9*time.Hour)) {
+		t.Error("a schedule added after its time ran the same day")
 	}
 }
 

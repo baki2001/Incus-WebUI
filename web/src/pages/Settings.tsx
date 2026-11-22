@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
 import { useCrumbs } from "../Shell";
+import { BackupSettings } from "./Backups";
 import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
 import { confirmDialog, CopyBtn, Field, Input, Seg, Select } from "../ui";
 
-type Section = "appearance" | "servers" | "users" | "about";
+type Section = "appearance" | "servers" | "users" | "backups" | "about";
 const sections: { v: Section; l: string; admin?: boolean }[] = [
   { v: "appearance", l: "Appearance" },
   { v: "servers", l: "Servers", admin: true },
   { v: "users", l: "Users and roles", admin: true },
+  { v: "backups", l: "Backups", admin: true },
   { v: "about", l: "Updates and about" },
 ];
 
@@ -35,6 +37,7 @@ export function Settings() {
           {section === "appearance" && <Appearance />}
           {section === "servers" && admin && <Servers />}
           {section === "users" && admin && <Users />}
+          {section === "backups" && admin && <BackupSettings />}
           {section === "about" && <About />}
         </div>
       </div>

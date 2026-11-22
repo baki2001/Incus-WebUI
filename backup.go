@@ -406,6 +406,9 @@ type scheduleState struct {
 	LastOK    bool      `json:"last_ok"`
 	LastError string    `json:"last_error,omitempty"`
 	Running   bool      `json:"running"`
+	// Since is when the UI first saw the schedule. A new schedule waits for
+	// its next time instead of running at once.
+	Since time.Time `json:"since,omitzero"`
 }
 
 type scheduler struct {
@@ -453,7 +456,7 @@ func due(sc BackupSchedule, st scheduleState, now time.Time) bool {
 		return false
 	}
 	at := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, now.Location())
-	return !now.Before(at) && st.LastRun.Before(at)
+	return !now.Before(at) && st.LastRun.Before(at) && st.Since.Before(at)
 }
 
 func (a *App) runSchedules(ctx context.Context) {
@@ -462,6 +465,12 @@ func (a *App) runSchedules(ctx context.Context) {
 	for {
 		now := time.Now()
 		for _, sc := range a.store.Get().Backups.Schedules {
+			a.sched.mu.Lock()
+			if a.sched.state[sc.Name] == nil {
+				a.sched.state[sc.Name] = &scheduleState{Since: now}
+				a.sched.saveLocked()
+			}
+			a.sched.mu.Unlock()
 			if due(sc, a.sched.get(sc.Name), now) {
 				a.startSchedule(sc)
 			}

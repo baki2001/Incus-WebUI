@@ -393,3 +393,13 @@ tr.empty{display:table-row;padding:0}
 .imp-plan dt { font-size: 12px; color: var(--ink-3); }
 .imp-plan dd { margin: 2px 0 0; }
 .imp-warn { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+
+/* Backups */
+.bk .ptitle .r { display: flex; gap: 8px; align-items: center; }
+.bk-act { display: inline-flex; gap: 14px; }
+.bk-card { padding: 16px; margin-bottom: 12px; display: grid; gap: 12px; }
+.bk-card .roles-f { display: flex; align-items: center; gap: 12px; }
+.bk-card .roles-f .r { margin-left: auto; }
+.bk-st { font-size: 12.5px; color: var(--ink-3); }
+.bk-save { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); }
+.bk-save .r { margin-left: auto; display: flex; gap: 8px; }
