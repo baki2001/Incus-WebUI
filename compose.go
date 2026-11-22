@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/baki2001/incus-webui/internal/compose"
@@ -46,7 +47,10 @@ func (a *App) composePlan(ctx context.Context, w http.ResponseWriter, r *http.Re
 		return nil, nil, nil, false
 	}
 	var info struct {
-		Extensions []string `json:"api_extensions"`
+		Extensions  []string `json:"api_extensions"`
+		Environment struct {
+			Architectures []string `json:"architectures"`
+		} `json:"environment"`
 	}
 	_ = json.Unmarshal(b, &info)
 	if q.Pool == "" {
@@ -56,6 +60,21 @@ func (a *App) composePlan(ctx context.Context, w http.ResponseWriter, r *http.Re
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return nil, nil, nil, false
+	}
+	arch := "amd64"
+	if len(info.Environment.Architectures) > 0 {
+		arch = compose.OCIArch(info.Environment.Architectures[0])
+	}
+	for i := range p.Services {
+		svc := &p.Services[i]
+		if svc.Command == "" {
+			continue
+		}
+		ep, err := imageEntrypoint(ctx, svc.Server, svc.Image, arch)
+		if err != nil {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("Service %s: the image's entrypoint couldn't be read (%v), so its command runs without it.", svc.Service, err))
+		}
+		svc.Config["oci.entrypoint"] = compose.JoinCommand(ep, svc.Command)
 	}
 	if !slices.Contains(info.Extensions, "instance_oci") {
 		p.Blockers = append(p.Blockers, "This Incus server can't run Docker images. That takes Incus 6.3 or newer.")
@@ -80,6 +99,9 @@ func (a *App) composePlan(ctx context.Context, w http.ResponseWriter, r *http.Re
 				p.Blockers = append(p.Blockers, fmt.Sprintf("An instance named %s exists already in project %s.", svc.Name, q.Project))
 			}
 		}
+	}
+	if !q.NewProject && len(p.Volumes) > 0 && !a.ownVolumes(ctx, s, q.Server, q.Project) {
+		p.Blockers = append(p.Blockers, sharedVolumesMsg(q.Project))
 	}
 	return &q, p, c, true
 }
@@ -194,4 +216,21 @@ func runCompose(ctx context.Context, c *incusConn, q *composeReq, p *compose.Pla
 		note += " Kept the data in the existing volumes " + strings.Join(reused, ", ") + "."
 	}
 	return note, nil
+}
+
+// Entrypoints are looked up once per image: the plan is asked for often.
+var entrypoints sync.Map // server/image/arch -> []string
+
+func imageEntrypoint(ctx context.Context, server, image, arch string) ([]string, error) {
+	key := server + "/" + image + "/" + arch
+	if v, ok := entrypoints.Load(key); ok {
+		return v.([]string), nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	ep, err := compose.ImageEntrypoint(ctx, server, image, arch)
+	if err == nil {
+		entrypoints.Store(key, ep)
+	}
+	return ep, err
 }

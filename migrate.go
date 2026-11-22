@@ -32,8 +32,8 @@ type importFile struct {
 	ID      string    `json:"id"`
 	User    string    `json:"user"`
 	Owner   string    `json:"owner"` // method:user
-	Name    string    `json:"name"` // the file name the user uploaded
-	Kind    string    `json:"kind"` // container | virtual-machine
+	Name    string    `json:"name"`  // the file name the user uploaded
+	Kind    string    `json:"kind"`  // container | virtual-machine
 	Size    int64     `json:"size"`
 	Created time.Time `json:"created"`
 }
@@ -242,6 +242,10 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if len(p.ExtraDisks) > 0 && !a.ownVolumes(ctx, s, q.Server, q.Project) {
+		jsonError(w, http.StatusForbidden, sharedVolumesMsg(q.Project))
+		return
+	}
 	if _, err := c.call(ctx, "GET", "/1.0/instances/"+url.PathEscape(p.Name), q.Project, nil); err == nil {
 		jsonError(w, http.StatusConflict, fmt.Sprintf("An instance named %s already exists. Pick another name.", p.Name))
 		return
@@ -646,4 +650,15 @@ func deleteImage(c *incusConn, project, fp string) {
 	if _, err := c.call(ctx, "DELETE", "/1.0/images/"+fp, project, nil); err != nil {
 		log.Printf("import: delete image %s: %v", fp, err)
 	}
+}
+
+// ownVolumes says whether volumes made in a project stay in it. A project
+// without its own volumes uses the default project's, which only admins may
+// touch.
+func (a *App) ownVolumes(ctx context.Context, s *Session, server, project string) bool {
+	return project == "default" || a.isAdmin(s) || a.projectHas(ctx, server, project, "features.storage.volumes")
+}
+
+func sharedVolumesMsg(project string) string {
+	return "Project " + project + " keeps its volumes in the default project, so only an admin can import volumes into it."
 }

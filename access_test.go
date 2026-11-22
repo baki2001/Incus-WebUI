@@ -168,6 +168,11 @@ func TestCheckIncusFiltersProjects(t *testing.T) {
 	if copyFrom(`{"name":"x","source":{"type":"copy","source":"db1","project":"db"}}`) {
 		t.Error("a copy out of another project was allowed")
 	}
+	r := httptest.NewRequest("POST", "/1.0/instances?project=web", strings.NewReader(`{"source":{"project":"db"}}`))
+	r.AddCookie(ck)
+	if ok, _ := a.checkIncus(httptest.NewRecorder(), r, "lab", "/1.0/instances"); ok {
+		t.Error("a copy without a Content-Type skipped the project check")
+	}
 	if !copyFrom(`{"name":"x","source":{"type":"copy","source":"a","project":"own"}}`) {
 		t.Error("a copy between own projects was refused")
 	}

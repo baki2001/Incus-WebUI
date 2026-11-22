@@ -36,7 +36,7 @@ export function Operations() {
   const rows = q.data?.filter((o) => (show === "all" || (show === "running" ? o.status_code < 200 : o.status_code >= 400)) && matches(search, o.description, o.class, resourceText(o, true)));
   const cancel = async (o: Op) => {
     if (!(await confirmDialog({ title: `Cancel “${o.description}”?`, body: "Incus stops it where it can.", confirm: "Cancel operation", danger: true }))) return;
-    await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE" }), "Cancelled");
+    await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE", project: o.project }), "Cancelled");
     invalidate("operations:");
   };
   const running = q.data?.filter((o) => o.status_code < 200).length || 0;

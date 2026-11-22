@@ -225,7 +225,9 @@ func incusNeed(method, path string) (Role, Scope) {
 // bodyProjects returns the projects a JSON request body names: Incus copies
 // and moves between projects with "project" and "source.project".
 func bodyProjects(r *http.Request) ([]string, error) {
-	if r.Body == nil || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	// Incus reads JSON whatever the Content-Type says, except uploads.
+	ct := r.Header.Get("Content-Type")
+	if r.Body == nil || r.Body == http.NoBody || strings.HasPrefix(ct, "application/octet-stream") || strings.HasPrefix(ct, "multipart/") {
 		return nil, nil
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20+1))

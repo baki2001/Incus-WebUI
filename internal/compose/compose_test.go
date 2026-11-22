@@ -90,8 +90,8 @@ func TestParse(t *testing.T) {
 	if web.Config["environment.PRICE"] != "$5" || web.Config["environment.WORDPRESS_DB_HOST"] != "db" {
 		t.Errorf("web env = %v", web.Config)
 	}
-	if web.Config["oci.cmd"] != `php -S 0.0.0.0:80 'it'"'"'s'` {
-		t.Errorf("oci.cmd = %s", web.Config["oci.cmd"])
+	if web.Command != `php -S 0.0.0.0:80 'it'"'"'s'` || web.Config["oci.entrypoint"] != "" {
+		t.Errorf("command = %s, entrypoint %s", web.Command, web.Config["oci.entrypoint"])
 	}
 	wantDevs := map[string]map[string]string{
 		"port-8080-tcp": {"type": "proxy", "listen": "tcp:0.0.0.0:8080", "connect": "tcp:127.0.0.1:80"},
@@ -131,8 +131,12 @@ func TestParseProblems(t *testing.T) {
 	if _, err := Parse([]byte("services: {}"), nil, Options{}); err == nil {
 		t.Error("an empty file was accepted")
 	}
-	p, _ := Parse([]byte("services:\n  a:\n    image: x\n    command: run\n"), nil, Options{Pool: "p"})
-	if p.Services[0].Config["oci.cmd"] != "" || len(p.Warnings) == 0 {
+	p, _ := Parse([]byte("services:\n  a:\n    image: x\n    entrypoint: [sh, -c]\n    command: run it\n"), nil, Options{Pool: "p", Entrypoint: true})
+	if p.Services[0].Config["oci.entrypoint"] != "sh -c run it" {
+		t.Errorf("entrypoint = %q", p.Services[0].Config["oci.entrypoint"])
+	}
+	p, _ = Parse([]byte("services:\n  a:\n    image: x\n    command: run\n"), nil, Options{Pool: "p"})
+	if p.Services[0].Command != "" || len(p.Warnings) == 0 {
 		t.Error("command without entrypoint support must warn, not set")
 	}
 }

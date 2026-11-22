@@ -39,6 +39,9 @@ type Service struct {
 	Config    map[string]string            `json:"config"`
 	Devices   map[string]map[string]string `json:"devices"`
 	DependsOn []string                     `json:"depends_on,omitempty"`
+	// Command is a command line that goes after the image's own entrypoint
+	// in oci.entrypoint. The caller looks that entrypoint up.
+	Command string `json:"command,omitempty"`
 }
 
 var (
@@ -269,28 +272,33 @@ func service(svc, name string, s map[string]any, o Options, p *Plan, vols map[st
 		warn("Service %s reads an env_file. Its variables are not in the compose file: add them to the service's environment after the import.", svc)
 	}
 
-	cmd := func(key, field string) {
-		v, ok := s[field]
-		if !ok {
-			return
-		}
-		if !o.Entrypoint {
-			warn("Service %s sets %s, which this Incus server can't override. The image's default is used. Incus 6.13 or newer can.", svc, field)
-			return
-		}
-		switch x := v.(type) {
+	// Incus has one key for the whole command line, oci.entrypoint. An
+	// entrypoint in the file replaces the image's entrypoint and command, as
+	// in Docker. A command alone keeps the image's entrypoint, which only the
+	// registry knows: the caller fills it in (see Service.Command).
+	line := func(field string) (string, bool) {
+		switch x := s[field].(type) {
 		case string:
-			out.Config[key] = x
+			return x, true
 		case []any:
 			parts := make([]string, len(x))
 			for i, a := range x {
 				parts[i] = shellQuote(fmt.Sprint(a))
 			}
-			out.Config[key] = strings.Join(parts, " ")
+			return strings.Join(parts, " "), true
 		}
+		return "", false
 	}
-	cmd("oci.entrypoint", "entrypoint")
-	cmd("oci.cmd", "command")
+	ep, hasEP := line("entrypoint")
+	cm, hasCmd := line("command")
+	switch {
+	case (hasEP || hasCmd) && !o.Entrypoint:
+		warn("Service %s sets its command or entrypoint, which this Incus server can't override. The image's default is used. Incus 6.13 or newer can.", svc)
+	case hasEP:
+		out.Config["oci.entrypoint"] = strings.TrimSpace(ep + " " + cm)
+	case hasCmd:
+		out.Command = cm
+	}
 	if wd, ok := s["working_dir"].(string); ok && wd != "" {
 		if o.Entrypoint {
 			out.Config["oci.cwd"] = wd
