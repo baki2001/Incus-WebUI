@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +27,7 @@ func ImageEntrypoint(ctx context.Context, server, image, arch string) ([]string,
 	if host == "docker.io" {
 		host = "registry-1.docker.io"
 	}
-	r := &registry{base: "https://" + host + "/v2/" + repo, client: &http.Client{Timeout: 30 * time.Second}}
+	r := &registry{base: "https://" + host + "/v2/" + repo, client: safeClient}
 	accept := "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 	var m struct {
 		Manifests []struct {
@@ -163,4 +165,61 @@ func OCIArch(incus string) string {
 		return incus
 	}
 	return incus
+}
+
+// safeClient talks only HTTPS to public addresses, so an image name or a
+// registry's answer can't point the UI at its own machine or a metadata
+// service. Registries on the local network still work, and so does an
+// HTTPS proxy the admin set in the environment.
+var safeClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" || len(via) > 3 {
+			return errors.New("registry: bad redirect")
+		}
+		return nil
+	},
+	Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DialContext:         safeDial,
+	},
+}
+
+var (
+	plainDialer = &net.Dialer{Timeout: 10 * time.Second}
+	checkDialer = &net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, _ := net.SplitHostPort(address)
+			ip := net.ParseIP(host)
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+				return errors.New("registry: address not allowed")
+			}
+			return nil
+		},
+	}
+)
+
+func safeDial(ctx context.Context, network, address string) (net.Conn, error) {
+	if address == proxyAddr() {
+		return plainDialer.DialContext(ctx, network, address)
+	}
+	return checkDialer.DialContext(ctx, network, address)
+}
+
+// proxyAddr is the host:port of the HTTPS proxy from the environment, if any.
+func proxyAddr() string {
+	u, err := http.ProxyFromEnvironment(&http.Request{URL: &url.URL{Scheme: "https", Host: "registry.invalid"}})
+	if err != nil || u == nil {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		port = map[string]string{"https": "443", "socks5": "1080"}[u.Scheme]
+		if port == "" {
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }

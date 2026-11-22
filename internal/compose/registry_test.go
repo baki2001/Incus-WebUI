@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -23,5 +24,13 @@ func TestJoinCommand(t *testing.T) {
 	}
 	if got := JoinCommand(nil, "run"); got != "run" {
 		t.Error(got)
+	}
+}
+
+func TestSafeClientBlocksLocal(t *testing.T) {
+	for _, u := range []string{"https://127.0.0.1:1/v2/", "https://169.254.169.254/latest/"} {
+		if _, err := safeClient.Get(u); err == nil || !strings.Contains(err.Error(), "not allowed") {
+			t.Errorf("%s: err = %v, want address not allowed", u, err)
+		}
 	}
 }

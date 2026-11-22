@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -61,21 +62,6 @@ func (a *App) composePlan(ctx context.Context, w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return nil, nil, nil, false
 	}
-	arch := "amd64"
-	if len(info.Environment.Architectures) > 0 {
-		arch = compose.OCIArch(info.Environment.Architectures[0])
-	}
-	for i := range p.Services {
-		svc := &p.Services[i]
-		if svc.Command == "" {
-			continue
-		}
-		ep, err := imageEntrypoint(ctx, svc.Server, svc.Image, arch)
-		if err != nil {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("Service %s: the image's entrypoint couldn't be read (%v), so its command runs without it.", svc.Service, err))
-		}
-		svc.Config["oci.entrypoint"] = compose.JoinCommand(ep, svc.Command)
-	}
 	if !slices.Contains(info.Extensions, "instance_oci") {
 		p.Blockers = append(p.Blockers, "This Incus server can't run Docker images. That takes Incus 6.3 or newer.")
 	}
@@ -102,6 +88,26 @@ func (a *App) composePlan(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 	if !q.NewProject && len(p.Volumes) > 0 && !a.ownVolumes(ctx, s, q.Server, q.Project) {
 		p.Blockers = append(p.Blockers, sharedVolumesMsg(q.Project))
+	}
+	arch := "amd64"
+	if len(info.Environment.Architectures) > 0 {
+		arch = compose.OCIArch(info.Environment.Architectures[0])
+	}
+	// The registry is only asked once the user may import and nothing blocks.
+	for i := range p.Services {
+		if len(p.Blockers) > 0 {
+			break
+		}
+		svc := &p.Services[i]
+		if svc.Command == "" {
+			continue
+		}
+		ep, err := imageEntrypoint(ctx, svc.Server, svc.Image, arch)
+		if err != nil {
+			log.Printf("compose: entrypoint of %s/%s: %v", svc.Server, svc.Image, err)
+			p.Warnings = append(p.Warnings, fmt.Sprintf("Service %s: the image's entrypoint couldn't be read from its registry, so its command runs without it.", svc.Service))
+		}
+		svc.Config["oci.entrypoint"] = compose.JoinCommand(ep, svc.Command)
 	}
 	return &q, p, c, true
 }
@@ -218,19 +224,24 @@ func runCompose(ctx context.Context, c *incusConn, q *composeReq, p *compose.Pla
 	return note, nil
 }
 
-// Entrypoints are looked up once per image: the plan is asked for often.
-var entrypoints sync.Map // server/image/arch -> []string
+// Entrypoints are kept for an hour: the plan is asked for often.
+var entrypoints sync.Map // server/image/arch -> cachedEntrypoint
+
+type cachedEntrypoint struct {
+	ep []string
+	at time.Time
+}
 
 func imageEntrypoint(ctx context.Context, server, image, arch string) ([]string, error) {
 	key := server + "/" + image + "/" + arch
-	if v, ok := entrypoints.Load(key); ok {
-		return v.([]string), nil
+	if v, ok := entrypoints.Load(key); ok && time.Since(v.(cachedEntrypoint).at) < time.Hour {
+		return v.(cachedEntrypoint).ep, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	ep, err := compose.ImageEntrypoint(ctx, server, image, arch)
 	if err == nil {
-		entrypoints.Store(key, ep)
+		entrypoints.Store(key, cachedEntrypoint{ep, time.Now()})
 	}
 	return ep, err
 }
