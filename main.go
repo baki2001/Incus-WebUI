@@ -233,6 +233,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/backup/download", auth(a.handleBackupDownload))
 	mux.Handle("DELETE /api/ui/backup", auth(a.handleBackupDelete))
 	mux.Handle("POST /api/ui/backup/restore", auth(a.handleBackupRestore))
+	mux.Handle("POST /api/ui/compose/plan", auth(a.handleComposePlan))
+	mux.Handle("POST /api/ui/compose/run", auth(a.handleComposeRun))
 	mux.Handle("GET /api/ui/imports", auth(a.handleImports))
 	mux.Handle("POST /api/ui/imports", auth(a.handleImportUpload))
 	mux.Handle("GET /api/ui/imports/{id}/plan", auth(a.handleImportPlan))
