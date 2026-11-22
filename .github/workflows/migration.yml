@@ -118,8 +118,9 @@ jobs:
           printf 'Enabled: yes\nTypes: deb\nURIs: https://pkgs.zabbly.com/incus/stable\nSuites: noble\nComponents: main\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/zabbly.asc\n' | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.sources
           sudo apt-get update -qq
           sudo apt-get install -y -qq incus skopeo umoci
-          sudo incus admin init --minimal
+          sudo -H incus admin init --minimal
           sudo chmod 666 /var/lib/incus/unix.socket
+          sudo rm -rf ~/.config/incus
           incus info | grep -E 'server_version|instance_oci'
       - name: Import a compose stack
         run: |
