@@ -187,7 +187,14 @@ type prefixed struct {
 	prefix string
 }
 
-func (p prefixed) name(n string) string { return path.Join(p.prefix, n) }
+// name keeps a trailing slash: list("srv/proj/web/") must not match "web2/".
+func (p prefixed) name(n string) string {
+	j := path.Join(p.prefix, n)
+	if strings.HasSuffix(n, "/") && j != "/" {
+		j += "/"
+	}
+	return j
+}
 func (p prefixed) put(ctx context.Context, n string, r io.Reader) (int64, error) {
 	return p.backupStore.put(ctx, p.name(n), r)
 }
@@ -238,6 +245,9 @@ func listBackups(ctx context.Context, st backupStore, target, prefix string) ([]
 	}
 	out := []BackupMeta{}
 	for _, n := range names {
+		if !strings.HasPrefix(n, prefix) {
+			continue
+		}
 		key, ok := strings.CutSuffix(n, ".json")
 		if _, _, _, _, valid := splitKey(key); !ok || !valid {
 			continue
@@ -352,12 +362,21 @@ func (a *App) restoreBackup(ctx context.Context, c *incusConn, st backupStore, m
 	if m.SHA256 != "" {
 		body = &checkReader{r: r, h: sha256.New(), want: m.SHA256}
 	}
+	start := time.Now().Add(-time.Minute) // allow for clock skew
 	if _, err := c.send(ctx, "POST", "/1.0/instances", project, body, hdr); err != nil {
-		// A failed import can leave a half-made instance.
+		// A failed import can leave a half-made instance. Remove it only if
+		// this restore made it, not one that had the name already.
 		cctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if _, gerr := c.call(cctx, "GET", "/1.0/instances/"+url.PathEscape(name), project, nil); gerr == nil {
-			_, _ = c.call(cctx, "DELETE", "/1.0/instances/"+url.PathEscape(name), project, nil)
+		var ie *incusErr
+		conflict := errors.As(err, &ie) && (ie.Status == http.StatusConflict || strings.Contains(ie.Msg, "already exists"))
+		if b, gerr := c.call(cctx, "GET", "/1.0/instances/"+url.PathEscape(name), project, nil); gerr == nil && !conflict {
+			var in struct {
+				CreatedAt time.Time `json:"created_at"`
+			}
+			if json.Unmarshal(b, &in) == nil && in.CreatedAt.After(start) {
+				_, _ = c.call(cctx, "DELETE", "/1.0/instances/"+url.PathEscape(name), project, nil)
+			}
 		}
 		return fmt.Errorf("restore: %w", err)
 	}
@@ -551,6 +570,7 @@ func (a *App) runSchedule(ctx context.Context, sc BackupSchedule, set func(float
 		a.audit.add(AuditEntry{Time: time.Now(), User: "schedule:" + sc.Name, Server: sc.Server, Project: sc.Project, Action: "backup " + inst, Status: 200})
 		list, err := listBackups(ctx, st, t.Name, path.Dir(m.Key)+"/")
 		if err == nil {
+			list = slices.DeleteFunc(list, func(x BackupMeta) bool { return x.Instance != inst })
 			for _, old := range prune(list, sc) {
 				st.del(ctx, old.Key+".tar")
 				st.del(ctx, old.Key+".json")

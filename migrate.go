@@ -31,6 +31,7 @@ import (
 type importFile struct {
 	ID      string    `json:"id"`
 	User    string    `json:"user"`
+	Owner   string    `json:"owner"` // method:user
 	Name    string    `json:"name"` // the file name the user uploaded
 	Kind    string    `json:"kind"` // container | virtual-machine
 	Size    int64     `json:"size"`
@@ -55,7 +56,7 @@ func (a *App) readImport(id string, s *Session) (*importFile, error) {
 		return nil, errors.New("no such upload")
 	}
 	var f importFile
-	if json.Unmarshal(b, &f) != nil || (f.User != s.User && !a.isAdmin(s)) {
+	if json.Unmarshal(b, &f) != nil || (f.Owner != owner(s) && !a.isAdmin(s)) {
 		return nil, errors.New("no such upload")
 	}
 	return &f, nil
@@ -98,7 +99,7 @@ func (a *App) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	f := importFile{ID: randHex(8), User: s.User, Name: filepath.Base(r.URL.Query().Get("name")), Created: time.Now()}
+	f := importFile{ID: randHex(8), User: s.User, Owner: owner(s), Name: filepath.Base(r.URL.Query().Get("name")), Created: time.Now()}
 	path := a.importPath(f.ID)
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -135,7 +136,7 @@ func (a *App) handleImports(w http.ResponseWriter, r *http.Request) {
 	ents, _ := os.ReadDir(a.importDir())
 	for _, e := range ents {
 		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok {
-			if f, err := a.readImport(id, s); err == nil && f.User == s.User {
+			if f, err := a.readImport(id, s); err == nil && f.Owner == owner(s) {
 				out = append(out, *f)
 			}
 		}
@@ -320,6 +321,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 		if err != nil {
 			return "", err
 		}
+		defer deleteImage(c, q.Project, fp)
 	} else {
 		set(0.01, "Reading the disks")
 		boot, err := os.Create(filepath.Join(tmp, "rootfs.img"))
@@ -370,6 +372,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 		if err != nil {
 			return "", err
 		}
+		defer deleteImage(c, q.Project, fp)
 		for i, d := range p.ExtraDisks {
 			name := extraVolName(p.Name, d.Key)
 			set(0.75+0.1*float64(i)/float64(len(p.ExtraDisks)), "Sending disk "+d.Key)
@@ -382,14 +385,6 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 			p.Devices[d.Key] = map[string]string{"type": "disk", "pool": q.Pool, "source": name}
 		}
 	}
-	// The image is only a vehicle for the instance.
-	defer func() {
-		cctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if _, err := c.call(cctx, "DELETE", "/1.0/images/"+fp, q.Project, nil); err != nil {
-			log.Printf("import: delete image %s: %v", fp, err)
-		}
-	}()
 
 	set(0.85, "Creating the instance")
 	body := map[string]any{
@@ -641,4 +636,14 @@ func volumeBackup(w io.Writer, pool, name string, img io.Reader, size int64) err
 		return err
 	}
 	return zw.Close()
+}
+
+// deleteImage removes the temporary image an import made: it is only a
+// vehicle for the instance.
+func deleteImage(c *incusConn, project, fp string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := c.call(ctx, "DELETE", "/1.0/images/"+fp, project, nil); err != nil {
+		log.Printf("import: delete image %s: %v", fp, err)
+	}
 }

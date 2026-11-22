@@ -195,7 +195,11 @@ func ContainerImage(w io.Writer, path string, p *Plan, arch string) error {
 		}
 		h.Name = "rootfs/" + name
 		if h.Typeflag == tar.TypeLink {
-			h.Linkname = "rootfs/" + cleanName(h.Linkname)
+			ln := cleanName(h.Linkname)
+			if strings.Contains("/"+ln+"/", "/../") {
+				return fmt.Errorf("the backup contains an unsafe link %q", h.Linkname)
+			}
+			h.Linkname = "rootfs/" + ln
 		}
 		if h.Typeflag == tar.TypeGNUSparse {
 			h.Typeflag = tar.TypeReg

@@ -148,6 +148,7 @@ func NewReader(r io.Reader) (*Reader, error) {
 		}
 		v.Configs[name] = data
 	}
+	var total uint64
 	for i := 1; i < maxDevices; i++ {
 		off := 4096 + 32*i
 		size := be.Uint64(full[off+8:])
@@ -155,7 +156,9 @@ func NewReader(r io.Reader) (*Reader, error) {
 		if size == 0 || !ok {
 			continue
 		}
-		if size > 16<<40 { // 16 TiB, far above any homelab disk
+		// 16 TiB in all, far above any homelab VM. The completeness check
+		// keeps a bit per cluster, so this also bounds its memory (32 MiB).
+		if total += size; size > 16<<40 || total > 16<<40 {
 			return nil, fmt.Errorf("device %s is too large", name)
 		}
 		d := Device{ID: i, Name: name, Size: int64(size)}

@@ -202,6 +202,19 @@ func (c *s3Client) put(ctx context.Context, key string, r io.Reader) (int64, err
 	var parts []part
 	var total int64
 	for num := 1; n > 0; num++ {
+		if num%1000 == 0 && len(buf) < 512<<20 {
+			// S3 allows 10,000 parts. Growing them keeps very large backups
+			// under that: 16 MiB parts reach 2 TiB well before part 10,000.
+			nb := make([]byte, len(buf)*2)
+			copy(nb, buf[:n])
+			buf = nb
+			if m, err := io.ReadFull(r, buf[n:]); err == nil || err == io.EOF || err == io.ErrUnexpectedEOF {
+				n += m
+			} else {
+				abort()
+				return 0, err
+			}
+		}
 		q := url.Values{"partNumber": {strconv.Itoa(num)}, "uploadId": {init.UploadId}}
 		resp, err := c.do(ctx, "PUT", c.objectURL(key, q), buf[:n])
 		if err != nil {

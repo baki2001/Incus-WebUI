@@ -63,6 +63,16 @@ func TestIncusNeed(t *testing.T) {
 		{"GET", "/1.0/projects/web", RoleViewer, P},
 		{"GET", "/os/1.0/system", RoleAdmin, S},
 		{"PUT", "/1.0/cluster/members/a/state", RoleAdmin, S},
+		{"GET", "/1.0/operations", RoleOperator, P},
+		{"GET", "/1.0/operations/x/websocket", RoleOperator, P},
+		{"GET", "/1.0/events", RoleOperator, P},
+		{"GET", "/1.0/storage-pools/p/buckets/b/keys", RoleManager, P},
+		{"GET", "/1.0/storage-pools/p/volumes/custom/v/backups/b/export", RoleManager, P},
+		{"GET", "/1.0/storage-pools/p/volumes/custom/v/sftp", RoleOperator, P},
+		{"GET", "/1.0/instances/x/debug/memory", RoleManager, P},
+		{"POST", "/1.0/networks", RoleAdmin, S},
+		{"GET", "/1.0/networks", RoleViewer, P},
+		{"POST", "/1.0/network-integrations", RoleAdmin, S},
 	}
 	for _, c := range cases {
 		got, scope := incusNeed(c.method, c.path)
@@ -143,6 +153,23 @@ func TestCheckIncusFiltersProjects(t *testing.T) {
 	_ = json.Unmarshal(f(pj), &out3)
 	if len(out3.Metadata) != 1 || out3.Metadata[0]["name"] != "web" {
 		t.Errorf("filtered projects = %v", out3.Metadata)
+	}
+	copyFrom := func(body string) bool {
+		r := httptest.NewRequest("POST", "/1.0/instances?project=web", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(ck)
+		ok, _ := a.checkIncus(httptest.NewRecorder(), r, "lab", "/1.0/instances")
+		return ok
+	}
+	_ = a.store.Update(func(c *Config) error {
+		c.Access = append(c.Access, Access{Who: "user:bob", Server: "lab", Project: "web", Role: "manager"}, Access{Who: "user:bob", Server: "lab", Project: "own", Role: "manager"})
+		return nil
+	})
+	if copyFrom(`{"name":"x","source":{"type":"copy","source":"db1","project":"db"}}`) {
+		t.Error("a copy out of another project was allowed")
+	}
+	if !copyFrom(`{"name":"x","source":{"type":"copy","source":"a","project":"own"}}`) {
+		t.Error("a copy between own projects was refused")
 	}
 	if _, ok, _ := req("POST", "/1.0/instances/a/exec?all-projects=true"); ok {
 		t.Error("a change across all projects was allowed")

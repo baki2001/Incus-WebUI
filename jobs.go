@@ -31,6 +31,7 @@ type Job struct {
 	Ended    time.Time `json:"ended,omitzero"`
 
 	cancel context.CancelFunc
+	owner  string // method:user, so a local and an SSO user of the same name differ
 }
 
 type jobs struct {
@@ -48,7 +49,7 @@ func (j *jobs) start(kind, title string, s *Session, server, project string, fn 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{ID: randHex(8), Kind: kind, Title: title, Server: server, Project: project, State: "running", Started: time.Now(), cancel: cancel}
 	if s != nil {
-		job.User = s.User
+		job.User, job.owner = s.User, owner(s)
 	}
 	j.mu.Lock()
 	j.list = append(j.list, job)
@@ -122,7 +123,7 @@ func (a *App) handleJobs(w http.ResponseWriter, r *http.Request) {
 	admin := a.isAdmin(s)
 	out := []Job{}
 	for _, x := range a.jobs.snapshot() {
-		if admin || x.User == s.User {
+		if admin || x.owner == owner(s) {
 			out = append(out, x)
 		}
 	}
@@ -135,7 +136,7 @@ func (a *App) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	a.jobs.mu.Lock()
 	defer a.jobs.mu.Unlock()
 	for _, x := range a.jobs.list {
-		if x.ID == id && (x.User == s.User || a.isAdmin(s)) {
+		if x.ID == id && (x.owner == owner(s) || a.isAdmin(s)) {
 			if x.State == "running" {
 				x.cancel()
 			}
@@ -145,3 +146,5 @@ func (a *App) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonError(w, http.StatusNotFound, "No such job.")
 }
+
+func owner(s *Session) string { return s.Method + ":" + s.User }

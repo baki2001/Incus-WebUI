@@ -425,6 +425,10 @@ func (a *App) collectMetrics(ctx context.Context) {
 // Without instance it sums every instance the user may see on the server.
 func (a *App) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	server := r.PathValue("server")
+	if _, ok := a.server(server); !ok {
+		jsonError(w, http.StatusNotFound, "unknown server")
+		return
+	}
 	q := r.URL.Query()
 	rng := q.Get("range")
 	span := map[string]int64{"1h": 3600, "24h": 86400, "7d": 7 * 86400}[rng]

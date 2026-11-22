@@ -16,12 +16,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Access struct {
@@ -153,8 +157,8 @@ func incusNeed(method, path string) (Role, Scope) {
 	coll := parts[1]
 	switch coll {
 	case "storage-pools":
-		if len(parts) >= 4 && parts[3] == "volumes" {
-			break // volumes live in projects
+		if len(parts) >= 4 && (parts[3] == "volumes" || parts[3] == "buckets") {
+			break // volumes and buckets live in projects
 		}
 		if read {
 			return RoleViewer, ScopeAny
@@ -165,12 +169,18 @@ func incusNeed(method, path string) (Role, Scope) {
 			return RoleViewer, ScopeAny
 		}
 		return RoleAdmin, ScopeServer
-	case "certificates", "auth", "metrics":
+	case "certificates", "auth", "metrics", "network-integrations":
 		// Certificates and raw metrics cover every project.
 		if read && coll == "metrics" {
 			return RoleViewer, ScopeServer
 		}
 		return RoleAdmin, ScopeServer
+	case "networks", "network-acls", "network-zones", "network-address-sets":
+		// Networks of a project without its own networks live in the
+		// default project and are shared by everyone, so changes are for admins.
+		if !read {
+			return RoleAdmin, ScopeServer
+		}
 	case "warnings":
 		if read {
 			return RoleViewer, ScopeAny
@@ -182,28 +192,21 @@ func incusNeed(method, path string) (Role, Scope) {
 			return RoleViewer, ScopeProject
 		}
 		return RoleAdmin, ScopeServer
-	case "operations":
-		// Cancelling or attaching to an operation needs its id or secret,
-		// which only the one who started it has.
-		if read {
-			return RoleViewer, ScopeAny
-		}
-		return RoleOperator, ScopeAny
-	}
-	if coll == "instances" && len(parts) >= 4 {
-		sub := parts[3]
-		if sub == "files" || sub == "sftp" || sub == "logs" {
-			// File contents and logs can hold secrets.
-			return RoleOperator, ScopeProject
-		}
-		if sub == "console" && read {
-			return RoleOperator, ScopeProject
-		}
-		if sub == "backups" && read && len(parts) >= 6 && parts[5] == "export" {
-			return RoleManager, ScopeProject
-		}
+	case "operations", "events":
+		// Operations and events carry the websocket secrets of terminals
+		// and consoles, so they need the role that may open those.
+		return RoleOperator, ScopeProject
 	}
 	if read {
+		// Reads that hand out data or credentials, not just state.
+		for _, seg := range parts[2:] {
+			switch seg {
+			case "export", "debug", "keys":
+				return RoleManager, ScopeProject
+			case "files", "sftp", "logs", "console":
+				return RoleOperator, ScopeProject
+			}
+		}
 		return RoleViewer, ScopeProject
 	}
 	if coll == "instances" && len(parts) >= 4 {
@@ -217,6 +220,37 @@ func incusNeed(method, path string) (Role, Scope) {
 		}
 	}
 	return RoleManager, ScopeProject
+}
+
+// bodyProjects returns the projects a JSON request body names: Incus copies
+// and moves between projects with "project" and "source.project".
+func bodyProjects(r *http.Request) ([]string, error) {
+	if r.Body == nil || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		return nil, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20+1))
+	r.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > 4<<20 {
+		return nil, errors.New("request too large")
+	}
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	var v struct {
+		Project string `json:"project"`
+		Source  struct {
+			Project string `json:"project"`
+		} `json:"source"`
+	}
+	_ = json.Unmarshal(b, &v)
+	var out []string
+	for _, p := range []string{v.Project, v.Source.Project} {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // roleAnywhere is the highest role the session has in any project of a server.
@@ -291,6 +325,29 @@ func (a *App) checkIncus(w http.ResponseWriter, r *http.Request, server, path st
 	}
 	if roleFor(access, s, server, project) < need {
 		return deny(project)
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && project != "default" {
+		// A project without its own profiles, volumes or images uses those
+		// of the default project, which everyone shares.
+		if f := sharedFeature(path); f != "" && !a.projectHas(r.Context(), server, project, f) {
+			need = RoleAdmin
+			return deny("*")
+		}
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// A copy or move names its other project in the body. Copying out
+		// of a project reads all its data, so it takes the manager role.
+		others, err := bodyProjects(r)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return false, nil
+		}
+		for _, p := range others {
+			if roleFor(access, s, server, p) < max(need, RoleManager) {
+				need = max(need, RoleManager)
+				return deny(p)
+			}
+		}
 	}
 	return true, nil
 }
@@ -446,4 +503,42 @@ func validAccess(e Access) string {
 		return "Who must start with user:, sso: or group:, or be *."
 	}
 	return ""
+}
+
+// sharedFeature is the project feature that decides whether a write to path
+// stays in the project ("features.profiles"), or "" when it always does.
+func sharedFeature(path string) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	switch {
+	case parts[1] == "profiles":
+		return "features.profiles"
+	case parts[1] == "images":
+		return "features.images"
+	case parts[1] == "storage-pools" && len(parts) >= 4 && parts[3] == "volumes":
+		return "features.storage.volumes"
+	case parts[1] == "storage-pools" && len(parts) >= 4 && parts[3] == "buckets":
+		return "features.storage.buckets"
+	}
+	return ""
+}
+
+// projectHas asks Incus whether a project has a feature turned on.
+func (a *App) projectHas(ctx context.Context, server, project, feature string) bool {
+	c, err := a.conn(server)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	b, err := c.call(ctx, "GET", "/1.0/projects/"+url.PathEscape(project), "", nil)
+	if err != nil {
+		return false
+	}
+	var p struct {
+		Config map[string]string `json:"config"`
+	}
+	return json.Unmarshal(b, &p) == nil && p.Config[feature] == "true"
 }

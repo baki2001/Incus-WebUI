@@ -70,6 +70,7 @@ func TestMetricsRespectRoles(t *testing.T) {
 	a.metrics = &metricStore{dir: t.TempDir()}
 	_ = a.store.Update(func(c *Config) error {
 		c.Access = []Access{{Who: "user:bob", Server: "lab", Project: "web", Role: "viewer"}}
+		c.Servers = []ServerConfig{{Name: "lab", URL: "https://lab:8443"}}
 		return nil
 	})
 	now := time.Now()
