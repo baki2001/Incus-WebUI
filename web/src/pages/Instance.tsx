@@ -11,9 +11,10 @@ import { CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, rea
 import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
+import { MetricsPanel } from "./Charts";
 
-type Tab = "overview" | "configuration" | "snapshots" | "files" | "terminal" | "console" | "logs";
-const tabOrder: Tab[] = ["overview", "configuration", "snapshots", "files", "terminal", "console", "logs"];
+type Tab = "overview" | "history" | "configuration" | "snapshots" | "files" | "terminal" | "console" | "logs";
+const tabOrder: Tab[] = ["overview", "history", "configuration", "snapshots", "files", "terminal", "console", "logs"];
 
 export function InstancePage() {
   const { server = "", name = "", tab = "overview" } = useParams();
@@ -179,6 +180,7 @@ export function InstancePage() {
         onChange={go}
         tabs={[
           { v: "overview", l: "Overview" },
+          { v: "history", l: "History" },
           { v: "configuration", l: "Configuration" },
           { v: "snapshots", l: "Snapshots" },
           { v: "files", l: "File Explorer" },
@@ -190,6 +192,7 @@ export function InstancePage() {
       <div className={"tabwrap" + (deleting ? " is-deleting" : "")}>
         <div className="tp" key={tab} style={{ ["--tp-anim" as any]: dir }}>
           {tab === "overview" && <OverviewTab inst={inst} />}
+          {tab === "history" && <MetricsPanel server={server!} project={inst.project} instance={inst.name} />}
           {tab === "configuration" && <ConfigTab inst={inst} reload={reload} />}
           {tab === "snapshots" && <SnapshotsTab inst={inst} reload={reload} />}
           {tab === "files" && <FilesTab inst={inst} />}

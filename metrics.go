@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	fineStep    = 60        // seconds
-	finePoints  = 24 * 60   // 24 hours
-	coarseStep  = 600       // 10 minutes
+	fineStep    = 60         // seconds
+	finePoints  = 24 * 60    // 24 hours
+	coarseStep  = 600        // 10 minutes
 	coarsePoint = 7 * 24 * 6 // 7 days
 )
 

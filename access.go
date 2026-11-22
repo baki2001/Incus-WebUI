@@ -122,84 +122,113 @@ func (a *App) requireRole(min Role, next http.HandlerFunc) http.HandlerFunc {
 }
 
 func deniedMsg(min Role, project string) string {
+	if project == "*" {
+		return "You need the " + min.String() + " role on all projects of this server for this. Ask an admin."
+	}
 	return "You need the " + min.String() + " role on project " + project + " for this. Ask an admin."
 }
 
-// incusNeed says which role an Incus API call needs, and in which project.
-// serverWide means the call isn't tied to a project (pools, cluster, server
-// config): then only a role on project "*" counts.
-func incusNeed(method, path string, q map[string][]string) (need Role, serverWide bool) {
+// Scope says where the role in incusNeed must hold.
+type Scope int
+
+const (
+	ScopeProject Scope = iota // the project in ?project= (default "default")
+	ScopeServer               // the whole server: a role on project "*"
+	ScopeAny                  // any project on the server (harmless server info)
+)
+
+// incusNeed says which role an Incus API call needs, and where.
+func incusNeed(method, path string) (Role, Scope) {
 	read := method == http.MethodGet || method == http.MethodHead
 	parts := strings.Split(strings.Trim(path, "/"), "/") // "1.0", "instances", ...
 	if parts[0] == "os" {
-		return RoleAdmin, true
+		return RoleAdmin, ScopeServer
 	}
 	if len(parts) == 1 { // GET /1.0 is the server's info; PUT/PATCH changes server config
 		if read {
-			return RoleViewer, false
+			return RoleViewer, ScopeAny
 		}
-		return RoleAdmin, true
+		return RoleAdmin, ScopeServer
 	}
 	coll := parts[1]
 	switch coll {
-	case "certificates", "cluster", "auth", "storage-pools":
-		if coll == "storage-pools" && len(parts) >= 4 && parts[3] == "volumes" {
-			// Volumes live in projects.
-			break
+	case "storage-pools":
+		if len(parts) >= 4 && parts[3] == "volumes" {
+			break // volumes live in projects
 		}
-		if read && coll != "certificates" {
-			return RoleViewer, false
+		if read {
+			return RoleViewer, ScopeAny
 		}
-		return RoleAdmin, true
+		return RoleAdmin, ScopeServer
+	case "resources", "cluster":
+		if read {
+			return RoleViewer, ScopeAny
+		}
+		return RoleAdmin, ScopeServer
+	case "certificates", "auth", "metrics":
+		// Certificates and raw metrics cover every project.
+		if read && coll == "metrics" {
+			return RoleViewer, ScopeServer
+		}
+		return RoleAdmin, ScopeServer
+	case "warnings":
+		if read {
+			return RoleViewer, ScopeAny
+		}
+		return RoleAdmin, ScopeServer
 	case "projects":
+		// Reads are checked against the project itself in checkIncus.
 		if read {
-			return RoleViewer, false
+			return RoleViewer, ScopeProject
 		}
-		return RoleAdmin, true
-	case "events":
-		return RoleViewer, false
-	case "metrics", "resources", "warnings", "network-allocations", "storage-volumes":
-		if read {
-			return RoleViewer, false
-		}
-		if coll == "warnings" {
-			return RoleAdmin, true
-		}
+		return RoleAdmin, ScopeServer
 	case "operations":
-		// Cancelling or attaching to an operation needs its secret or id,
-		// which only the starter has.
+		// Cancelling or attaching to an operation needs its id or secret,
+		// which only the one who started it has.
 		if read {
-			return RoleViewer, false
+			return RoleViewer, ScopeAny
 		}
-		return RoleOperator, false
+		return RoleOperator, ScopeAny
 	}
 	if coll == "instances" && len(parts) >= 4 {
 		sub := parts[3]
 		if sub == "files" || sub == "sftp" || sub == "logs" {
 			// File contents and logs can hold secrets.
-			return RoleOperator, false
+			return RoleOperator, ScopeProject
 		}
 		if sub == "console" && read {
-			return RoleOperator, false
+			return RoleOperator, ScopeProject
 		}
 		if sub == "backups" && read && len(parts) >= 6 && parts[5] == "export" {
-			return RoleManager, false
+			return RoleManager, ScopeProject
 		}
 	}
 	if read {
-		return RoleViewer, false
+		return RoleViewer, ScopeProject
 	}
 	if coll == "instances" && len(parts) >= 4 {
 		switch parts[3] {
 		case "state", "exec", "console", "snapshots", "files", "sftp":
 			// Restoring a snapshot goes through PUT /instances/<name>, which needs manager.
 			if parts[3] == "snapshots" && method == http.MethodPut {
-				return RoleManager, false
+				return RoleManager, ScopeProject
 			}
-			return RoleOperator, false
+			return RoleOperator, ScopeProject
 		}
 	}
-	return RoleManager, false
+	return RoleManager, ScopeProject
+}
+
+// roleAnywhere is the highest role the session has in any project of a server.
+func roleAnywhere(list []Access, s *Session, server string) Role {
+	subs := subjects(s)
+	best := RoleNone
+	for _, a := range list {
+		if slices.Contains(subs, a.Who) && (a.Server == "*" || a.Server == server) && roleNames[a.Role] > best {
+			best = roleNames[a.Role]
+		}
+	}
+	return best
 }
 
 // checkIncus enforces roles on a proxied Incus call. It returns false after
@@ -216,13 +245,37 @@ func (a *App) checkIncus(w http.ResponseWriter, r *http.Request, server, path st
 		return true, nil
 	}
 	q := r.URL.Query()
-	need, serverWide := incusNeed(r.Method, path, q)
+	need, scope := incusNeed(r.Method, path)
 	project := q.Get("project")
 	if project == "" {
 		project = "default"
 	}
-	if serverWide {
-		project = "*"
+	deny := func(p string) (bool, func([]byte) []byte) {
+		jsonError(w, http.StatusForbidden, deniedMsg(need, p))
+		return false, nil
+	}
+	switch scope {
+	case ScopeServer:
+		if roleFor(access, s, server, "*") < need {
+			return deny("*")
+		}
+		return true, nil
+	case ScopeAny:
+		if roleAnywhere(access, s, server) < need {
+			return deny(project)
+		}
+		return true, nil
+	}
+	if path == "/1.0/projects" {
+		if roleFor(access, s, server, "*") >= RoleViewer {
+			return true, nil
+		}
+		return true, func(body []byte) []byte {
+			return filterProjects(body, true, func(p string) bool { return roleFor(access, s, server, p) >= RoleViewer })
+		}
+	}
+	if p, ok := strings.CutPrefix(path, "/1.0/projects/"); ok {
+		project, _, _ = strings.Cut(p, "/")
 	}
 	if q.Get("all-projects") == "true" {
 		if roleFor(access, s, server, "*") >= need {
@@ -237,13 +290,7 @@ func (a *App) checkIncus(w http.ResponseWriter, r *http.Request, server, path st
 		}
 	}
 	if roleFor(access, s, server, project) < need {
-		jsonError(w, http.StatusForbidden, deniedMsg(need, project))
-		return false, nil
-	}
-	if path == "/1.0/projects" && r.Method == http.MethodGet && roleFor(access, s, server, "*") < RoleViewer {
-		return true, func(body []byte) []byte {
-			return filterProjects(body, true, func(p string) bool { return roleFor(access, s, server, p) >= RoleViewer })
-		}
+		return deny(project)
 	}
 	return true, nil
 }

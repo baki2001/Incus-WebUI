@@ -37,33 +37,37 @@ func TestRoleFor(t *testing.T) {
 }
 
 func TestIncusNeed(t *testing.T) {
+	P, S, A := ScopeProject, ScopeServer, ScopeAny
 	cases := []struct {
 		method, path string
 		want         Role
-		wide         bool
+		scope        Scope
 	}{
-		{"GET", "/1.0/instances", RoleViewer, false},
-		{"PUT", "/1.0/instances/web/state", RoleOperator, false},
-		{"POST", "/1.0/instances/web/exec", RoleOperator, false},
-		{"POST", "/1.0/instances/web/snapshots", RoleOperator, false},
-		{"PUT", "/1.0/instances/web", RoleManager, false},
-		{"DELETE", "/1.0/instances/web", RoleManager, false},
-		{"GET", "/1.0/instances/web/files", RoleOperator, false},
-		{"GET", "/1.0/instances/web/logs/lxc.log", RoleOperator, false},
-		{"GET", "/1.0/instances/web/backups/b1/export", RoleManager, false},
-		{"POST", "/1.0/storage-pools", RoleAdmin, true},
-		{"GET", "/1.0/storage-pools/default", RoleViewer, false},
-		{"POST", "/1.0/storage-pools/default/volumes/custom", RoleManager, false},
-		{"PATCH", "/1.0", RoleAdmin, true},
-		{"GET", "/1.0/certificates", RoleAdmin, true},
-		{"POST", "/1.0/projects", RoleAdmin, true},
-		{"GET", "/os/1.0/system", RoleAdmin, true},
-		{"PUT", "/1.0/cluster/members/a/state", RoleAdmin, true},
+		{"GET", "/1.0", RoleViewer, A},
+		{"GET", "/1.0/instances", RoleViewer, P},
+		{"PUT", "/1.0/instances/web/state", RoleOperator, P},
+		{"POST", "/1.0/instances/web/exec", RoleOperator, P},
+		{"POST", "/1.0/instances/web/snapshots", RoleOperator, P},
+		{"PUT", "/1.0/instances/web", RoleManager, P},
+		{"DELETE", "/1.0/instances/web", RoleManager, P},
+		{"GET", "/1.0/instances/web/files", RoleOperator, P},
+		{"GET", "/1.0/instances/web/logs/lxc.log", RoleOperator, P},
+		{"GET", "/1.0/instances/web/backups/b1/export", RoleManager, P},
+		{"POST", "/1.0/storage-pools", RoleAdmin, S},
+		{"GET", "/1.0/storage-pools/default", RoleViewer, A},
+		{"POST", "/1.0/storage-pools/default/volumes/custom", RoleManager, P},
+		{"PATCH", "/1.0", RoleAdmin, S},
+		{"GET", "/1.0/certificates", RoleAdmin, S},
+		{"GET", "/1.0/metrics", RoleViewer, S},
+		{"POST", "/1.0/projects", RoleAdmin, S},
+		{"GET", "/1.0/projects/web", RoleViewer, P},
+		{"GET", "/os/1.0/system", RoleAdmin, S},
+		{"PUT", "/1.0/cluster/members/a/state", RoleAdmin, S},
 	}
 	for _, c := range cases {
-		got, wide := incusNeed(c.method, c.path, nil)
-		if got != c.want || wide != c.wide {
-			t.Errorf("%s %s = %v wide=%v, want %v wide=%v", c.method, c.path, got, wide, c.want, c.wide)
+		got, scope := incusNeed(c.method, c.path)
+		if got != c.want || scope != c.scope {
+			t.Errorf("%s %s = %v scope %v, want %v scope %v", c.method, c.path, got, scope, c.want, c.scope)
 		}
 	}
 }
@@ -118,7 +122,19 @@ func TestCheckIncusFiltersProjects(t *testing.T) {
 	if len(out2.Metadata) != 1 {
 		t.Errorf("filtered URL list = %v", out2.Metadata)
 	}
-	_, ok, f = req("GET", "/1.0/projects?recursion=1&project=web")
+	if _, ok, _ := req("GET", "/1.0"); !ok {
+		t.Error("server info must be readable with a role in any project")
+	}
+	if _, ok, _ := req("GET", "/1.0/projects/web"); !ok {
+		t.Error("can't read own project")
+	}
+	if _, ok, _ := req("GET", "/1.0/projects/db"); ok {
+		t.Error("could read another project")
+	}
+	if _, ok, _ := req("GET", "/1.0/metrics"); ok {
+		t.Error("raw metrics cover every project")
+	}
+	_, ok, f = req("GET", "/1.0/projects?recursion=1")
 	if !ok || f == nil {
 		t.Fatal("expected a filtered project list")
 	}
