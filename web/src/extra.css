@@ -352,3 +352,11 @@ tr.empty{display:table-row;padding:0}
   .tw tbody tr:hover td,.tw tbody tr:active td{background:var(--s2)}
   .tw tbody tr.sel td{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
 }
+/* roles editor */
+.roles{padding:8px 16px}
+.roles-h,.roles-r{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(100px,1fr) minmax(100px,1fr) minmax(110px,1fr) auto;gap:8px;align-items:center}
+.roles-h{font-size:12px;color:var(--ink-3);padding:4px 0}
+.roles-r{padding:6px 0;border-top:1px solid var(--line)}
+.roles-f{display:flex;align-items:center;gap:8px;padding:10px 0 4px;border-top:1px solid var(--line)}
+.roles-f .r{margin-left:auto;display:flex;gap:8px}
+@media (max-width:720px){.roles-h{display:none}.roles-r{grid-template-columns:1fr 1fr}}

@@ -172,7 +172,7 @@ function Tasks() {
   );
 }
 
-type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean };
+type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; admin?: boolean };
 type NavGroup = { key: string; label: string; icon: ReactNode; items: NavItem[] };
 const groups: NavGroup[] = [
   {
@@ -183,7 +183,7 @@ const groups: NavGroup[] = [
       { to: "/networks", label: "Networks", end: true },
       { to: "/networks/acls", label: "ACLs" },
       { to: "/networks/ipam", label: "IPAM" },
-      { to: "/tunnels", label: "Tunnels" },
+      { to: "/tunnels", label: "Tunnels", admin: true },
     ],
   },
   {
@@ -223,6 +223,8 @@ function useOpenGroups() {
 function Group({ g, open, toggle, rail }: { g: NavGroup; open: boolean; toggle: () => void; rail: boolean }) {
   const loc = useLocation();
   const nav = useNavigate();
+  const { admin } = useApp();
+  g = { ...g, items: g.items.filter((i) => admin || !i.admin) };
   const inside = g.items.some((i) => (i.end ? loc.pathname === i.to : loc.pathname.startsWith(i.to)));
   return (
     <>
@@ -345,6 +347,12 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {lbl("Warnings")}
           {warnings.n > 0 && <span className={"count" + (warnings.hot ? " warn" : "")}>{warnings.n}</span>}
         </NavLink>
+        {app.admin && (
+          <NavLink to="/audit" className="ni" title="Audit log">
+            {ic.shield}
+            {lbl("Audit log")}
+          </NavLink>
+        )}
       </nav>
       </div>
       <div className="side-foot">

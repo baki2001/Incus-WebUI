@@ -15,7 +15,7 @@ import { Acls, Ipam, Networks } from "./pages/Networks";
 import { Buckets, Isos, Pools, Volumes } from "./pages/Storage";
 import { Profiles } from "./pages/Profiles";
 import { Projects } from "./pages/Projects";
-import { Operations, Warnings } from "./pages/Activity";
+import { Audit, Operations, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
 import { Tunnels } from "./pages/Tunnels";
@@ -71,6 +71,7 @@ function Root() {
             <Route path="/projects" element={<Projects />} />
             <Route path="/operations" element={<Operations />} />
             <Route path="/warnings" element={<Warnings />} />
+            <Route path="/audit" element={<Audit />} />
             <Route path="/hosts/:server" element={<Host />} />
             <Route path="/settings/:section?" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

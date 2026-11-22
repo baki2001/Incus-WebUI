@@ -31,6 +31,7 @@ type App struct {
 	setupToken string
 	updater    *updater
 	dataDir    string
+	audit      *auditLog
 }
 
 func main() {
@@ -65,6 +66,7 @@ func main() {
 		loginLimit: &limiter{},
 		updater:    &updater{},
 		dataDir:    *dataDir,
+		audit:      &auditLog{dir: filepath.Join(*dataDir, "audit")},
 	}
 
 	// Running on the Incus host itself: use the local socket automatically.
@@ -177,7 +179,8 @@ func envOr(k, d string) string {
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	auth := func(h http.HandlerFunc) http.Handler { return a.requireAuth(h) }
+	auth := func(h http.HandlerFunc) http.Handler { return a.requireAuth(a.audited(h)) }
+	admin := func(h http.HandlerFunc) http.Handler { return auth(a.requireAdmin(h)) }
 
 	mux.HandleFunc("GET /api/ui/auth", a.handleAuthInfo)
 	mux.HandleFunc("POST /api/ui/login", a.handleLogin)
@@ -187,14 +190,14 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/ui/oidc/callback", a.handleOIDCCallback)
 
 	mux.Handle("GET /api/ui/servers", auth(a.handleServers))
-	mux.Handle("POST /api/ui/servers", auth(a.handleServerAdd))
-	mux.Handle("DELETE /api/ui/servers/{name}", auth(a.handleServerDelete))
-	mux.Handle("GET /api/ui/client-cert", auth(a.handleClientCert))
-	mux.Handle("GET /api/ui/users", auth(a.handleUsers))
-	mux.Handle("POST /api/ui/users", auth(a.handleUserCreate))
-	mux.Handle("PUT /api/ui/users/{name}", auth(a.handleUserPut))
-	mux.Handle("DELETE /api/ui/users/{name}", auth(a.handleUserDelete))
-	mux.Handle("PUT /api/ui/theme", auth(a.handleTheme))
+	mux.Handle("POST /api/ui/servers", admin(a.handleServerAdd))
+	mux.Handle("DELETE /api/ui/servers/{name}", admin(a.handleServerDelete))
+	mux.Handle("GET /api/ui/client-cert", admin(a.handleClientCert))
+	mux.Handle("GET /api/ui/users", admin(a.handleUsers))
+	mux.Handle("POST /api/ui/users", admin(a.handleUserCreate))
+	mux.Handle("PUT /api/ui/users/{name}", admin(a.handleUserPut))
+	mux.Handle("DELETE /api/ui/users/{name}", admin(a.handleUserDelete))
+	mux.Handle("PUT /api/ui/theme", admin(a.handleTheme))
 	mux.Handle("GET /api/ui/prefs", auth(a.handlePrefsGet))
 	mux.Handle("PUT /api/ui/prefs", auth(a.handlePrefsPut))
 	mux.Handle("GET /api/ui/version", auth(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"version": version}) }))
@@ -202,11 +205,15 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/image-servers", auth(a.handleImageServers))
 	mux.Handle("GET /api/ui/remote-images", auth(a.handleRemoteImages))
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
-	mux.Handle("POST /api/ui/update", auth(a.handleUpdateApply))
-	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.handleListDir))
-	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.handleRemoveAll))
-	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.handleDownload))
-	a.registerTunnelRoutes(mux, auth)
+	mux.Handle("POST /api/ui/update", admin(a.handleUpdateApply))
+	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleListDir)))
+	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleRemoveAll)))
+	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.requireRole(RoleOperator, a.handleDownload)))
+	mux.Handle("GET /api/ui/me", auth(a.handleMe))
+	mux.Handle("GET /api/ui/access", admin(a.handleAccessGet))
+	mux.Handle("PUT /api/ui/access", admin(a.handleAccessPut))
+	mux.Handle("GET /api/ui/audit", admin(a.handleAudit))
+	a.registerTunnelRoutes(mux, func(h http.HandlerFunc) http.Handler { return admin(h) })
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })
 	mux.Handle("/", spaHandler())

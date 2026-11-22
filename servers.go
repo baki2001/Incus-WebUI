@@ -119,6 +119,17 @@ func (a *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "unknown server")
 		return
 	}
+	allowed, filter := a.checkIncus(w, r, name, rest)
+	if !allowed {
+		return
+	}
+	if filter != nil {
+		// Only lists across projects are filtered; drop compression so the body is plain JSON.
+		r.Header.Del("Accept-Encoding")
+		fw := &filterResponse{ResponseWriter: w}
+		defer fw.finish(filter)
+		w = fw
+	}
 	be, err := a.backends.get(s)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())

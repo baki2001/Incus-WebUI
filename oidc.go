@@ -131,11 +131,29 @@ func (a *App) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		name = idt.Subject
 	}
 	if !oidcAllowed(cfg, email, claims) {
+		a.auditLogin(r, name, "oidc", false)
 		http.Redirect(w, r, "/login?error=sso_denied", http.StatusFound)
 		return
 	}
-	a.setSession(w, r, name, "oidc")
+	a.auditLogin(r, name, "oidc", true)
+	a.setSession(w, r, name, "oidc", oidcGroups(cfg, claims)...)
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func oidcGroups(cfg *OIDCConfig, claims map[string]any) []string {
+	gc := cfg.GroupsClaim
+	if gc == "" {
+		gc = "groups"
+	}
+	var out []string
+	if groups, ok := claims[gc].([]any); ok {
+		for _, g := range groups {
+			if s, ok := g.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // oidcAllowed: with no allow lists, anyone the issuer authenticates may sign in.

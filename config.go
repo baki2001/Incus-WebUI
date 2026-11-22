@@ -41,6 +41,9 @@ type Config struct {
 	ImageServers []ImageServer `yaml:"image_servers,omitempty"`
 	// UIPrefs are per-user interface settings, keyed by user name (see prefs.go).
 	UIPrefs map[string]UIPrefs `yaml:"ui_prefs,omitempty"`
+	// Access says who may do what (see access.go). Installs from before 0.5
+	// get one entry that makes everyone admin, which is how they worked.
+	Access []Access `yaml:"access,omitempty"`
 }
 
 type Theme struct {
@@ -113,6 +116,10 @@ func loadStore(dataDir string) (*Store, error) {
 		s.cfg.Theme.Name = "graphite"
 		changed = true
 	}
+	if len(s.cfg.Access) == 0 {
+		s.cfg.Access = []Access{{Who: "*", Server: "*", Project: "*", Role: "admin"}}
+		changed = true
+	}
 	if syncOIDCGen(&s.cfg) {
 		changed = true
 	}
@@ -151,6 +158,7 @@ func (s *Store) Get() Config {
 	c.Users = append([]User(nil), s.cfg.Users...)
 	c.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
 	c.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
+	c.Access = append([]Access(nil), s.cfg.Access...)
 	return c
 }
 
@@ -162,6 +170,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next.Users = append([]User(nil), s.cfg.Users...)
 	next.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
 	next.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
+	next.Access = append([]Access(nil), s.cfg.Access...)
 	if err := fn(&next); err != nil {
 		return err
 	}
