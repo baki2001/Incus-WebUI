@@ -251,16 +251,14 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	job := a.jobs.start("import", "Import "+f.Name+" as "+p.Name, s, q.Server, q.Project, func(ctx context.Context, set func(float64, string)) (string, error) {
+	job := a.jobs.start("import", "Import "+f.Name+" as "+p.Name, s, q.Server, q.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
 		note, err := a.runImport(ctx, c, f, p, q, set)
 		if err != nil {
-			return "", err
+			return jobResult{}, err
 		}
 		a.removeImport(f.ID)
-		if note != "" {
-			set(1, note)
-		}
-		return "/instances/" + url.PathEscape(q.Server) + "/" + url.PathEscape(p.Name) + "?project=" + url.QueryEscape(q.Project), nil
+		link := "/instances/" + url.PathEscape(q.Server) + "/" + url.PathEscape(p.Name) + "?project=" + url.QueryEscape(q.Project)
+		return jobResult{Link: link, Note: note}, nil
 	})
 	writeJSON(w, map[string]string{"job": job.ID})
 }

@@ -26,6 +26,7 @@ type Job struct {
 	Detail   string    `json:"detail,omitempty"`
 	Error    string    `json:"error,omitempty"`
 	Link     string    `json:"link,omitempty"` // where the result is, e.g. the new instance
+	Note     string    `json:"note,omitempty"` // what the user should know about the result
 	Started  time.Time `json:"started"`
 	Ended    time.Time `json:"ended,omitzero"`
 
@@ -39,8 +40,11 @@ type jobs struct {
 
 const keepFinishedJobs = 50
 
+// jobResult is what a finished job leaves for the user.
+type jobResult struct{ Link, Note string }
+
 // start runs fn in the background. fn reports progress with set.
-func (j *jobs) start(kind, title string, s *Session, server, project string, fn func(ctx context.Context, set func(progress float64, detail string)) (link string, err error)) *Job {
+func (j *jobs) start(kind, title string, s *Session, server, project string, fn func(ctx context.Context, set func(progress float64, detail string)) (jobResult, error)) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{ID: randHex(8), Kind: kind, Title: title, Server: server, Project: project, State: "running", Started: time.Now(), cancel: cancel}
 	if s != nil {
@@ -55,24 +59,24 @@ func (j *jobs) start(kind, title string, s *Session, server, project string, fn 
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("job %s (%s) panicked: %v", job.ID, title, r)
-				j.finish(job, "", fmt.Errorf("internal error: %v", r))
+				j.finish(job, jobResult{}, fmt.Errorf("internal error: %v", r))
 			}
 		}()
-		link, err := fn(ctx, func(p float64, d string) {
+		res, err := fn(ctx, func(p float64, d string) {
 			j.mu.Lock()
 			job.Progress, job.Detail = p, d
 			j.mu.Unlock()
 		})
-		j.finish(job, link, err)
+		j.finish(job, res, err)
 	}()
 	return job
 }
 
-func (j *jobs) finish(job *Job, link string, err error) {
+func (j *jobs) finish(job *Job, res jobResult, err error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	job.Ended = time.Now()
-	job.Link = link
+	job.Link, job.Note, job.Detail = res.Link, res.Note, ""
 	switch {
 	case err == nil:
 		job.State, job.Progress = "done", 1

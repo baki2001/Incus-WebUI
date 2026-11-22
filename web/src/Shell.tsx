@@ -142,7 +142,7 @@ function Fresh() {
   );
 }
 
-export type Job = { id: string; kind: string; title: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; started: string; ended?: string };
+export type Job = { id: string; kind: string; title: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; note?: string; started: string; ended?: string };
 
 // Jobs run in the backend (backups, imports) and outlive the browser tab.
 export function useJobs() {
@@ -203,7 +203,7 @@ function Tasks() {
                 </>
               ) : (
                 <small className={j.state === "failed" ? "bad" : undefined}>
-                  {j.state === "done" ? "Done" : j.state === "cancelled" ? "Cancelled" : j.error}
+                  {j.state === "done" ? j.note || "Done" : j.state === "cancelled" ? "Cancelled" : j.error}
                   {j.link && j.state === "done" && (
                     <Link className="lnk" to={j.link} onClick={() => setOpen(false)}>
                       Open
