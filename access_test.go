@@ -227,6 +227,8 @@ func TestBodyProjects(t *testing.T) {
 		{"/1.0/instances/vm1/files", `{"project":"db"}`, nil, false},
 		{"/1.0/instances/vm1/files", "\n  #!/bin/sh\n", nil, false},
 		{"/1.0/images", "  \x00binary", nil, false},
+		{"/1.0/instances/vm1", strings.Repeat(" ", 5000) + `{"project":"db"}`, nil, true},
+		{"/1.0/instances/files", `{"name":"files","project":"db"}`, []string{"db"}, false},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("POST", c.path, strings.NewReader(c.body))

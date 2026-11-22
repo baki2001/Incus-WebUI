@@ -229,7 +229,7 @@ func bodyProjects(r *http.Request) ([]string, error) {
 	// Incus reads JSON whatever the Content-Type says. Uploads (images,
 	// backups, files) never start with "{", so those are left unread.
 	// File contents pushed to an instance are data, not a request.
-	if r.Body == nil || r.Body == http.NoBody || strings.HasSuffix(r.URL.Path, "/files") {
+	if r.Body == nil || r.Body == http.NoBody || isFilePush(r.URL.Path) {
 		return nil, nil
 	}
 	br := bufio.NewReader(r.Body)
@@ -241,9 +241,12 @@ func bodyProjects(r *http.Request) ([]string, error) {
 	// Look past leading whitespace without consuming it, so the body
 	// reaches Incus byte for byte.
 	for i := 0; ; i++ {
+		if i >= 4096 {
+			return nil, errors.New("bad request body") // only whitespace so far
+		}
 		c, err := br.Peek(i + 1)
-		if err != nil || i >= 4096 {
-			return nil, nil // empty, unreadable or not JSON: Incus gets the same
+		if err != nil {
+			return nil, nil // empty or unreadable: Incus gets the same
 		}
 		ch := c[i]
 		if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
@@ -280,6 +283,13 @@ func bodyProjects(r *http.Request) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// isFilePush reports whether path is /1.0/instances/<name>/files.
+func isFilePush(path string) bool {
+	_, rest, ok := strings.Cut(path, "/1.0/")
+	seg := strings.Split(rest, "/")
+	return ok && len(seg) == 3 && seg[0] == "instances" && seg[2] == "files"
 }
 
 // roleAnywhere is the highest role the session has in any project of a server.
