@@ -44,6 +44,8 @@ type Config struct {
 	// Access says who may do what (see access.go). Installs from before 0.5
 	// get one entry that makes everyone admin, which is how they worked.
 	Access []Access `yaml:"access,omitempty"`
+	// Backups are the backup targets and schedules (see backup.go).
+	Backups Backups `yaml:"backups,omitempty"`
 }
 
 type Theme struct {
@@ -159,6 +161,8 @@ func (s *Store) Get() Config {
 	c.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
 	c.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	c.Access = append([]Access(nil), s.cfg.Access...)
+	c.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
+	c.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
 	return c
 }
 
@@ -171,6 +175,8 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next.Servers = append([]ServerConfig(nil), s.cfg.Servers...)
 	next.Revoked = append([]RevokedSession(nil), s.cfg.Revoked...)
 	next.Access = append([]Access(nil), s.cfg.Access...)
+	next.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
+	next.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
 	if err := fn(&next); err != nil {
 		return err
 	}

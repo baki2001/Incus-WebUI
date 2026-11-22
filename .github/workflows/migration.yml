@@ -1,13 +1,14 @@
-name: Migration
-# Imports Proxmox backups into a real Incus and boots them. The VM backups are
+name: Incus integration
+# Backs up and restores instances on a real Incus, against a directory and
+# an S3 server. Imports Proxmox backups into a real Incus and boots them. The VM backups are
 # made with Proxmox's own vma tool, so the reader is checked against the real
 # format and not only against our test writer.
 on:
   push:
     branches: [main, "claude/**"]
-    paths: ["internal/**", "migrate*.go", ".github/workflows/migration.yml"]
+    paths: ["internal/**", "migrate*.go", "backup*.go", "s3.go", "tunnels.go", ".github/workflows/migration.yml"]
   pull_request:
-    paths: ["internal/**", "migrate*.go", ".github/workflows/migration.yml"]
+    paths: ["internal/**", "migrate*.go", "backup*.go", "s3.go", "tunnels.go", ".github/workflows/migration.yml"]
   workflow_dispatch:
 
 jobs:
@@ -92,3 +93,10 @@ jobs:
         run: |
           sudo rm /usr/share/OVMF/seabios.bin
           INCUS_WEBUI_IMPORT=/tmp/fx/vzdump-qemu-seabios.vma INCUS_WEBUI_IMPORT_NOTE="boots with UEFI" go test . -run TestImportIncus -v -timeout 15m
+      - name: Backups to a directory and to S3
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=testkey -e MINIO_ROOT_PASSWORD=testsecret123 minio/minio server /data
+          incus launch images:alpine/3.21 bk1
+          for i in $(seq 30); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          INCUS_WEBUI_INCUS=1 INCUS_WEBUI_BACKUP_INST=bk1 INCUS_WEBUI_S3=http://testkey:testsecret123@127.0.0.1:9000/backups \
+            go test . -run 'TestBackupIncus|TestS3Store|TestDirStore' -v -timeout 10m

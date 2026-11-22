@@ -34,6 +34,7 @@ type App struct {
 	audit      *auditLog
 	jobs       jobs
 	metrics    *metricStore
+	sched      scheduler
 }
 
 func main() {
@@ -72,6 +73,8 @@ func main() {
 		metrics:    &metricStore{dir: filepath.Join(*dataDir, "metrics")},
 	}
 	go app.collectMetrics(context.Background())
+	app.sched.load(filepath.Join(*dataDir, "backup-schedules.json"))
+	go app.runSchedules(context.Background())
 
 	// Running on the Incus host itself: use the local socket automatically.
 	if store.Fresh && len(store.Get().Servers) == 0 {
@@ -220,6 +223,16 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/jobs", auth(a.handleJobs))
 	mux.Handle("GET /api/ui/metrics/{server}", auth(a.handleMetrics))
 	mux.Handle("DELETE /api/ui/jobs/{id}", auth(a.handleJobCancel))
+	mux.Handle("GET /api/ui/backup-config", admin(a.handleBackupConfigGet))
+	mux.Handle("PUT /api/ui/backup-config", admin(a.handleBackupConfigPut))
+	mux.Handle("POST /api/ui/backup-targets/test", admin(a.handleBackupTest))
+	mux.Handle("GET /api/ui/backup-targets", auth(a.handleBackupTargets))
+	mux.Handle("POST /api/ui/backup-schedules/{name}/run", admin(a.handleScheduleRun))
+	mux.Handle("GET /api/ui/backups/{server}", auth(a.requireRole(RoleViewer, a.handleBackups)))
+	mux.Handle("POST /api/ui/backups/{server}", auth(a.handleBackupRun))
+	mux.Handle("GET /api/ui/backup/download", auth(a.handleBackupDownload))
+	mux.Handle("DELETE /api/ui/backup", auth(a.handleBackupDelete))
+	mux.Handle("POST /api/ui/backup/restore", auth(a.handleBackupRestore))
 	mux.Handle("GET /api/ui/imports", auth(a.handleImports))
 	mux.Handle("POST /api/ui/imports", auth(a.handleImportUpload))
 	mux.Handle("GET /api/ui/imports/{id}/plan", auth(a.handleImportPlan))
