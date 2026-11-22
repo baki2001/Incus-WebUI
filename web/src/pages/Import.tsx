@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { bytes, friendlyError, memBytes, ui, upload } from "../api";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useManagedNetworks, useNames } from "../data";
-import { Field, Input, Select, Sheet, SheetSec, TglRow } from "../ui";
+import { Field, Input, Seg, Select, Sheet, SheetSec, TglRow } from "../ui";
 
 type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string };
 type Plan = {
@@ -19,8 +19,16 @@ type Plan = {
 
 const nameRe = /^[a-zA-Z][a-zA-Z0-9-]{0,62}$/;
 
-// Import a Proxmox vzdump backup: upload it, check what it becomes, import.
+type Kind = "proxmox" | "compose";
+
+// Import from Proxmox (a vzdump backup) or Docker Compose (a compose file).
 export function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [kind, setKind] = useState<Kind>("proxmox");
+  const head = <Seg value={kind} onChange={setKind} label="Import from" options={[{ v: "proxmox", l: "Proxmox" }, { v: "compose", l: "Docker Compose" }]} />;
+  return kind === "proxmox" ? <ProxmoxSheet open={open} onClose={onClose} head={head} /> : <ComposeSheet open={open} onClose={onClose} head={head} />;
+}
+
+function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => void; head: React.ReactNode }) {
   const app = useApp();
   const servers = useScopedServers().filter((s) => app.can(s.name, "*", "manager"));
   const uploads = useData<Upload[]>(open ? "ui-imports" : null, () => ui("/imports"));
@@ -103,7 +111,8 @@ export function ImportSheet({ open, onClose }: { open: boolean; onClose: () => v
       open={open}
       onClose={onClose}
       dirty={sending != null}
-      title="Import from Proxmox"
+      title="Import"
+      head={head}
       wide
       footer={
         <>
@@ -224,6 +233,193 @@ function PlanView({ p }: { p: Plan }) {
       {p.blockers.length > 0 && (
         <div className="cerr" role="alert">
           This backup can't be imported: {p.blockers.join(" ")}
+        </div>
+      )}
+      {p.warnings.length > 0 && (
+        <ul className="imp-warn">
+          {p.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+// ---------- Docker Compose ----------
+
+type ComposeService = { service: string; name: string; server: string; image: string; config: Record<string, string>; devices: Record<string, Record<string, string>>; depends_on?: string[] };
+type ComposePlan = { stack: string; services: ComposeService[]; volumes: string[]; warnings: string[]; blockers: string[] };
+
+function ComposeSheet({ open, onClose, head }: { open: boolean; onClose: () => void; head: React.ReactNode }) {
+  const app = useApp();
+  const servers = useScopedServers().filter((s) => app.can(s.name, "*", "manager"));
+  const [server, setServer] = useState("");
+  const srv = server || servers[0]?.name || "";
+  const projects = useNames(open ? srv : "", "projects");
+  const [proj, setProj] = useState("");
+  const newProject = proj === "" && app.admin;
+  const project = proj || (app.admin ? "" : (projects.data || []).find((p) => app.can(srv, p, "manager")) || "");
+  const pools = useNames(open ? srv : "", "storage-pools", project || "default");
+  const [pool, setPool] = useState("");
+  const storage = pool || (pools.data?.includes("default") ? "default" : pools.data?.[0]) || "";
+  const [text, setText] = useState("");
+  const [env, setEnv] = useState("");
+  const [stack, setStack] = useState("");
+  const [start, setStart] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const file = useRef<HTMLInputElement>(null);
+
+  // Plan after the typing stops.
+  const body = { server: srv, project, new_project: newProject, compose: text, env, stack, pool: storage, start };
+  const key = JSON.stringify(body);
+  const [planKey, setPlanKey] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setPlanKey(key), 500);
+    return () => clearTimeout(t);
+  }, [key]);
+  const plan = useData<{ plan: ComposePlan; project: string }>(open && text.trim() && srv && planKey ? `compose-plan:${planKey}` : null, () => ui("/compose/plan", { method: "POST", body: JSON.parse(planKey) }));
+  const p = plan.data?.plan;
+  const ok = !!p && p.blockers.length === 0 && planKey === key && !busy && (newProject || !!project);
+
+  useEffect(() => {
+    if (!open) {
+      setText("");
+      setEnv("");
+      setErr("");
+    }
+  }, [open]);
+
+  const submit = async () => {
+    if (!ok) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await ui("/compose/run", { method: "POST", body });
+      invalidate("ui-jobs");
+      app.toast(`Importing stack ${p!.stack}. Follow it under Tasks.`);
+      onClose();
+    } catch (e) {
+      setErr(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const projOpts = [...(app.admin ? [{ v: "", l: `New project ${stack || plan.data?.plan.stack || ""}`.trim() }] : []), ...(projects.data || []).filter((x) => app.can(srv, x, "manager")).map((x) => ({ v: x, l: x }))];
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      dirty={!!text}
+      title="Import"
+      head={head}
+      wide
+      footer={
+        <>
+          <span className="dim l" style={{ fontSize: 12.5 }}>
+            {p ? `${p.services.length} service${p.services.length === 1 ? "" : "s"} into ${plan.data!.project}` : "Paste a compose file first"}
+          </span>
+          <button className="btn btn-s press" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-p press" onClick={submit} disabled={!ok}>
+            {busy ? "Starting…" : "Import"}
+          </button>
+        </>
+      }
+    >
+      {err && (
+        <div className="cerr stick" role="alert">
+          {err}
+        </div>
+      )}
+      <SheetSec
+        title="Compose file"
+        action={
+          <>
+            <input
+              ref={file}
+              type="file"
+              hidden
+              accept=".yml,.yaml"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (f) setText(await f.text());
+                e.target.value = "";
+              }}
+            />
+            <button type="button" className="btn btn-q btn-sm" onClick={() => file.current?.click()}>
+              Open a file
+            </button>
+          </>
+        }
+      >
+        <p className="dim" style={{ margin: 0 }}>
+          Each service becomes an Incus application container that runs the same image. Ports become proxy devices on this server, named volumes become storage volumes. Volume data and host folders don't move: copy them in after the import.
+        </p>
+        <textarea className="yaml box" spellCheck={false} aria-label="Compose file" placeholder={"services:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]"} value={text} onChange={(e) => setText(e.target.value)} />
+        <Field label="Environment variables" hint="The contents of the .env file next to the compose file, if it has one.">
+          <textarea className="yaml box env" spellCheck={false} aria-label="Environment variables" placeholder="DB_PASSWORD=..." value={env} onChange={(e) => setEnv(e.target.value)} />
+        </Field>
+      </SheetSec>
+
+      <SheetSec title="Where">
+        <div className="two">
+          <Field label="Stack name" hint="Names the volumes, and the project when it's new.">
+            <Input value={stack} onChange={setStack} placeholder={p?.stack || "stack"} />
+          </Field>
+          {servers.length > 1 && (
+            <Field label="Server">
+              <Select value={srv} onChange={setServer} options={servers.map((s) => s.name)} />
+            </Field>
+          )}
+          <Field label="Project">
+            <Select value={proj} onChange={setProj} options={projOpts} aria-label="Project" />
+          </Field>
+          <Field label="Storage pool">
+            <Select value={storage} onChange={setPool} options={pools.data || []} />
+          </Field>
+        </div>
+        <TglRow title="Start after the import" on={start} onChange={setStart} />
+      </SheetSec>
+
+      {text.trim() && (
+        <SheetSec title="What it becomes">
+          {plan.error && <p className="bad">{friendlyError(plan.error)}</p>}
+          {!p && !plan.error && <p className="dim">Reading the file…</p>}
+          {p && <ComposeView p={p} />}
+        </SheetSec>
+      )}
+    </Sheet>
+  );
+}
+
+function ComposeView({ p }: { p: ComposePlan }) {
+  return (
+    <>
+      <div className="imp-svcs">
+        {p.services.map((s) => {
+          const ports = Object.values(s.devices)
+            .filter((d) => d.type === "proxy")
+            .map((d) => d.listen.split(":").slice(-1)[0] + (d.listen.startsWith("udp") ? "/udp" : ""));
+          const vols = Object.values(s.devices).filter((d) => d.type === "disk");
+          return (
+            <div key={s.name} className="imp-svc">
+              <div>
+                <b>{s.name}</b> <span className="mono dim">{s.server.replace("https://", "") + "/" + s.image}</span>
+              </div>
+              <div className="dim">
+                {[ports.length ? `ports ${ports.join(", ")}` : "", vols.length ? vols.map((v) => `${v.source} at ${v.path}`).join(", ") : "", s.depends_on?.length ? `after ${s.depends_on.join(", ")}` : ""].filter(Boolean).join(" · ") || "no ports or volumes"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {p.blockers.length > 0 && (
+        <div className="cerr" role="alert">
+          This file can't be imported: {p.blockers.join(" ")}
         </div>
       )}
       {p.warnings.length > 0 && (

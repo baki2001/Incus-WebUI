@@ -291,7 +291,7 @@ export function Instances() {
         <div className="r">
           {app.servers.some((s) => app.can(s.name, "*", "manager")) && (
             <button className="btn btn-s press" onClick={() => patch({ import: "1" })}>
-              Import from Proxmox
+              Import
             </button>
           )}
           <button className="btn btn-p press" onClick={() => patch({ create: "1" })}>
