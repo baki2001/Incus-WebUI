@@ -228,7 +228,8 @@ func incusNeed(method, path string) (Role, Scope) {
 func bodyProjects(r *http.Request) ([]string, error) {
 	// Incus reads JSON whatever the Content-Type says. Uploads (images,
 	// backups, files) never start with "{", so those are left unread.
-	if r.Body == nil || r.Body == http.NoBody {
+	// File contents pushed to an instance are data, not a request.
+	if r.Body == nil || r.Body == http.NoBody || strings.HasSuffix(r.URL.Path, "/files") {
 		return nil, nil
 	}
 	br := bufio.NewReader(r.Body)
@@ -237,16 +238,18 @@ func bodyProjects(r *http.Request) ([]string, error) {
 		io.Reader
 		io.Closer
 	}{br, body}
-	for {
-		c, err := br.Peek(1)
-		if err != nil {
-			return nil, nil // empty or unreadable: Incus gets the same
+	// Look past leading whitespace without consuming it, so the body
+	// reaches Incus byte for byte.
+	for i := 0; ; i++ {
+		c, err := br.Peek(i + 1)
+		if err != nil || i >= 4096 {
+			return nil, nil // empty, unreadable or not JSON: Incus gets the same
 		}
-		if c[0] == ' ' || c[0] == '\t' || c[0] == '\r' || c[0] == '\n' {
-			br.ReadByte()
+		ch := c[i]
+		if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
 			continue
 		}
-		if c[0] != '{' {
+		if ch != '{' {
 			return nil, nil
 		}
 		break
@@ -266,7 +269,10 @@ func bodyProjects(r *http.Request) ([]string, error) {
 			Project string `json:"project"`
 		} `json:"source"`
 	}
-	_ = json.Unmarshal(b, &v)
+	// Decode the way Incus does: the first JSON value, ignoring what follows.
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&v); err != nil {
+		return nil, errors.New("bad request body")
+	}
 	var out []string
 	for _, p := range []string{v.Project, v.Source.Project} {
 		if p != "" {

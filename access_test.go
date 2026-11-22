@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -210,5 +212,34 @@ func TestAccessPutKeepsAnAdmin(t *testing.T) {
 	}
 	if c := put(`{"access":[{"who":"user:ann","server":"*","project":"*","role":"admin"},{"who":"user:bob","server":"lab","project":"web","role":"operator"}]}`); c != 204 {
 		t.Errorf("valid list gave %d", c)
+	}
+}
+
+func TestBodyProjects(t *testing.T) {
+	cases := []struct {
+		path, body string
+		want       []string
+		bad        bool
+	}{
+		{"/1.0/instances/vm1", `{"name":"vm1","project":"db"} x`, []string{"db"}, false},
+		{"/1.0/instances", "\n\t {\"source\":{\"project\":\"db\"}}", []string{"db"}, false},
+		{"/1.0/instances", `{"name":`, nil, true},
+		{"/1.0/instances/vm1/files", `{"project":"db"}`, nil, false},
+		{"/1.0/instances/vm1/files", "\n  #!/bin/sh\n", nil, false},
+		{"/1.0/images", "  \x00binary", nil, false},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest("POST", c.path, strings.NewReader(c.body))
+		got, err := bodyProjects(r)
+		if (err != nil) != c.bad || !slices.Equal(got, c.want) {
+			t.Errorf("%s %q: got %v, %v", c.path, c.body, got, err)
+		}
+		if c.bad {
+			continue
+		}
+		rest, _ := io.ReadAll(r.Body)
+		if string(rest) != c.body {
+			t.Errorf("%s %q: body forwarded as %q", c.path, c.body, rest)
+		}
 	}
 }
