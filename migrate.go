@@ -1,0 +1,646 @@
+package main
+
+// Imports from Proxmox: the user uploads a vzdump backup, sees what it turns
+// into, then a job builds an Incus image from it, creates the instance,
+// starts it and waits for an address. A failed import removes what it made.
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/baki2001/incus-webui/internal/proxmox"
+)
+
+// importFile is an uploaded backup waiting to be imported.
+type importFile struct {
+	ID      string    `json:"id"`
+	User    string    `json:"user"`
+	Name    string    `json:"name"` // the file name the user uploaded
+	Kind    string    `json:"kind"` // container | virtual-machine
+	Size    int64     `json:"size"`
+	Created time.Time `json:"created"`
+}
+
+// Uploads nobody imported are removed after a day.
+const importKeep = 24 * time.Hour
+
+var importID = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+func (a *App) importDir() string { return filepath.Join(a.dataDir, "imports") }
+
+func (a *App) importPath(id string) string { return filepath.Join(a.importDir(), id+".bak") }
+
+func (a *App) readImport(id string, s *Session) (*importFile, error) {
+	if !importID.MatchString(id) {
+		return nil, errors.New("no such upload")
+	}
+	b, err := os.ReadFile(filepath.Join(a.importDir(), id+".json"))
+	if err != nil {
+		return nil, errors.New("no such upload")
+	}
+	var f importFile
+	if json.Unmarshal(b, &f) != nil || (f.User != s.User && !a.isAdmin(s)) {
+		return nil, errors.New("no such upload")
+	}
+	return &f, nil
+}
+
+func (a *App) removeImport(id string) {
+	os.Remove(a.importPath(id))
+	os.Remove(filepath.Join(a.importDir(), id+".json"))
+}
+
+// pruneImports removes old uploads and leftovers of a crash.
+func (a *App) pruneImports() {
+	ents, _ := os.ReadDir(a.importDir())
+	for _, e := range ents {
+		info, err := e.Info()
+		if err == nil && time.Since(info.ModTime()) > importKeep {
+			os.RemoveAll(filepath.Join(a.importDir(), e.Name()))
+		}
+	}
+}
+
+// canImport: importing creates instances, which takes the manager role.
+func (a *App) canImport(s *Session) bool {
+	for _, srv := range a.store.Get().Servers {
+		if roleAnywhere(a.store.Get().Access, s, srv.Name) >= RoleManager {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) handleImportUpload(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
+	if !a.canImport(s) {
+		jsonError(w, http.StatusForbidden, "Importing needs the manager role. Ask an admin.")
+		return
+	}
+	a.pruneImports()
+	if err := os.MkdirAll(a.importDir(), 0o700); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	f := importFile{ID: randHex(8), User: s.User, Name: filepath.Base(r.URL.Query().Get("name")), Created: time.Now()}
+	path := a.importPath(f.ID)
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	f.Size, err = io.Copy(out, r.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+		jsonError(w, http.StatusBadRequest, "The upload failed: "+err.Error())
+		return
+	}
+	if f.Kind, err = proxmox.Kind(path); err != nil {
+		os.Remove(path)
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	b, _ := json.Marshal(f)
+	if err := os.WriteFile(filepath.Join(a.importDir(), f.ID+".json"), b, 0o600); err != nil {
+		os.Remove(path)
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, f)
+}
+
+func (a *App) handleImports(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
+	a.pruneImports()
+	out := []importFile{}
+	ents, _ := os.ReadDir(a.importDir())
+	for _, e := range ents {
+		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok {
+			if f, err := a.readImport(id, s); err == nil && f.User == s.User {
+				out = append(out, *f)
+			}
+		}
+	}
+	writeJSON(w, out)
+}
+
+func (a *App) handleImportDelete(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
+	f, err := a.readImport(r.PathValue("id"), s)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	a.removeImport(f.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// importReq is what the user picked in the wizard.
+type importReq struct {
+	Server  string `json:"server"`
+	Project string `json:"project"`
+	Name    string `json:"name"`
+	Network string `json:"network"`
+	Pool    string `json:"pool"`
+	KeepMAC bool   `json:"keep_mac"`
+	Start   bool   `json:"start"`
+}
+
+func (q importReq) options() proxmox.Options {
+	return proxmox.Options{Name: q.Name, Network: q.Network, Pool: q.Pool, KeepMAC: q.KeepMAC}
+}
+
+// importPlan reads the backup's config and maps it to Incus.
+func importPlan(path, kind string, o proxmox.Options) (*proxmox.Plan, error) {
+	if kind == "container" {
+		c, err := proxmox.ContainerConf(path)
+		if err != nil {
+			return nil, err
+		}
+		return proxmox.ContainerPlan(c, o), nil
+	}
+	c, devs, err := proxmox.VMConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return proxmox.VMPlan(c, devs, o), nil
+}
+
+func (a *App) handleImportPlan(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
+	f, err := a.readImport(r.PathValue("id"), s)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	q := r.URL.Query()
+	o := proxmox.Options{Name: q.Get("name"), Network: q.Get("network"), Pool: q.Get("pool"), KeepMAC: q.Get("keep_mac") == "true"}
+	p, err := importPlan(a.importPath(f.ID), f.Kind, o)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, p)
+}
+
+func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
+	f, err := a.readImport(r.PathValue("id"), s)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var q importReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&q); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if q.Project == "" {
+		q.Project = "default"
+	}
+	if roleFor(a.store.Get().Access, s, q.Server, q.Project) < RoleManager {
+		jsonError(w, http.StatusForbidden, deniedMsg(RoleManager, q.Project))
+		return
+	}
+	if q.Network == "" || q.Pool == "" {
+		jsonError(w, http.StatusBadRequest, "Pick a network and a storage pool.")
+		return
+	}
+	c, err := a.conn(q.Server)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p, err := importPlan(a.importPath(f.ID), f.Kind, q.options())
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(p.Blockers) > 0 {
+		jsonError(w, http.StatusBadRequest, strings.Join(p.Blockers, " "))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if _, err := c.call(ctx, "GET", "/1.0/instances/"+url.PathEscape(p.Name), q.Project, nil); err == nil {
+		jsonError(w, http.StatusConflict, fmt.Sprintf("An instance named %s already exists. Pick another name.", p.Name))
+		return
+	}
+	for _, d := range p.ExtraDisks {
+		if _, err := c.call(ctx, "GET", volPath(q.Pool, extraVolName(p.Name, d.Key)), q.Project, nil); err == nil {
+			jsonError(w, http.StatusConflict, fmt.Sprintf("A volume named %s already exists in pool %s.", extraVolName(p.Name, d.Key), q.Pool))
+			return
+		}
+	}
+	job := a.jobs.start("import", "Import "+f.Name+" as "+p.Name, s, q.Server, q.Project, func(ctx context.Context, set func(float64, string)) (string, error) {
+		note, err := a.runImport(ctx, c, f, p, q, set)
+		if err != nil {
+			return "", err
+		}
+		a.removeImport(f.ID)
+		if note != "" {
+			set(1, note)
+		}
+		return "/instances/" + url.PathEscape(q.Server) + "/" + url.PathEscape(p.Name) + "?project=" + url.QueryEscape(q.Project), nil
+	})
+	writeJSON(w, map[string]string{"job": job.ID})
+}
+
+func volPath(pool, name string) string {
+	return "/1.0/storage-pools/" + url.PathEscape(pool) + "/volumes/custom/" + url.PathEscape(name)
+}
+
+func extraVolName(inst, key string) string { return inst + "-" + key }
+
+// runImport does the import. On failure it removes the instance and volumes
+// it created. It returns a note for the user when the import worked but
+// something needs a look.
+func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *proxmox.Plan, q importReq, set func(float64, string)) (note string, err error) {
+	tmp, err := os.MkdirTemp(a.importDir(), f.ID+"-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	src := a.importPath(f.ID)
+
+	// Cleanup runs on failure, including cancel, with a context of its own.
+	var undo []func(context.Context)
+	defer func() {
+		if err == nil {
+			return
+		}
+		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i](cctx)
+		}
+	}()
+
+	var fp string
+	var heads map[string][]byte
+	if p.Type == "container" {
+		set(0.02, "Building the image")
+		conf, err := proxmox.ContainerConf(src)
+		if err != nil {
+			return "", err
+		}
+		img := filepath.Join(tmp, "image.tar")
+		out, err := os.Create(img)
+		if err != nil {
+			return "", err
+		}
+		err = proxmox.ContainerImage(out, src, p, proxmox.Arch(conf.Get("arch")))
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return "", err
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		fp, err = uploadImage(ctx, c, q.Project, []string{img}, nil, func(x float64) { set(0.4+0.3*x, "Sending the image to Incus") })
+		if err != nil {
+			return "", err
+		}
+	} else {
+		set(0.01, "Reading the disks")
+		boot, err := os.Create(filepath.Join(tmp, "rootfs.img"))
+		if err != nil {
+			return "", err
+		}
+		defer boot.Close()
+		raw := map[string]io.WriterAt{}
+		for _, d := range p.ExtraDisks {
+			rf, err := os.Create(filepath.Join(tmp, d.Key+".img"))
+			if err != nil {
+				return "", err
+			}
+			defer rf.Close()
+			if err := rf.Truncate(d.Size); err != nil {
+				return "", err
+			}
+			raw[d.Device] = rf
+		}
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				// VMDisksRaw has no context; closing its input stops it.
+				boot.Close()
+			case <-done:
+			}
+		}()
+		heads, err = proxmox.VMDisksRaw(src, map[string]io.WriterAt{p.BootDisk: boot}, raw, func(d, t int64) {
+			set(0.01+0.49*float64(d)/float64(max(t, 1)), "Reading the disks")
+		})
+		close(done)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if err != nil {
+			return "", err
+		}
+		meta, err := proxmox.VMMetadata(p)
+		if err != nil {
+			return "", err
+		}
+		metaPath := filepath.Join(tmp, "metadata.tar")
+		if err := os.WriteFile(metaPath, meta, 0o600); err != nil {
+			return "", err
+		}
+		fp, err = uploadImage(ctx, c, q.Project, []string{metaPath, boot.Name()}, []string{"metadata", "rootfs.img"}, func(x float64) { set(0.5+0.25*x, "Sending the image to Incus") })
+		if err != nil {
+			return "", err
+		}
+		for i, d := range p.ExtraDisks {
+			name := extraVolName(p.Name, d.Key)
+			set(0.75+0.1*float64(i)/float64(len(p.ExtraDisks)), "Sending disk "+d.Key)
+			if err := importVolume(ctx, c, q.Project, q.Pool, name, filepath.Join(tmp, d.Key+".img")); err != nil {
+				return "", fmt.Errorf("disk %s: %w", d.Key, err)
+			}
+			undo = append(undo, func(ctx context.Context) {
+				_, _ = c.call(ctx, "DELETE", volPath(q.Pool, name), q.Project, nil)
+			})
+			p.Devices[d.Key] = map[string]string{"type": "disk", "pool": q.Pool, "source": name}
+		}
+	}
+	// The image is only a vehicle for the instance.
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if _, err := c.call(cctx, "DELETE", "/1.0/images/"+fp, q.Project, nil); err != nil {
+			log.Printf("import: delete image %s: %v", fp, err)
+		}
+	}()
+
+	set(0.85, "Creating the instance")
+	body := map[string]any{
+		"name": p.Name, "type": p.Type, "config": p.Config, "devices": p.Devices,
+		"description": "Imported from Proxmox (" + f.Name + ")",
+		"source":      map[string]string{"type": "image", "fingerprint": fp},
+	}
+	if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {
+		return "", fmt.Errorf("create the instance: %w", err)
+	}
+	inst := "/1.0/instances/" + url.PathEscape(p.Name)
+	undo = append(undo, func(ctx context.Context) {
+		_, _ = c.call(ctx, "PUT", inst+"/state", q.Project, map[string]any{"action": "stop", "force": true})
+		_, _ = c.call(ctx, "DELETE", inst, q.Project, nil)
+	})
+	if !q.Start {
+		return "", nil
+	}
+
+	set(0.9, "Starting")
+	start := func() error {
+		_, err := c.call(ctx, "PUT", inst+"/state", q.Project, map[string]any{"action": "start"})
+		return err
+	}
+	err = start()
+	if err != nil && p.Config["security.csm"] == "true" && biosMissing(err) {
+		// Legacy BIOS needs SeaBIOS, which not every Incus package ships. A
+		// disk with an EFI system partition boots with UEFI just as well.
+		if !proxmox.HasESP(heads[p.BootDisk]) {
+			return "", errors.New("this VM boots with legacy BIOS, and the Incus server has no SeaBIOS firmware for it. Install SeaBIOS on the Incus server (Incus looks for seabios.bin next to its UEFI firmware), then import again")
+		}
+		if _, perr := c.call(ctx, "PATCH", inst, q.Project, map[string]any{"config": map[string]string{"security.csm": "false"}}); perr != nil {
+			return "", perr
+		}
+		note = "The Incus server has no SeaBIOS, so the VM boots with UEFI. "
+		err = start()
+	}
+	if err != nil {
+		return "", fmt.Errorf("start: %w", err)
+	}
+
+	set(0.95, "Waiting for a network address")
+	if addr := waitAddress(ctx, c, q.Project, p.Name, 3*time.Minute); addr != "" {
+		return strings.TrimSpace(note + "Running at " + addr + "."), nil
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	// No rollback: the guest may use a static address on another network.
+	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address or a network interface name that changed.", nil
+}
+
+func biosMissing(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "seabios") || strings.Contains(m, "csm") || strings.Contains(m, "firmware")
+}
+
+// uploadImage sends a unified image (one file) or a split image (metadata
+// plus rootfs) and returns its fingerprint.
+func uploadImage(ctx context.Context, c *incusConn, project string, files, fields []string, progress func(float64)) (string, error) {
+	var total int64
+	for _, p := range files {
+		st, err := os.Stat(p)
+		if err != nil {
+			return "", err
+		}
+		total += st.Size()
+	}
+	var sent atomic.Int64
+	count := func(r io.Reader) io.Reader {
+		return &countReader{r: r, n: &sent, total: total, progress: progress}
+	}
+	hdr := map[string]string{}
+	var body io.Reader
+	if len(files) == 1 {
+		f, err := os.Open(files[0])
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		body = count(f)
+		hdr["Content-Type"] = "application/octet-stream"
+		hdr["Content-Length"] = strconv.FormatInt(total, 10)
+	} else {
+		pr, pw := io.Pipe()
+		mw := multipart.NewWriter(pw)
+		go func() {
+			for i, p := range files {
+				part, err := mw.CreateFormFile(fields[i], fields[i])
+				if err == nil {
+					var f *os.File
+					if f, err = os.Open(p); err == nil {
+						_, err = io.Copy(part, f)
+						f.Close()
+					}
+				}
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+			}
+			pw.CloseWithError(mw.Close())
+		}()
+		defer pr.Close()
+		body = count(pr)
+		hdr["Content-Type"] = mw.FormDataContentType()
+	}
+	meta, err := c.send(ctx, "POST", "/1.0/images", project, body, hdr)
+	if err != nil {
+		return "", fmt.Errorf("Incus refused the image: %w", err)
+	}
+	var m struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if json.Unmarshal(meta, &m) != nil || m.Fingerprint == "" {
+		return "", errors.New("incus did not return the image's fingerprint")
+	}
+	return m.Fingerprint, nil
+}
+
+type countReader struct {
+	r        io.Reader
+	n        *atomic.Int64
+	total    int64
+	progress func(float64)
+	last     time.Time
+}
+
+func (c *countReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	done := c.n.Add(int64(n))
+	if time.Since(c.last) > time.Second {
+		c.last = time.Now()
+		c.progress(min(1, float64(done)/float64(max(c.total, 1))))
+	}
+	return n, err
+}
+
+// importVolume creates a custom block volume from a raw disk, sent as an
+// Incus volume backup: a tarball of backup/index.yaml and backup/volume.img.
+// It is gzipped on the fly, which keeps the empty parts of the disk small.
+func importVolume(ctx context.Context, c *incusConn, project, pool, name, img string) error {
+	f, err := os.Open(img)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(volumeBackup(pw, pool, name, f, st.Size())) }()
+	defer pr.Close()
+	_, err = c.send(ctx, "POST", "/1.0/storage-pools/"+url.PathEscape(pool)+"/volumes/custom", project, pr,
+		map[string]string{"Content-Type": "application/octet-stream", "X-Incus-name": name})
+	return err
+}
+
+// waitAddress waits for a global address: from the instance state, which
+// needs the guest agent, or else from the DHCP leases of its network.
+func waitAddress(ctx context.Context, c *incusConn, project, name string, d time.Duration) string {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	inst := "/1.0/instances/" + url.PathEscape(name)
+	for {
+		var st struct {
+			Network map[string]struct {
+				Addresses []struct {
+					Family, Address, Scope string
+				}
+			}
+		}
+		if b, err := c.call(ctx, "GET", inst+"/state", project, nil); err == nil && json.Unmarshal(b, &st) == nil {
+			for nic, n := range st.Network {
+				if nic == "lo" {
+					continue
+				}
+				for _, ad := range n.Addresses {
+					if ad.Scope == "global" && ad.Family == "inet" {
+						return ad.Address
+					}
+				}
+			}
+		}
+		if addr := leaseAddress(ctx, c, project, inst); addr != "" {
+			return addr
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func leaseAddress(ctx context.Context, c *incusConn, project, inst string) string {
+	b, err := c.call(ctx, "GET", inst, project, nil)
+	if err != nil {
+		return ""
+	}
+	var in struct {
+		Config         map[string]string            `json:"config"`
+		ExpandedDevice map[string]map[string]string `json:"expanded_devices"`
+	}
+	if json.Unmarshal(b, &in) != nil {
+		return ""
+	}
+	for dev, d := range in.ExpandedDevice {
+		if d["type"] != "nic" || d["network"] == "" {
+			continue
+		}
+		mac := strings.ToLower(in.Config["volatile."+dev+".hwaddr"])
+		lb, err := c.call(ctx, "GET", "/1.0/networks/"+url.PathEscape(d["network"])+"/leases", project, nil)
+		if err != nil || mac == "" {
+			continue
+		}
+		var leases []struct {
+			Hwaddr, Address, Type string
+		}
+		_ = json.Unmarshal(lb, &leases)
+		for _, l := range leases {
+			if strings.ToLower(l.Hwaddr) == mac && l.Type == "dynamic" {
+				return l.Address
+			}
+		}
+	}
+	return ""
+}
+
+func volumeBackup(w io.Writer, pool, name string, img io.Reader, size int64) error {
+	index := fmt.Sprintf("name: %s\npool: %s\noptimized: false\noptimized_header: false\ntype: custom\nconfig:\n  volume:\n    name: %s\n    type: custom\n    content_type: block\n    config:\n      size: \"%d\"\n", name, pool, name, size)
+	zw, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	tw := tar.NewWriter(zw)
+	now := time.Now()
+	if err := tw.WriteHeader(&tar.Header{Name: "backup/index.yaml", Mode: 0o644, Size: int64(len(index)), ModTime: now, Typeflag: tar.TypeReg}); err != nil {
+		return err
+	}
+	if _, err := tw.Write([]byte(index)); err != nil {
+		return err
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "backup/volume.img", Mode: 0o600, Size: size, ModTime: now, Typeflag: tar.TypeReg}); err != nil {
+		return err
+	}
+	if _, err := io.Copy(tw, img); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return zw.Close()
+}

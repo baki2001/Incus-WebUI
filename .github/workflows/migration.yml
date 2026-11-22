@@ -41,7 +41,8 @@ jobs:
         run: |
           cd /tmp/fx
           for fw in seabios ovmf; do
-            extra=""; [ $fw = ovmf ] && extra="bios: ovmf\nefidisk0: local-lvm:vm-100-disk-1,efitype=4m,size=4M\n"
+            # The UEFI VM also gets a data disk, which becomes a custom volume.
+            extra=""; [ $fw = ovmf ] && extra="bios: ovmf\nefidisk0: local-lvm:vm-100-disk-1,efitype=4m,size=4M\nscsi1: local-lvm:vm-100-disk-2,size=64M\n"
             printf "boot: order=scsi0;net0\ncores: 2\nmemory: 2048\nname: ubuntu-$fw\nnet0: virtio=BC:24:11:12:34:5$([ $fw = ovmf ] && echo 7 || echo 6),bridge=vmbr0\nostype: l26\nscsi0: local-lvm:vm-100-disk-0,size=4G\nscsihw: virtio-scsi-single\n$extra" > qemu-server-$fw.conf
           done
           docker run --rm -v /tmp/fx:/fx debian:bookworm bash -ec '
@@ -51,12 +52,14 @@ jobs:
             apt-get update -qq && apt-get install -y -qq --no-install-recommends pve-qemu-kvm zstd >/dev/null
             cd /fx
             truncate -s 4M efi.raw
+            truncate -s 64M data.raw
+            printf "data disk" | dd of=data.raw bs=1M seek=3 conv=notrunc status=none
             # vzdump stores the config as qemu-server.conf, so name it that way.
             mkdir -p seabios ovmf
             cp qemu-server-seabios.conf seabios/qemu-server.conf
             cp qemu-server-ovmf.conf ovmf/qemu-server.conf
             vma create vzdump-qemu-seabios.vma -c seabios/qemu-server.conf drive-scsi0=disk.raw
-            vma create vzdump-qemu-ovmf.vma -c ovmf/qemu-server.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw
+            vma create vzdump-qemu-ovmf.vma -c ovmf/qemu-server.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw drive-scsi1=data.raw
             vma config vzdump-qemu-seabios.vma
             zstd -q -T0 vzdump-qemu-ovmf.vma
             vma verify vzdump-qemu-seabios.vma
@@ -68,10 +71,21 @@ jobs:
           python3 "$GITHUB_WORKSPACE/.github/scripts/mkct.py" ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz vzdump-lxc.tar 100000
           zstd -q -T0 --rm vzdump-lxc.tar
       - name: Unit tests
-        run: go test ./internal/...
+        run: INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/...
       - name: Import and boot the BIOS VM
         run: INCUS_WEBUI_PVE_VM=/tmp/fx/vzdump-qemu-seabios.vma INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/proxmox -run TestIncusVM -v -timeout 15m
       - name: Import and boot the UEFI VM
         run: INCUS_WEBUI_PVE_VM=/tmp/fx/vzdump-qemu-ovmf.vma.zst INCUS_WEBUI_PVE_VM_RAW=/tmp/fx/disk.raw go test ./internal/proxmox -run TestIncusVM -v -timeout 15m
       - name: Import and start the container
         run: INCUS_WEBUI_PVE_CT=/tmp/fx/vzdump-lxc.tar.zst go test ./internal/proxmox -run TestIncusContainer -v -timeout 10m
+      - name: Volume backups for data disks
+        run: INCUS_WEBUI_INCUS=1 go test . -run TestVolumeBackupIncus -v
+      - name: Import with the UI's importer (BIOS VM, UEFI VM with a data disk, container)
+        run: |
+          for f in vzdump-qemu-seabios.vma vzdump-qemu-ovmf.vma.zst vzdump-lxc.tar.zst; do
+            INCUS_WEBUI_IMPORT=/tmp/fx/$f go test . -run TestImportIncus -v -timeout 15m
+          done
+      - name: A BIOS VM on an Incus without SeaBIOS boots with UEFI
+        run: |
+          sudo rm /usr/share/OVMF/seabios.bin
+          INCUS_WEBUI_IMPORT=/tmp/fx/vzdump-qemu-seabios.vma INCUS_WEBUI_IMPORT_NOTE="boots with UEFI" go test . -run TestImportIncus -v -timeout 15m

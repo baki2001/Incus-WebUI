@@ -195,6 +195,7 @@ func VMPlan(c *Conf, devices map[string]int64, o Options) *Plan {
 	windows := strings.HasPrefix(p.OS, "win")
 	if c.Get("bios") == "ovmf" {
 		efi := Opts(c.Get("efidisk0"))
+		p.Warnings = append(p.Warnings, "The UEFI boot entries are not in the backup, so the VM boots the disk's default loader (EFI/BOOT/BOOTX64.EFI). Most Linux and Windows installs have one.")
 		if efi["pre-enrolled-keys"] == "1" {
 			p.Config["security.secureboot"] = "true"
 		} else {

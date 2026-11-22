@@ -605,6 +605,10 @@ func (c *incusConn) do(ctx context.Context, method, p, project string, body io.R
 		return nil, err
 	}
 	for k, v := range hdr {
+		if k == "Content-Length" {
+			req.ContentLength, _ = strconv.ParseInt(v, 10, 64)
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	return c.be.transport.RoundTrip(req)

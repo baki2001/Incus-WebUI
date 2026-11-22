@@ -3,7 +3,9 @@ package proxmox
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -296,22 +298,38 @@ type Progress func(done, total int64)
 // VMDisks reads a VMA backup once and writes the wanted disks as qcow2
 // images. out maps VMA device names to the files to write.
 func VMDisks(path string, out map[string]io.WriterAt, progress Progress) error {
+	_, err := VMDisksRaw(path, out, nil, progress)
+	return err
+}
+
+// VMDisksRaw is VMDisks with a second set of disks written raw, at their
+// byte offsets. Zero clusters are skipped, so the file should start empty
+// (sparse) and be truncated to the disk's size by the caller. It returns the
+// first 64 KiB of each written disk, which holds the partition table.
+func VMDisksRaw(path string, out, raw map[string]io.WriterAt, progress Progress) (map[string][]byte, error) {
 	r, err := Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer r.Close()
 	v, err := vma.NewReader(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	head := map[string][]byte{}
 	writers := map[int]*qcow2.Writer{}
+	raws := map[int]io.WriterAt{}
+	sizes := map[int]int64{}
 	var total int64
 	for id, d := range v.Devices {
+		sizes[id] = d.Size
+		if w, ok := raw[d.Name]; ok {
+			raws[id] = w
+		}
 		if w, ok := out[d.Name]; ok {
 			q, err := qcow2.NewWriter(w, d.Size)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			writers[id] = q
 		}
@@ -319,8 +337,8 @@ func VMDisks(path string, out map[string]io.WriterAt, progress Progress) error {
 			total += d.Clusters() * vma.ClusterSize
 		}
 	}
-	if len(writers) != len(out) {
-		return errors.New("a disk to import is not in the backup")
+	if len(writers) != len(out) || len(raws) != len(raw) {
+		return nil, errors.New("a disk to import is not in the backup")
 	}
 	var done int64
 	for {
@@ -329,27 +347,74 @@ func VMDisks(path string, out map[string]io.WriterAt, progress Progress) error {
 			break
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		done += vma.ClusterSize
 		if progress != nil && done%(256*vma.ClusterSize) == 0 {
 			progress(done, total)
 		}
+		if c.Zero {
+			continue
+		}
+		if c.Num == 0 {
+			head[v.Devices[c.Device].Name] = append([]byte(nil), c.Data...)
+		}
+		if w, ok := raws[c.Device]; ok {
+			off := int64(c.Num) * vma.ClusterSize
+			data := c.Data
+			if rest := sizes[c.Device] - off; rest < int64(len(data)) {
+				data = data[:max(rest, 0)]
+			}
+			if _, err := w.WriteAt(data, off); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		q, ok := writers[c.Device]
-		if !ok || c.Zero {
+		if !ok {
 			continue
 		}
 		if err := q.WriteCluster(c.Num, c.Data); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, q := range writers {
 		if err := q.Close(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if progress != nil {
 		progress(total, total)
 	}
-	return nil
+	return head, nil
 }
+
+// HasESP reports whether a disk's first 64 KiB hold a GPT with an EFI
+// system partition, so the guest can boot with UEFI.
+func HasESP(head []byte) bool {
+	for _, sector := range []int{512, 4096} {
+		if len(head) < 2*sector || string(head[sector:sector+8]) != "EFI PART" {
+			continue
+		}
+		h := head[sector:]
+		lba := int(binary.LittleEndian.Uint64(h[72:]))
+		n := int(binary.LittleEndian.Uint32(h[80:]))
+		size := int(binary.LittleEndian.Uint32(h[84:]))
+		if size < 128 || n > 1024 {
+			return false
+		}
+		for i := 0; i < n; i++ {
+			off := lba*sector + i*size
+			if off+16 > len(head) {
+				break
+			}
+			if bytes.Equal(head[off:off+16], espGUID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// espGUID is C12A7328-F81F-11D2-BA4B-00A0C93EC93B in GPT's mixed-endian form.
+var espGUID = []byte{0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b}
