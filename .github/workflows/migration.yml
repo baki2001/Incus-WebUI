@@ -79,7 +79,10 @@ jobs:
       - name: Import and start the container
         run: INCUS_WEBUI_PVE_CT=/tmp/fx/vzdump-lxc.tar.zst go test ./internal/proxmox -run TestIncusContainer -v -timeout 10m
       - name: Volume backups for data disks
-        run: INCUS_WEBUI_INCUS=1 go test . -run TestVolumeBackupIncus -v
+        # The UI is embedded from web/dist; these tests don't need a real build.
+        run: |
+          mkdir -p web/dist && touch web/dist/index.html
+          INCUS_WEBUI_INCUS=1 go test . -run TestVolumeBackupIncus -v
       - name: Import with the UI's importer (BIOS VM, UEFI VM with a data disk, container)
         run: |
           for f in vzdump-qemu-seabios.vma vzdump-qemu-ovmf.vma.zst vzdump-lxc.tar.zst; do
