@@ -13,6 +13,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
+COPY internal/ ./internal/
 COPY --from=web /src/web/dist ./web/dist
 ARG VERSION=dev
 ARG TARGETOS TARGETARCH
