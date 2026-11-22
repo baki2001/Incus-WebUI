@@ -142,28 +142,75 @@ function Fresh() {
   );
 }
 
+export type Job = { id: string; kind: string; title: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; started: string; ended?: string };
+
+// Jobs run in the backend (backups, imports) and outlive the browser tab.
+export function useJobs() {
+  const [fast, setFast] = useState(false);
+  const q = useData<Job[]>("ui-jobs", () => ui("/jobs"), fast ? 2000 : 15000);
+  const running = (q.data || []).some((j) => j.state === "running");
+  useEffect(() => setFast(running), [running]);
+  return q;
+}
+
 function Tasks() {
   const { tasks } = useApp();
+  const jobs = useJobs().data || [];
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
-  if (!tasks.length) return null;
+  const recent = jobs.filter((j) => j.state === "running" || (j.ended && Date.now() - Date.parse(j.ended) < 10 * 60e3));
+  const busy = tasks.length + recent.filter((j) => j.state === "running").length;
+  if (!tasks.length && !recent.length) return null;
+  const cancel = async (j: Job) => {
+    await ui(`/jobs/${j.id}`, { method: "DELETE" }).catch(() => {});
+    invalidate("ui-jobs");
+  };
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button className="opsbtn press" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <svg className="ring spin" viewBox="0 0 16 16">
-          <circle className="t" cx="8" cy="8" r="6" />
-          <circle className="v" cx="8" cy="8" r="6" strokeDasharray="37.7" strokeDashoffset="26" />
-        </svg>
-        {tasks.length} task{tasks.length > 1 ? "s" : ""}
+        {busy > 0 && (
+          <svg className="ring spin" viewBox="0 0 16 16">
+            <circle className="t" cx="8" cy="8" r="6" />
+            <circle className="v" cx="8" cy="8" r="6" strokeDasharray="37.7" strokeDashoffset="26" />
+          </svg>
+        )}
+        {busy > 0 ? `${busy} task${busy > 1 ? "s" : ""}` : "Tasks"}
       </button>
       {open && (
         <div className="tray">
-          <h3>Running</h3>
+          {busy > 0 && <h3>Running</h3>}
           {tasks.map((t) => (
             <div className="op" key={t.id}>
               <span>{t.label}</span>
               <small>{t.detail || "working"}</small>
+            </div>
+          ))}
+          {recent.map((j) => (
+            <div className="op" key={j.id}>
+              <span>{j.title}</span>
+              {j.state === "running" ? (
+                <>
+                  <div className="jbar" role="progressbar" aria-valuenow={Math.round(j.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+                    <i style={{ transform: `scaleX(${Math.max(0.02, j.progress)})` }} />
+                  </div>
+                  <small>
+                    {j.detail || "working"}
+                    <button className="lnk" onClick={() => cancel(j)}>
+                      Cancel
+                    </button>
+                  </small>
+                </>
+              ) : (
+                <small className={j.state === "failed" ? "bad" : undefined}>
+                  {j.state === "done" ? "Done" : j.state === "cancelled" ? "Cancelled" : j.error}
+                  {j.link && j.state === "done" && (
+                    <Link className="lnk" to={j.link} onClick={() => setOpen(false)}>
+                      Open
+                    </Link>
+                  )}
+                </small>
+              )}
             </div>
           ))}
         </div>

@@ -360,3 +360,8 @@ tr.empty{display:table-row;padding:0}
 .roles-f{display:flex;align-items:center;gap:8px;padding:10px 0 4px;border-top:1px solid var(--line)}
 .roles-f .r{margin-left:auto;display:flex;gap:8px}
 @media (max-width:720px){.roles-h{display:none}.roles-r{grid-template-columns:1fr 1fr}}
+/* backend jobs in the task tray */
+.tray .op small{display:flex;gap:10px;align-items:baseline}
+.tray .lnk{margin-left:auto;background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:none}
+.jbar{height:4px;border-radius:2px;background:var(--s3);overflow:hidden;margin:6px 0 4px}
+.jbar i{display:block;height:100%;background:var(--accent);transform-origin:left;transition:transform var(--t3) var(--ease)}

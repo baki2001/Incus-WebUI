@@ -32,6 +32,8 @@ type App struct {
 	updater    *updater
 	dataDir    string
 	audit      *auditLog
+	jobs       jobs
+	metrics    *metricStore
 }
 
 func main() {
@@ -67,7 +69,9 @@ func main() {
 		updater:    &updater{},
 		dataDir:    *dataDir,
 		audit:      &auditLog{dir: filepath.Join(*dataDir, "audit")},
+		metrics:    &metricStore{dir: filepath.Join(*dataDir, "metrics")},
 	}
+	go app.collectMetrics(context.Background())
 
 	// Running on the Incus host itself: use the local socket automatically.
 	if store.Fresh && len(store.Get().Servers) == 0 {
@@ -213,6 +217,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/access", admin(a.handleAccessGet))
 	mux.Handle("PUT /api/ui/access", admin(a.handleAccessPut))
 	mux.Handle("GET /api/ui/audit", admin(a.handleAudit))
+	mux.Handle("GET /api/ui/jobs", auth(a.handleJobs))
+	mux.Handle("GET /api/ui/metrics/{server}", auth(a.handleMetrics))
+	mux.Handle("DELETE /api/ui/jobs/{id}", auth(a.handleJobCancel))
 	a.registerTunnelRoutes(mux, func(h http.HandlerFunc) http.Handler { return admin(h) })
 	mux.Handle("/api/s/{server}/{rest...}", auth(a.handleProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { jsonError(w, http.StatusNotFound, "not found") })

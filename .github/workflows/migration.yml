@@ -24,6 +24,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq incus qemu-system-x86 qemu-utils ovmf seabios zstd
           sudo chmod 666 /dev/kvm
+          # Legacy BIOS VMs boot with SeaBIOS. Ubuntu's Incus package looks for it
+          # next to OVMF but the seabios package puts it elsewhere.
+          sudo ln -sf /usr/share/seabios/bios-256k.bin /usr/share/OVMF/seabios.bin
           sudo incus admin init --minimal
           sudo chmod 666 /var/lib/incus/unix.socket
           incus info | grep -E 'server_version|driver:'
