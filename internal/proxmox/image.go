@@ -266,6 +266,17 @@ func VMConfig(path string) (*Conf, map[string]int64, error) {
 	}
 	raw, ok := v.Configs["qemu-server.conf"]
 	if !ok {
+		// vzdump always names it qemu-server.conf; a hand-made archive may not.
+		for name, b := range v.Configs {
+			if strings.HasSuffix(name, ".conf") {
+				if ok {
+					return nil, nil, errors.New("the backup has more than one VM config")
+				}
+				raw, ok = b, true
+			}
+		}
+	}
+	if !ok {
 		return nil, nil, errors.New("the backup has no qemu-server.conf")
 	}
 	c, err := ParseConf(raw)

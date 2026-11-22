@@ -48,8 +48,13 @@ jobs:
             apt-get update -qq && apt-get install -y -qq --no-install-recommends pve-qemu-kvm zstd >/dev/null
             cd /fx
             truncate -s 4M efi.raw
-            vma create vzdump-qemu-seabios.vma -c qemu-server-seabios.conf drive-scsi0=disk.raw
-            vma create vzdump-qemu-ovmf.vma -c qemu-server-ovmf.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw
+            # vzdump stores the config as qemu-server.conf, so name it that way.
+            mkdir -p seabios ovmf
+            cp qemu-server-seabios.conf seabios/qemu-server.conf
+            cp qemu-server-ovmf.conf ovmf/qemu-server.conf
+            vma create vzdump-qemu-seabios.vma -c seabios/qemu-server.conf drive-scsi0=disk.raw
+            vma create vzdump-qemu-ovmf.vma -c ovmf/qemu-server.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw
+            vma config vzdump-qemu-seabios.vma
             zstd -q -T0 vzdump-qemu-ovmf.vma
             vma verify vzdump-qemu-seabios.vma
             chmod 644 /fx/*'
