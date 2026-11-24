@@ -412,6 +412,20 @@ tr.empty{display:table-row;padding:0}
 .bk-card .roles-f { display: flex; align-items: center; gap: 12px; }
 .bk-card .roles-f .r { margin-left: auto; }
 .bk-st { font-size: 12.5px; color: var(--ink-3); }
+.bk-pick > .field { width: 100%; border: 0; cursor: pointer; text-align: left; justify-content: space-between; color: var(--ink); font-size: 13.5px; }
+.bk-pick > .field[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+.bk-pick .fpop { width: 100%; min-width: 240px; }
+.fl .bk-pick label.fopt { display: flex; margin: 0; font-size: 13.5px; font-weight: 400; }
+.bk-repeat { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bk-day { min-width: 160px; }
+.bk-days { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.bk-days button { height: 32px; min-width: 44px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: var(--s1); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--ink-2); font-size: 13px; cursor: pointer; }
+.bk-days button:hover { background: var(--s2); color: var(--ink); }
+.bk-days button[aria-pressed="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); color: var(--ink); font-weight: 500; }
+.bk-sub { padding-top: 12px; border-top: 1px solid var(--line); }
+.bk-sub h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.bk-sub p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.bk-sum { margin: 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--s2); font-size: 13px; color: var(--ink-2); }
 .bk-save { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); }
 .bk-save .r { margin-left: auto; display: flex; gap: 8px; }
 .yaml.box.env { min-height: 72px; }

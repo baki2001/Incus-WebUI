@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { bytes, dateTime, friendlyError, ui, type Instance } from "../api";
+import { bytes, dateTime, friendlyError, incus, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Dialog, Input, Select, Table, TglRow } from "../ui";
+import { confirmDialog, Dialog, Input, Seg, Select, Table, TglRow, useOutside } from "../ui";
 import { useNames } from "../data";
 import { DlgForm, F, nameProblem } from "./InstanceDialogs";
 import { matches, PageHead, Search } from "./Resource";
@@ -269,7 +269,21 @@ export function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => v
 
 type Target = { name: string; type: "dir" | "s3"; path?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key?: string; secret_key?: string; virtual_host?: boolean };
 type SchedState = { last_run?: string; last_ok: boolean; last_error?: string; running: boolean };
-type Schedule = { name: string; server: string; project: string; instances: string[] | null; target: string; at: string; keep_daily: number; keep_weekly: number; test_restore: boolean; paused: boolean; state?: SchedState };
+type Schedule = {
+  name: string;
+  server: string;
+  project: string;
+  instances: string[] | null;
+  target: string;
+  at: string;
+  days: number[] | null; // 0 Sunday .. 6 Saturday; empty means every day
+  keep_daily: number;
+  keep_weekly: number;
+  optimized: boolean;
+  test_restore: boolean;
+  paused: boolean;
+  state?: SchedState;
+};
 type PBS = { name: string; url: string; datastore: string; namespace?: string; token_id: string; secret: string; fingerprint?: string };
 type Conf = { targets: Target[]; schedules: Schedule[]; pbs: PBS[] };
 
@@ -394,65 +408,23 @@ export function BackupSettings() {
 
       <section className="set-sec">
         <h2>Schedules</h2>
-        <p>Each schedule backs up a project, or some of its instances, once a day. It keeps the newest backup of each of the last days and weeks you choose, and never touches backups made by hand.</p>
+        <p>Each schedule backs up a project, or some of its instances, on the days you pick. Old backups the schedule made are deleted as you set under Retention. Backups made by hand are never deleted.</p>
         {conf.schedules.map((s, i) => (
-          <div className="panel bk-card" key={i}>
-            <div className="two">
-              <F label="Name">
-                <Input mono value={s.name} onChange={(v) => setS(i, { name: v })} />
-              </F>
-              <F label="Target">
-                <Select value={s.target} onChange={(v) => setS(i, { target: v })} options={conf.targets.map((t) => t.name)} />
-              </F>
-              <F label="Server">
-                <Select value={s.server} onChange={(v) => setS(i, { server: v })} options={servers.includes(s.server) ? servers : [...servers, s.server]} />
-              </F>
-              <F label="Project">
-                <Input mono value={s.project} onChange={(v) => setS(i, { project: v })} placeholder="default" />
-              </F>
-              <F label="Instances" hint="Separate with commas. Leave empty for every instance in the project.">
-                <Input
-                  mono
-                  value={(s.instances || []).join(", ")}
-                  onChange={(v) =>
-                    setS(i, {
-                      instances: v
-                        .split(",")
-                        .map((x) => x.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                />
-              </F>
-              <F label="Time" hint="Every day, in the time zone of the machine that runs the UI.">
-                <Input mono value={s.at} onChange={(v) => setS(i, { at: v })} placeholder="03:00" />
-              </F>
-              <F label="Keep daily">
-                <Input mono inputMode="numeric" value={String(s.keep_daily)} onChange={(v) => setS(i, { keep_daily: parseInt(v) || 0 })} />
-              </F>
-              <F label="Keep weekly">
-                <Input mono inputMode="numeric" value={String(s.keep_weekly)} onChange={(v) => setS(i, { keep_weekly: parseInt(v) || 0 })} />
-              </F>
-            </div>
-            <TglRow title="Test restore on Sundays" note="Restores Sunday's backups under a temporary name and deletes them again, to prove they work." on={s.test_restore} onChange={(v) => setS(i, { test_restore: v })} />
-            <TglRow title="Paused" on={s.paused} onChange={(v) => setS(i, { paused: v })} />
-            <div className="roles-f">
-              <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.schedules = c.schedules.filter((_, j) => j !== i)), c))}>
-                Remove
-              </button>
-              <span className={"bk-st" + (s.state?.last_run && !s.state.last_ok && !s.state.running ? " bad" : "")}>{schedStatus(s.state)}</span>
-              <span className="r">
-                <button className="btn btn-s btn-sm press" disabled={dirty || s.state?.running} title={dirty ? "Save first" : undefined} onClick={() => run(s)}>
-                  Run now
-                </button>
-              </span>
-            </div>
-          </div>
+          <ScheduleCard
+            key={i}
+            s={s}
+            targets={conf.targets.map((t) => t.name)}
+            servers={servers}
+            dirty={dirty}
+            set={(p) => setS(i, p)}
+            remove={() => edit((c) => ((c.schedules = c.schedules.filter((_, j) => j !== i)), c))}
+            run={() => run(s)}
+          />
         ))}
         <button
           className="btn btn-q btn-sm"
           disabled={conf.targets.length === 0}
-          onClick={() => edit((c) => (c.schedules.push({ name: `daily${c.schedules.length || ""}`, server: servers[0] || "", project: "default", instances: [], target: c.targets[0].name, at: "03:00", keep_daily: 7, keep_weekly: 4, test_restore: false, paused: false }), c))}
+          onClick={() => edit((c) => (c.schedules.push({ name: `daily${c.schedules.length || ""}`, server: servers[0] || "", project: "default", instances: [], target: c.targets[0].name, at: "03:00", days: [], keep_daily: 7, keep_weekly: 4, optimized: false, test_restore: false, paused: false }), c))}
         >
           Add schedule
         </button>
@@ -517,6 +489,192 @@ export function BackupSettings() {
         </div>
       )}
     </>
+  );
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEK = [1, 2, 3, 4, 5, 6, 0]; // Monday first
+type Repeat = "daily" | "weekly" | "days";
+const repeatOf = (d: number[] | null): Repeat => (!d?.length ? "daily" : d.length === 1 ? "weekly" : "days");
+
+// The day a schedule test-restores on; matches testRestoreDay in backup.go.
+function testDay(days: number[] | null) {
+  if (!days?.length || days.includes(0)) return 0;
+  return Math.min(...days);
+}
+
+function plural(n: number, w: string) {
+  return `${n} ${w}${n === 1 ? "" : "s"}`;
+}
+
+function ago(days: number) {
+  if (days < 14) return plural(Math.round(days), "day");
+  if (days < 60) return plural(Math.round(days / 7), "week");
+  return plural(Math.round(days / 30), "month");
+}
+
+// What a schedule's retention keeps, in a sentence.
+function keepSummary(s: Schedule) {
+  const runs = s.days?.length || 7; // runs per week
+  const recent = Math.max(0, s.keep_daily);
+  const weekly = Math.max(0, s.keep_weekly);
+  const span = Math.max((recent * 7) / runs, weekly * 7);
+  const what = runs === 7 ? `the backups of the last ${plural(recent, "day")}` : `the last ${plural(recent, "backup")}`;
+  return (
+    `For each instance this keeps ${what}` +
+    (weekly ? `, and the newest backup of each of the last ${plural(weekly, "week")}` : "") +
+    `. That is at most ${plural(recent + weekly, "backup")}, going back about ${ago(span)}.`
+  );
+}
+
+function ScheduleCard({ s, targets, servers, dirty, set, remove, run }: { s: Schedule; targets: string[]; servers: string[]; dirty: boolean; set: (p: Partial<Schedule>) => void; remove: () => void; run: () => void }) {
+  const projects = useNames(s.server, "projects");
+  const [repeat, setRepeat] = useState<Repeat>(repeatOf(s.days));
+  useEffect(() => setRepeat((r) => (r === "days" && s.days?.length ? r : repeatOf(s.days))), [s.days]);
+  const projOpts = projects.data ? (projects.data.includes(s.project) ? projects.data : [...projects.data, s.project]) : [s.project];
+  const changeRepeat = (r: Repeat) => {
+    setRepeat(r);
+    if (r === "daily") set({ days: [] });
+    if (r === "weekly") set({ days: [s.days?.length ? testDay(s.days) : 0] });
+    if (r === "days") set({ days: s.days && s.days.length > 1 ? s.days : [1, 2, 3, 4, 5] });
+  };
+  const toggleDay = (d: number) => {
+    const cur = s.days || [];
+    const next = cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d].sort();
+    if (next.length) set({ days: next });
+  };
+  return (
+    <div className="panel bk-card">
+      <div className="two">
+        <F label="Name">
+          <Input mono value={s.name} onChange={(v) => set({ name: v })} />
+        </F>
+        <F label="Target">
+          <Select value={s.target} onChange={(v) => set({ target: v })} options={targets} />
+        </F>
+        <F label="Server">
+          <Select value={s.server} onChange={(v) => set({ server: v, instances: [] })} options={servers.includes(s.server) ? servers : [...servers, s.server]} />
+        </F>
+        <F label="Project">
+          <Select value={s.project} onChange={(v) => set({ project: v, instances: [] })} options={projOpts} />
+        </F>
+        <F label="Instances" hint="Leave none ticked to back up every instance in the project, including ones made later.">
+          <InstancePick server={s.server} project={s.project} value={s.instances || []} onChange={(v) => set({ instances: v })} />
+        </F>
+        <F label="Time" hint="In the time zone of the machine that runs the UI.">
+          <Input mono value={s.at} onChange={(v) => set({ at: v })} placeholder="03:00" />
+        </F>
+      </div>
+      <div className="fl">
+        <label>Repeat</label>
+        <div className="bk-repeat">
+          <Seg<Repeat>
+            label="Repeat"
+            value={repeat}
+            onChange={changeRepeat}
+            options={[
+              { v: "daily", l: "Every day" },
+              { v: "weekly", l: "Once a week" },
+              { v: "days", l: "Chosen days" },
+            ]}
+          />
+          {repeat === "weekly" && (
+            <div className="bk-day">
+              <Select value={String(s.days?.[0] ?? 0)} onChange={(v) => set({ days: [Number(v)] })} options={WEEK.map((d) => ({ v: String(d), l: `on ${DAY_NAMES[d]}` }))} aria-label="Day of the week" />
+            </div>
+          )}
+          {repeat === "days" && (
+            <div className="bk-days" role="group" aria-label="Days of the week">
+              {WEEK.map((d) => (
+                <button key={d} type="button" aria-pressed={!!s.days?.includes(d)} title={DAY_NAMES[d]} onClick={() => toggleDay(d)}>
+                  {DAY_NAMES[d].slice(0, 3)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bk-sub">
+        <h3>Retention</h3>
+        <p>Which of this schedule's old backups to keep. The rest are deleted after each run.</p>
+      </div>
+      <div className="two">
+        <F label="Recent backups to keep" hint={repeat === "daily" ? "One per day: 7 keeps the last week of daily backups." : "Counted per day with a backup: 4 keeps the last 4 runs."}>
+          <Input mono inputMode="numeric" value={String(s.keep_daily)} onChange={(v) => set({ keep_daily: parseInt(v) || 0 })} />
+        </F>
+        <F label="Weekly backups to keep" hint="Also keeps the newest backup of each of the last weeks, for older restore points. 0 turns this off.">
+          <Input mono inputMode="numeric" value={String(s.keep_weekly)} onChange={(v) => set({ keep_weekly: parseInt(v) || 0 })} />
+        </F>
+      </div>
+      <p className="bk-sum">{keepSummary(s)}</p>
+
+      <TglRow
+        title="Use the storage pool's own format"
+        note="On ZFS and Btrfs pools, Incus exports a native send stream instead of copying files. It's faster and often smaller, but restores only to a pool of the same kind. Other pools make a normal backup. Each backup is still a full copy: Incus can't make incremental backup files."
+        on={!!s.optimized}
+        onChange={(v) => set({ optimized: v })}
+      />
+      <TglRow title="Test restore once a week" note={`On ${DAY_NAMES[testDay(s.days)]}s, restores that run's backups under a temporary name and deletes them again, to prove they work.`} on={s.test_restore} onChange={(v) => set({ test_restore: v })} />
+      <TglRow title="Paused" on={s.paused} onChange={(v) => set({ paused: v })} />
+      <div className="roles-f">
+        <button className="btn btn-q btn-sm" onClick={remove}>
+          Remove
+        </button>
+        <span className={"bk-st" + (s.state?.last_run && !s.state.last_ok && !s.state.running ? " bad" : "")}>{schedStatus(s.state)}</span>
+        <span className="r">
+          <button className="btn btn-s btn-sm press" disabled={dirty || s.state?.running} title={dirty ? "Save first" : undefined} onClick={run}>
+            Run now
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// A checkbox dropdown of a project's instances, like the instance list's filters.
+function InstancePick({ server, project, value, onChange }: { server: string; project: string; value: string[]; onChange: (v: string[]) => void }) {
+  const q = useData<{ name: string; type: string }[]>(server ? `sched-insts:${server}:${project}` : null, async () =>
+    ((await incus<Instance[]>(server, "/1.0/instances?recursion=1", { project })) || []).map((i) => ({ name: i.name, type: i.type })).sort((a, b) => a.name.localeCompare(b.name)),
+  );
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutside(ref, () => setOpen(false), open);
+  const list = q.data || [];
+  const missing = value.filter((v) => !list.some((i) => i.name === v));
+  const opts = [...list.map((i) => ({ v: i.name, n: i.type === "virtual-machine" ? "VM" : "Container" })), ...missing.map((v) => ({ v, n: "Not found" }))];
+  const label = value.length === 0 ? `All instances${q.data ? ` (${list.length})` : ""}` : value.length <= 2 ? value.join(", ") : `${value.length} instances`;
+  return (
+    <div className="fwrap bk-pick" ref={ref}>
+      <button type="button" className={"field" + (open ? " open" : "")} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="fval">{label}</span>
+        {ic.down}
+      </button>
+      {open && (
+        <div className="fpop">
+          <div className="fopts">
+            {q.error && <div className="fopt dis">Couldn't list the instances.</div>}
+            {!q.data && !q.error && <div className="fopt dis">Loading…</div>}
+            {q.data && opts.length === 0 && <div className="fopt dis">No instances in this project yet.</div>}
+            {opts.map((o) => (
+              <label key={o.v} className="fopt">
+                <input type="checkbox" checked={value.includes(o.v)} onChange={(e) => onChange(e.target.checked ? [...value, o.v] : value.filter((x) => x !== o.v))} />
+                <span className="ot">{o.v}</span>
+                <span className="cnt">{o.n}</span>
+              </label>
+            ))}
+          </div>
+          <div className="ffoot">
+            <button type="button" className="btn btn-q btn-sm" disabled={!value.length} onClick={() => onChange([])}>
+              All instances
+            </button>
+            <button type="button" className="btn btn-p btn-sm press" onClick={() => setOpen(false)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

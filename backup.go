@@ -3,8 +3,8 @@ package main
 // Backups export instances with the Incus backup API and keep the tarballs
 // on a target the UI writes to: a directory (local or mounted) or an S3
 // bucket. Each backup has a JSON file next to it with its SHA-256, which a
-// restore checks. Schedules run daily and keep a number of daily and weekly
-// backups.
+// restore checks. Schedules run every day or on chosen weekdays and keep a
+// number of recent and weekly backups.
 
 import (
 	"context"
@@ -59,10 +59,20 @@ type BackupSchedule struct {
 	Instances  []string `yaml:"instances,omitempty" json:"instances"`
 	Target     string   `yaml:"target" json:"target"`
 	At         string   `yaml:"at" json:"at"` // HH:MM, local time of the UI
-	KeepDaily  int      `yaml:"keep_daily" json:"keep_daily"`
-	KeepWeekly int      `yaml:"keep_weekly" json:"keep_weekly"`
-	// TestRestore restores the Sunday backup to a temporary instance and
-	// deletes it again, to prove the backup works.
+	// Days are the weekdays to run on, 0 for Sunday to 6 for Saturday.
+	// Empty means every day.
+	Days []int `yaml:"days,omitempty" json:"days"`
+	// KeepDaily keeps the newest backup of each of the last KeepDaily days
+	// that have a backup; KeepWeekly does the same for weeks.
+	KeepDaily  int `yaml:"keep_daily" json:"keep_daily"`
+	KeepWeekly int `yaml:"keep_weekly" json:"keep_weekly"`
+	// Optimized asks Incus for its storage driver's own format (a ZFS or
+	// Btrfs send stream) instead of a plain tarball. It is faster to make
+	// and restore, but restores only to a pool with the same driver. Each
+	// backup is still a full copy: Incus can't export increments.
+	Optimized bool `yaml:"optimized,omitempty" json:"optimized"`
+	// TestRestore restores one backup a week to a temporary instance and
+	// deletes it again, to prove the backup works (see testRestoreDay).
 	TestRestore bool `yaml:"test_restore,omitempty" json:"test_restore"`
 	Paused      bool `yaml:"paused,omitempty" json:"paused"`
 }
@@ -82,6 +92,9 @@ type BackupMeta struct {
 	By       string    `json:"by,omitempty"`
 	// Name is an optional label, such as the snapshot name it was taken as.
 	Name string `json:"name,omitempty"`
+	// Optimized is set when the backup is in the storage driver's own
+	// format, which restores only to a pool with the same driver.
+	Optimized bool `json:"optimized,omitempty"`
 }
 
 var (
@@ -277,11 +290,12 @@ func listBackups(ctx context.Context, st backupStore, target, prefix string) ([]
 
 // backupInstance exports one instance to a target.
 func (a *App) backupInstance(ctx context.Context, c *incusConn, t BackupTarget, st backupStore, server, project, inst, schedule, by string, set func(float64, string)) (*BackupMeta, error) {
-	return a.backupInstanceNamed(ctx, c, t, st, server, project, inst, schedule, by, "", set)
+	return a.backupInstanceNamed(ctx, c, t, st, server, project, inst, schedule, by, "", false, set)
 }
 
-// backupInstanceNamed is backupInstance with a label kept in the backup's metadata.
-func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTarget, st backupStore, server, project, inst, schedule, by, label string, set func(float64, string)) (*BackupMeta, error) {
+// backupInstanceNamed is backupInstance with a label kept in the backup's
+// metadata, and optionally in the storage driver's own format.
+func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTarget, st backupStore, server, project, inst, schedule, by, label string, optimized bool, set func(float64, string)) (*BackupMeta, error) {
 	b, err := c.call(ctx, "GET", "/1.0/instances/"+url.PathEscape(inst), project, nil)
 	if err != nil {
 		return nil, err
@@ -292,7 +306,7 @@ func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTar
 	_ = json.Unmarshal(b, &info)
 
 	now := time.Now().UTC()
-	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by, Name: label}
+	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by, Name: label, Optimized: optimized}
 	if _, _, _, _, ok := splitKey(m.Key); !ok {
 		return nil, fmt.Errorf("can't back up %s: the server, project or instance name doesn't fit a file name", inst)
 	}
@@ -301,7 +315,7 @@ func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTar
 	bname := "iwui-" + now.Format(backupTimeFmt)
 	base := "/1.0/instances/" + url.PathEscape(inst) + "/backups"
 	_, err = c.call(ctx, "POST", base, project, map[string]any{
-		"name": bname, "instance_only": true, "optimized_storage": false,
+		"name": bname, "instance_only": true, "optimized_storage": optimized,
 		"expires_at": now.Add(24 * time.Hour).Format(time.RFC3339),
 	})
 	if err != nil {
@@ -479,6 +493,9 @@ func due(sc BackupSchedule, st scheduleState, now time.Time) bool {
 	if sc.Paused || st.Running {
 		return false
 	}
+	if len(sc.Days) > 0 && !slices.Contains(sc.Days, int(now.Weekday())) {
+		return false
+	}
 	var h, m int
 	if _, err := fmt.Sscanf(sc.At, "%d:%d", &h, &m); err != nil {
 		return false
@@ -570,7 +587,7 @@ func (a *App) runSchedule(ctx context.Context, sc BackupSchedule, set func(float
 		step := func(x float64, d string) {
 			set((float64(i)+x)/float64(len(insts)), inst+": "+d)
 		}
-		m, err := a.backupInstance(ctx, c, t, st, sc.Server, sc.Project, inst, sc.Name, "", step)
+		m, err := a.backupInstanceNamed(ctx, c, t, st, sc.Server, sc.Project, inst, sc.Name, "", "", sc.Optimized, step)
 		if err != nil {
 			failed = append(failed, inst+": "+err.Error())
 			continue
@@ -585,7 +602,7 @@ func (a *App) runSchedule(ctx context.Context, sc BackupSchedule, set func(float
 				st.del(ctx, old.Key+".json")
 			}
 		}
-		if sc.TestRestore && time.Now().Weekday() == time.Sunday {
+		if sc.TestRestore && time.Now().Weekday() == testRestoreDay(sc) {
 			step(0.9, "test restore")
 			if err := a.testRestore(ctx, c, st, *m); err != nil {
 				failed = append(failed, inst+": the test restore failed: "+err.Error())
@@ -596,6 +613,15 @@ func (a *App) runSchedule(ctx context.Context, sc BackupSchedule, set func(float
 		return "", fmt.Errorf("%d of %d backups failed. %s", len(failed), len(insts), strings.Join(failed, "; "))
 	}
 	return fmt.Sprintf("Backed up %d instances to %s.", done, t.Name), nil
+}
+
+// testRestoreDay is the day of the week a schedule test-restores on: Sunday
+// when it runs then, else the first day it runs, counting from Monday.
+func testRestoreDay(sc BackupSchedule) time.Weekday {
+	if len(sc.Days) == 0 || slices.Contains(sc.Days, 0) {
+		return time.Sunday
+	}
+	return time.Weekday(slices.Min(sc.Days))
 }
 
 // testRestore restores a backup under a temporary name and removes it.
@@ -691,8 +717,10 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("schedule %s: no target named %q", s.Name, s.Target)
 			case !scheduleAt.MatchString(s.At):
 				return fmt.Errorf("schedule %s: the time must look like 03:00", s.Name)
+			case !validDays(s.Days):
+				return fmt.Errorf("schedule %s: the days of the week must be 0 (Sunday) to 6, each once", s.Name)
 			case s.KeepDaily < 1 || s.KeepDaily > 366 || s.KeepWeekly < 0 || s.KeepWeekly > 520:
-				return fmt.Errorf("schedule %s: keep between 1 and 366 daily and 0 to 520 weekly backups", s.Name)
+				return fmt.Errorf("schedule %s: keep 1 to 366 recent backups and 0 to 520 weekly ones", s.Name)
 			case !slices.ContainsFunc(c.Servers, func(x ServerConfig) bool { return x.Name == s.Server }):
 				return fmt.Errorf("schedule %s: no server named %q", s.Name, s.Server)
 			}
@@ -838,7 +866,7 @@ func (a *App) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 		title = "Snapshot " + in.Instance + " to " + t.Name + " as " + in.Name
 	}
 	job := a.jobs.start("backup", title, s, server, in.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
-		m, err := a.backupInstanceNamed(ctx, c, t, st, server, in.Project, in.Instance, "", s.User, in.Name, set)
+		m, err := a.backupInstanceNamed(ctx, c, t, st, server, in.Project, in.Instance, "", s.User, in.Name, false, set)
 		if err != nil {
 			return jobResult{}, err
 		}
@@ -972,6 +1000,18 @@ func (a *App) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonError(w, http.StatusNotFound, "No such schedule.")
+}
+
+// validDays checks a schedule's weekdays: empty (every day) or distinct 0..6.
+func validDays(d []int) bool {
+	seen := map[int]bool{}
+	for _, x := range d {
+		if x < 0 || x > 6 || seen[x] {
+			return false
+		}
+		seen[x] = true
+	}
+	return true
 }
 
 func bytesStr(n int64) string {
