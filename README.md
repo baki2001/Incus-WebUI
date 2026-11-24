@@ -10,13 +10,7 @@
 
 <br>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/instances-dark.png">
-  <img alt="The instances page, listing containers with their state, address, CPU and memory" src="docs/images/instances-light.png">
-</picture>
-
-> [!NOTE]
-> This is a test release (0.5). It works against real servers, but expect rough edges and report them in [issues](https://github.com/baki2001/Incus-WebUI/issues).
+<img alt="The instances page in the Kyoto look, listing containers and virtual machines with their state, address, CPU, memory and uptime" src="docs/images/instances-kyoto.png">
 
 ## Features
 
@@ -41,7 +35,7 @@
 - Sign in with a password, with single sign-on (OIDC), or both. Signing out ends the session, changing a password ends the user's other sessions, and repeated failed logins lock out that user and address for a while.
 - Each local user can turn on two-factor sign-in with an authenticator app (with one-time recovery codes) and add passkeys to sign in with a fingerprint, face or device PIN, under Settings, Sign-in security. Passkeys need the UI on HTTPS with a domain name and a certificate the browser trusts; set `public_url` when it sits behind a proxy. An admin can reset both for a user who lost their device.
 - Updates from the UI, for the UI itself and for Incus (IncusOS, or Debian and Ubuntu with a small helper).
-- Light and dark mode, plus a server-wide theme with your own accent colour.
+- Three looks — Kyoto, Light and Graphite (dark) — plus a server-wide theme with your own accent colour.
 - A command menu on <kbd>Ctrl</kbd> <kbd>K</kbd> to search instances, networks, storage, images and more, and to run instance actions.
 
 The layout works on phones, and errors stay on screen until you dismiss them.
@@ -57,10 +51,6 @@ curl -fsSL https://raw.githubusercontent.com/baki2001/Incus-WebUI/main/install/i
 It prints the address and a one-time setup code. Open the address, enter the code and pick a username and password. Updates install from Settings, Updates and about.
 
 The [install guide](docs/install.md) explains each step, how to do it by hand, and the other ways to run it: as a plain binary on any Linux machine, or as an OCI image.
-
-## Upgrading to 0.5
-
-Nothing changes for existing users: everyone keeps full access until an admin sets up roles under Settings, Users and roles. Update from Settings, Updates and about, or install again with the script above.
 
 ## How it works
 
