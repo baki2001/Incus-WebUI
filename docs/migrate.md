@@ -34,7 +34,7 @@ The preview lists everything else as a warning, such as PCI or USB passthrough, 
 
 The import has two parts:
 
-- **Upload.** Your browser sends the backup to the UI server. This is the only part that needs the browser, so keep the page open until the upload reaches 100%. The file then waits on the UI server until you import or remove it, for a week at most.
+- **Upload.** Your browser sends the backup to the UI server. This is the only part that needs the browser, so keep the page open until the upload reaches 100%. The file then waits in the UI's data folder until you import or remove it, for a day at most. The import sheet shows when each upload goes and how much space they take.
 - **Import.** This runs on the UI server. Once you click Import you can close the browser; the import keeps going and shows under Tasks.
 
 The import itself:
@@ -48,6 +48,8 @@ If any step fails, the UI deletes what it created and keeps the uploaded file so
 ### Things to know
 
 - The import needs free space for the backup and the converted disk in the UI's data folder, plus the space on the Incus server.
+- Once the image is sent, Incus still checks and stores it before the instance exists. For a big disk this takes a few minutes; the task counts the time so you can see it's still busy.
+- A UI restart stops a running import. The UI then deletes its half-finished files; the uploaded backup stays so you can start again.
 - Unpacking and converting a backup keeps about one CPU core busy on the UI server for the length of the import. It runs at a lower priority, so the rest of the UI stays responsive. To cap it, set `limits.cpu` on the UI's instance.
 - UEFI VMs boot the disk's default loader (`EFI/BOOT/BOOTX64.EFI`), because the boot entries in Proxmox's EFI disk are not imported. Most Linux and Windows installs have one.
 - Legacy BIOS VMs need SeaBIOS on the Incus server. When it's missing and the disk has an EFI partition, the VM boots with UEFI instead and the task says so. Otherwise the import stops and tells you to install SeaBIOS.

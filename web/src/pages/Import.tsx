@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { bytes, friendlyError, memBytes, ui, upload } from "../api";
+import { bytes, dateTime, friendlyError, memBytes, ui, upload } from "../api";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useManagedNetworks, useNames } from "../data";
 import { Field, Input, Seg, Select, Sheet, SheetSec, TglRow } from "../ui";
 
 type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string; expires: string };
 
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 type Plan = {
   type: string;
   name: string;
@@ -169,7 +168,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
                   {u.name}
                 </button>
                 <span className="dim">
-                  {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, on the server until {day(u.expires)}
+                  {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
                 </span>
                 <button className="lnk" onClick={() => drop(u)}>
                   Remove
@@ -177,6 +176,11 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
               </li>
             ))}
           </ul>
+        )}
+        {(uploads.data || []).length > 0 && (
+          <p className="dim" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+            These uploads take {bytes(uploads.data!.reduce((n, u) => n + u.size, 0))} on the UI server. Each one is deleted when its import is done, or a day after it was uploaded or last imported.
+          </p>
         )}
       </SheetSec>
 

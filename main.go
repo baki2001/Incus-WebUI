@@ -75,6 +75,7 @@ func main() {
 	go app.collectMetrics(context.Background())
 	app.sched.load(filepath.Join(*dataDir, "backup-schedules.json"))
 	go app.runSchedules(context.Background())
+	go app.cleanImports(context.Background())
 
 	// Running on the Incus host itself: use the local socket automatically.
 	if store.Fresh && len(store.Get().Servers) == 0 {
