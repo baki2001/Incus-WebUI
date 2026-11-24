@@ -67,7 +67,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   const chosen =
     from === "file"
       ? file && { label: `${file.name}, ${bytes(file.size)}`, base: `/imports/${file.id}`, extra: {} as Record<string, string> }
-      : snap && { label: `${snap.ref} on ${pbs}`, base: `/pbs/${encodeURIComponent(pbs)}`, extra: { snap: snap.ref } as Record<string, string> };
+      : snap && { label: `${snap.kind === "container" ? "CT" : "VM"} ${snap.id} from ${dateTime(snap.created)}, on ${pbs}`, base: `/pbs/${encodeURIComponent(pbs)}`, extra: { snap: snap.ref } as Record<string, string> };
   const qs = new URLSearchParams({ network, pool: storage, name, keep_mac: String(keepMAC), ...chosen?.extra });
   const plan = useData<Plan>(chosen && network && storage ? `import-plan:${chosen.base}:${qs}` : null, () => ui(`${chosen!.base}/plan?${qs}`));
 
