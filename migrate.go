@@ -18,12 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/baki2001/incus-webui/internal/proxmox"
@@ -522,17 +520,6 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address or a network interface name that changed.", nil
 }
 
-// lowPriority makes the calling goroutine's thread nice 10, so a long
-// conversion doesn't slow down the rest of the UI. The goroutine stays on
-// that thread, and Go ends the thread when the goroutine returns, so no other
-// work inherits the lower priority.
-func lowPriority() {
-	runtime.LockOSThread()
-	if err := syscall.Setpriority(syscall.PRIO_PROCESS, syscall.Gettid(), 10); err != nil {
-		log.Printf("import: lower priority: %v", err)
-	}
-}
-
 // sendProgress reports an upload to Incus. Once every byte is sent, Incus
 // still has to check and store the data, which can take minutes for a big
 // disk, so it then counts the time instead of leaving the task at one spot.
@@ -566,6 +553,11 @@ func (s *sendProgress) update(sent, total int64) {
 				case <-s.done:
 					return
 				case <-t.C:
+					select {
+					case <-s.done: // stopped while the tick fired
+						return
+					default:
+					}
 					s.set(at, fmt.Sprintf("Incus is checking and storing %s (%s so far)", s.what, time.Since(start).Round(time.Second)))
 				}
 			}
