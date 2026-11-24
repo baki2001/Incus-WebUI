@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
-import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
+import { ConfirmHost, Dialog, useOutside } from "./ui";
 import { canDo } from "./pages/Instances";
 import { askStop, StopHost } from "./pages/InstanceDialogs";
 import { usePins, useInstances, useProjects } from "./data";
@@ -90,6 +90,7 @@ export function Shell() {
           <div className="top-r">
             <Fresh />
             <Tasks />
+            <ModeBtn />
             <button className="kbtn press" onClick={() => setCmdk(true)} aria-label="Search or run a command">
               {ic.search}
               <span className="lbl2">Search or run a command</span>
@@ -341,10 +342,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const inScope = (p: { project: string }) => app.project === "*" || app.project === p.project;
   const pinned = usePins().filter((p) => app.servers.some((s) => s.name === p.server) && (!rows || !inScope(p) || rows.some((r) => r.server === p.server && r.name === p.name)));
   const stateOf = (r: { server: string; name: string }) => rows?.find((x) => x.server === r.server && x.name === r.name)?.status || "";
-  const modes: Mode[] = ["auto", "light", "dark"];
   const [openG, toggleG] = useOpenGroups();
-  const seg = useRef<HTMLDivElement>(null);
-  useThumb(seg, 'button[aria-pressed="true"]', [app.mode, rail]);
   // The menu scrolls between the scope picker and the footer; a fade hints at more below.
   const navRef = useRef<HTMLElement>(null);
   const [more, setMore] = useState(false);
@@ -443,16 +441,22 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {lbl("Settings")}
           {upd.data?.newer && <span className="badge-dot upd" title="Update available" />}
         </NavLink>
-        <div className="theme-seg" role="group" aria-label="Colour mode" ref={seg}>
-          {modes.map((m) => (
-            <button key={m} aria-pressed={app.mode === m} onClick={() => app.setMode(m)}>
-              {m[0].toUpperCase() + m.slice(1)}
-            </button>
-          ))}
-        </div>
         <Account />
       </div>
     </aside>
+  );
+}
+
+// ModeBtn cycles Auto -> Light -> Dark. Settings > Appearance has the same choice.
+function ModeBtn() {
+  const app = useApp();
+  const order: Mode[] = ["auto", "light", "dark"];
+  const next = order[(order.indexOf(app.mode) + 1) % order.length];
+  const name = (m: Mode) => m[0].toUpperCase() + m.slice(1);
+  return (
+    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Colour mode: ${name(app.mode)}. Switch to ${name(next)}`} title={`Colour mode: ${name(app.mode)}`}>
+      {app.mode === "light" ? ic.sun : app.mode === "dark" ? ic.moon : ic.auto}
+    </button>
   );
 }
 

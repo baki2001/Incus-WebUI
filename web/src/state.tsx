@@ -96,7 +96,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 // ---------- app-wide state ----------
 
 export type Mode = "auto" | "light" | "dark";
-export type Theme = { name: "graphite" | "harbor" | "custom"; accent?: string };
+export type Theme = { name: "graphite" | "kyoto" | "custom"; accent?: string };
 type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
 

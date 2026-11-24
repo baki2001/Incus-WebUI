@@ -70,6 +70,9 @@ export const ic = {
   edit: sv(<path d="M10.5 2.5 13.5 5.5 5.5 13.5H2.5v-3z" />, 14),
   cloud: sv(<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.7-.9 3.4 3.4 0 0 1 .7 6.9z" />, 14),
   shield: sv(<path d="M8 1.8 13 3.7v4c0 3.2-2.2 5.4-5 6.5-2.8-1.1-5-3.3-5-6.5v-4z" />, 14),
+  sun: sv(<><circle cx="8" cy="8" r="2.8" /><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" /></>, 14),
+  moon: sv(<path d="M13 9.6A5.5 5.5 0 1 1 6.4 3a4.5 4.5 0 0 0 6.6 6.6z" />, 14),
+  auto: sv(<><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor" stroke="none" /></>, 14),
   full: sv(<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />, 14),
 };
 
@@ -78,7 +81,7 @@ export function Mark() {
     <svg className="mark" viewBox="0 0 22 22" aria-hidden="true">
       <rect x="2" y="3" width="18" height="4.5" rx="2.25" fill="var(--ink)" />
       <rect x="2" y="9" width="18" height="4.5" rx="2.25" fill="var(--ink)" opacity=".45" />
-      <rect x="2" y="15" width="10" height="4.5" rx="2.25" fill="var(--accent)" />
+      <rect x="2" y="15" width="10" height="4.5" rx="2.25" fill="var(--cta, var(--accent))" />
     </svg>
   );
 }

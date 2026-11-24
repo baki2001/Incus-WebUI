@@ -70,7 +70,7 @@ h1,h2,h3{text-wrap:balance;margin:0}
 .brand{font-weight:600;font-size:14.5px;letter-spacing:-.01em;white-space:nowrap}
 .collapse{margin-left:auto;width:26px;height:26px;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-3);display:grid;place-items:center}
 .collapse:hover{background:var(--s2);color:var(--ink)}
-.rail .brand,.rail .lbl,.rail .count,.rail .grp,.rail .sub,.rail .scope-txt,.rail .acct-txt,.rail .theme-seg{display:none}
+.rail .brand,.rail .lbl,.rail .count,.rail .grp,.rail .sub,.rail .scope-txt,.rail .acct-txt{display:none}
 .rail .side-top{justify-content:center;padding:0}
 .rail .collapse{margin:0;position:absolute;left:17px;top:52px}
 .rail .mark{display:none}
@@ -108,9 +108,6 @@ html[data-dir="a"] .ni[aria-current="page"] svg{color:var(--accent)}
 .sub .ni::before{content:"";position:absolute;left:-12px;top:50%;width:9px;height:1px;background:var(--line-2)}
 .sub .st{width:6px;height:6px;border-radius:50%;flex:none}
 .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:12px}
-.theme-seg{display:grid;grid-template-columns:repeat(3,1fr);padding:2px;border-radius:var(--r-sm);background:var(--s2);margin:4px 0 6px}
-.theme-seg button{height:26px;border:0;border-radius:calc(var(--r-sm) - 2px);background:none;font-size:12.5px;color:var(--ink-2)}
-.theme-seg button[aria-pressed="true"]{background:var(--s1);color:var(--ink);box-shadow:var(--shadow);font-weight:500}
 .acct{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r-sm)}
 .rail .acct{justify-content:center;padding:6px 0}
 .av{width:26px;height:26px;border-radius:50%;flex:none;background:var(--s3);color:var(--ink);display:grid;place-items:center;font-size:11px;font-weight:600}
@@ -148,8 +145,8 @@ kbd{font:500 11px/1 var(--f-mono);color:var(--ink-3);padding:3px 5px;border-radi
 
 /* ---------- controls ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 12px;border:0;border-radius:var(--r-sm);font-size:13.5px;font-weight:500;white-space:nowrap}
-.btn-p{background:var(--accent);color:var(--accent-ink)}
-.btn-p:hover{background:color-mix(in srgb,var(--accent) 88%,var(--bg))}
+.btn-p{background:var(--cta,var(--accent));color:var(--cta-ink,var(--accent-ink))}
+.btn-p:hover{background:color-mix(in srgb,var(--cta,var(--accent)) 88%,var(--bg))}
 .btn-s{background:var(--s1);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-2)}
 .btn-s:hover{background:var(--s2)}
 .btn-q{background:none;color:var(--ink-2)}
@@ -440,42 +437,52 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
 }
 
 /* ---------- product themes (data-brand on html). Mode (light/dark) stays separate. ---------- */
-:root[data-brand="harbor"]{
-  --bg:#f1f5f6; --s1:#ffffff; --s2:#e8eef0; --s3:#dbe4e7;
-  --line:rgba(12,40,50,.10); --line-2:rgba(12,40,50,.18);
-  --ink:#0f1f27; --ink-2:#41545d; --ink-3:#586b74;
-  --accent:#0e6b80; --accent-ink:#ffffff; --accent-soft:rgba(14,107,128,.10);
-  --side:#0f2a33; --side-ink:rgba(255,255,255,.88); --side-ink-2:rgba(255,255,255,.62); --side-s:rgba(255,255,255,.08); --side-line:rgba(255,255,255,.10);
+/* Kyoto: stone grey ground, deep indigo for structure and selection, vermilion only on the main call to action.
+   Healthy states use the brand indigo/stone instead of green; only warnings and errors get their own colour. */
+:root[data-brand="kyoto"]{
+  --bg:#ebecef; --s1:#ffffff; --s2:#e2e4ea; --s3:#d5d8e0;
+  --line:rgba(20,41,80,.10); --line-2:rgba(20,41,80,.18);
+  --ink:#101a30; --ink-2:#424c64; --ink-3:#59627a;
+  --accent:#142950; --accent-ink:#ffffff; --accent-soft:rgba(20,41,80,.08);
+  --cta:#db390c; --cta-ink:#ffffff;
+  --ok:#142950; --info:#3b5180; --idle:#9599aa; --warn:#9c5a05; --err:#b3261e;
+  --side:#142950; --side-ink:rgba(255,255,255,.92); --side-ink-2:#bbbecb; --side-s:rgba(187,190,203,.12); --side-line:rgba(187,190,203,.16);
 }
-@media (prefers-color-scheme: dark){:root[data-brand="harbor"]:not([data-theme="light"]){
-  --bg:#0b1316; --s1:#111b1f; --s2:#172328; --s3:#1f2d33;
-  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.13);
+@media (prefers-color-scheme: dark){:root[data-brand="kyoto"]:not([data-theme="light"]){
+  --bg:#111214; --s1:#18191c; --s2:#1f2024; --s3:#28292e;
+  --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
   --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#6cc3d5; --accent-ink:#06171c; --accent-soft:rgba(108,195,213,.12);
-  --side:#081013; --side-ink:rgba(255,255,255,.88); --side-ink-2:rgba(255,255,255,.58); --side-s:rgba(255,255,255,.06); --side-line:rgba(255,255,255,.07)}}
-:root[data-brand="harbor"][data-theme="dark"]{
-  --bg:#0b1316; --s1:#111b1f; --s2:#172328; --s3:#1f2d33;
-  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.13);
+  --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
+  --cta:#db390c; --cta-ink:#ffffff;
+  --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
+  --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}}
+:root[data-brand="kyoto"][data-theme="dark"]{
+  --bg:#111214; --s1:#18191c; --s2:#1f2024; --s3:#28292e;
+  --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
   --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#6cc3d5; --accent-ink:#06171c; --accent-soft:rgba(108,195,213,.12);
-  --side:#081013; --side-ink:rgba(255,255,255,.88); --side-ink-2:rgba(255,255,255,.58); --side-s:rgba(255,255,255,.06); --side-line:rgba(255,255,255,.07)}
-/* Harbor carries its colour into the sidebar */
-:root[data-brand="harbor"] .side{background:var(--side);border-right-color:var(--side-line);color:var(--side-ink)}
-:root[data-brand="harbor"] .side .brand,:root[data-brand="harbor"] .side .acct-txt{color:var(--side-ink)}
-:root[data-brand="harbor"] .side .ni{color:var(--side-ink-2)}
-:root[data-brand="harbor"] .side .ni svg,:root[data-brand="harbor"] .side .grp,:root[data-brand="harbor"] .side .count,:root[data-brand="harbor"] .side .acct-txt small,:root[data-brand="harbor"] .side .scope-txt span,:root[data-brand="harbor"] .side .collapse,:root[data-brand="harbor"] .side .scope .chev{color:var(--side-ink-2)}
-:root[data-brand="harbor"] .side .ni:hover{background:var(--side-s);color:var(--side-ink)}
-:root[data-brand="harbor"] .side .ni[aria-current="page"]{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:#fff}
-:root[data-brand="harbor"] .side .ni[aria-current="page"] svg{color:#7fd3e3}
-:root[data-brand="harbor"] .side .scope{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
-:root[data-brand="harbor"] .side .theme-seg{background:var(--side-s)}
-:root[data-brand="harbor"] .side .theme-seg button{color:var(--side-ink-2)}
-:root[data-brand="harbor"] .side .theme-seg button[aria-pressed="true"]{background:rgba(255,255,255,.14);color:#fff;box-shadow:none}
-:root[data-brand="harbor"] .side .sub::before,:root[data-brand="harbor"] .side .sub .ni::before{background:var(--side-line)}
-:root[data-brand="harbor"] .side .av{background:rgba(255,255,255,.14);color:#fff}
-:root[data-brand="harbor"] .side .mark rect:nth-child(1),:root[data-brand="harbor"] .side .mark rect:nth-child(2){fill:#fff}
-:root[data-brand="harbor"] .side .mark rect:nth-child(3){fill:#7fd3e3}
-:root[data-brand="harbor"] .side .collapse:hover{background:var(--side-s);color:#fff}
+  --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
+  --cta:#db390c; --cta-ink:#ffffff;
+  --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
+  --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}
+/* Kyoto carries the indigo into the sidebar */
+:root[data-brand="kyoto"] .side{background:var(--side);border-right-color:var(--side-line);color:var(--side-ink)}
+:root[data-brand="kyoto"] .side .brand,:root[data-brand="kyoto"] .side .acct-txt{color:var(--side-ink)}
+:root[data-brand="kyoto"] .side .ni{color:var(--side-ink-2)}
+:root[data-brand="kyoto"] .side .ni svg,:root[data-brand="kyoto"] .side .grp,:root[data-brand="kyoto"] .side .count,:root[data-brand="kyoto"] .side .acct-txt small,:root[data-brand="kyoto"] .side .scope-txt span,:root[data-brand="kyoto"] .side .collapse,:root[data-brand="kyoto"] .side .scope .chev{color:var(--side-ink-2)}
+:root[data-brand="kyoto"] .side .ni:hover{background:var(--side-s);color:var(--side-ink)}
+:root[data-brand="kyoto"] .side .ni[aria-current="page"]{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:#fff}
+:root[data-brand="kyoto"] .side .ni[aria-current="page"] svg{color:#fff}
+:root[data-brand="kyoto"] .side .scope{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
+:root[data-brand="kyoto"] .side .sub::before,:root[data-brand="kyoto"] .side .sub .ni::before{background:var(--side-line)}
+:root[data-brand="kyoto"] .side .av{background:rgba(255,255,255,.14);color:#fff}
+:root[data-brand="kyoto"] .side .mark rect:nth-child(1),:root[data-brand="kyoto"] .side .mark rect:nth-child(2){fill:#fff}
+:root[data-brand="kyoto"] .side .collapse:hover{background:var(--side-s);color:#fff}
+:root[data-brand="kyoto"] .side .side-foot{border-top-color:var(--side-line)}
+:root[data-brand="kyoto"] .side .badge-dot.upd{background:#fff}
+:root[data-brand="kyoto"] .side :focus-visible{outline-color:#fff}
+:root[data-brand="kyoto"] .side .st-dot,:root[data-brand="kyoto"] .side .st-dot[data-s="Frozen"]{background:rgba(187,190,203,.32)}
+:root[data-brand="kyoto"] .side .st-dot[data-s="Running"],:root[data-brand="kyoto"] .side .health i:not(.off){background:#fff}
+:root[data-brand="kyoto"] .side .st-dot[data-s="Error"],:root[data-brand="kyoto"] .side .health i.off,:root[data-brand="kyoto"] .side .badge-dot:not(.upd){background:#ff8f80}
 /* custom: only the accent changes; JS sets --cl/--cd and their text colours */
 :root[data-brand="custom"]{--accent:var(--cl);--accent-ink:var(--cli);--accent-soft:color-mix(in srgb,var(--cl) 11%,transparent)}
 @media (prefers-color-scheme: dark){:root[data-brand="custom"]:not([data-theme="light"]){--accent:var(--cd);--accent-ink:var(--cdi);--accent-soft:color-mix(in srgb,var(--cd) 13%,transparent)}}
@@ -601,20 +608,19 @@ textarea.yaml{width:100%;min-height:520px;border:0;outline:0;resize:vertical;pad
 .thumb{position:absolute;left:0;top:0;pointer-events:none;z-index:0;opacity:0;transition:transform var(--t3) var(--spring),width var(--t3) var(--spring),height var(--t3) var(--spring),opacity var(--t1)}
 .thumb.pill{border-radius:calc(var(--r-sm) - 2px);background:var(--s1);box-shadow:var(--shadow)}
 .thumb.line{background:var(--ink);border-radius:2px}
-.seg,.theme-seg,.views{position:relative}
+.seg,.views{position:relative}
 .set-nav{position:sticky}
 @media (max-width:860px){.set-nav{position:relative;top:0}}
-.seg>button,.theme-seg>button,.views>:not(.thumb),.set-nav>button,#side .ni{position:relative;z-index:1}
-.seg button[aria-pressed="true"],.theme-seg button[aria-pressed="true"]{background:none!important;box-shadow:none!important}
+.seg>button,.views>:not(.thumb),.set-nav>button,#side .ni{position:relative;z-index:1}
+.seg button[aria-pressed="true"]{background:none!important;box-shadow:none!important}
 .vtab[aria-selected="true"]::after{display:none}
 .set-nav button[aria-current="page"]{background:none;box-shadow:none}
 .set-nav>.thumb{border-radius:var(--r-xs)}
 #side>.thumb{border-radius:var(--r-xs)}
 #side .ni[aria-current="page"]{background:none;box-shadow:none}
 #side .ni[aria-current="page"]:hover{background:none}
-:root[data-brand="harbor"] #side>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
-:root[data-brand="harbor"] .side .theme-seg>.thumb{background:rgba(255,255,255,.14);box-shadow:none}
-:root[data-brand="harbor"] .side .ni[aria-current="page"]{background:none;box-shadow:none}
+:root[data-brand="kyoto"] #side>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
+:root[data-brand="kyoto"] .side .ni[aria-current="page"]{background:none;box-shadow:none}
 @media (max-width:860px){#side>.thumb{background:var(--s2);box-shadow:none}}
 .seg>.thumb{border-radius:calc(var(--r-sm) - 2px)}
 .views{overflow-y:hidden}
