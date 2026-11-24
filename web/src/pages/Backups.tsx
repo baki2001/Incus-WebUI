@@ -1,12 +1,149 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { bytes, dateTime, friendlyError, ui, type Instance } from "../api";
-import { invalidate, useApp, useData } from "../state";
+import { ic } from "../icons";
+import { useCrumbs } from "../Shell";
+import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { confirmDialog, Dialog, Input, Select, Table, TglRow } from "../ui";
 import { useNames } from "../data";
 import { DlgForm, F, nameProblem } from "./InstanceDialogs";
+import { matches, PageHead, Search } from "./Resource";
 
-type Meta = { key: string; target: string; server: string; project: string; instance: string; type: string; created: string; size: number; sha256: string; schedule?: string; by?: string };
-type TargetName = { name: string; type: string };
+export type Meta = { key: string; target: string; server: string; project: string; instance: string; type: string; created: string; size: number; sha256: string; schedule?: string; by?: string; name?: string };
+export type TargetName = { name: string; type: string };
+
+export function useBackupTargets() {
+  return useData<TargetName[]>("ui-backup-targets", () => ui("/backup-targets"));
+}
+
+const dlUrl = (m: Meta) => `/api/ui/backup/download?${new URLSearchParams({ target: m.target, key: m.key })}`;
+const madeBy = (m: Meta) => (m.schedule ? `Schedule ${m.schedule}` : m.by || "");
+
+async function deleteBackup(app: ReturnType<typeof useApp>, m: Meta) {
+  const ok = await confirmDialog({ title: "Delete backup", body: `Delete the backup of ${m.instance} from ${dateTime(m.created)} on ${m.target}? This can't be undone.`, confirm: "Delete", danger: true });
+  if (!ok) return;
+  try {
+    await ui(`/backup?${new URLSearchParams({ target: m.target, key: m.key })}`, { method: "DELETE" });
+    invalidate("backups:");
+  } catch (e) {
+    app.fail(e, "Couldn't delete the backup.");
+  }
+}
+
+function BackupActions({ m, onRestore }: { m: Meta; onRestore: (m: Meta) => void }) {
+  const app = useApp();
+  return (
+    <span className="bk-act">
+      <button className="lnk" onClick={() => onRestore(m)}>
+        Restore
+      </button>
+      <a className="lnk" href={dlUrl(m)} download>
+        Download
+      </a>
+      <button className="lnk" onClick={() => deleteBackup(app, m)}>
+        Delete
+      </button>
+    </span>
+  );
+}
+
+// ---------- the Backups page: every backup on every target ----------
+
+export function BackupsPage() {
+  useCrumbs([{ label: "Backups" }]);
+  const app = useApp();
+  const servers = useScopedServers();
+  const multi = app.servers.length > 1;
+  const allProjects = app.project === "*";
+  const names = servers.map((s) => s.name).join(",");
+  const q = useData<{ backups: Meta[]; errors: string[] }>(names ? `backups:all:${names}:${app.project}` : null, async () => {
+    const res = await Promise.all(
+      servers.map((s) =>
+        ui<{ backups: Meta[]; errors: string[] | null }>(`/backups/${encodeURIComponent(s.name)}?${new URLSearchParams({ project: app.project })}`).catch((e) => ({ backups: [] as Meta[], errors: [`${s.name}: ${friendlyError(e)}`] })),
+      ),
+    );
+    return { backups: res.flatMap((r) => r.backups || []), errors: [...new Set(res.flatMap((r) => r.errors || []))] };
+  }, 30000);
+  const targets = useBackupTargets();
+  const [search, setSearch] = useState("");
+  const [target, setTarget] = useState("");
+  const [restore, setRestore] = useState<Meta | null>(null);
+  const rows = q.data?.backups.filter((m) => (!target || m.target === target) && matches(search, m.instance, m.name, m.project, m.by, m.schedule));
+  const anyManage = (q.data?.backups || []).some((m) => app.can(m.server, m.project, "manager"));
+  const noTargets = targets.data && targets.data.length === 0;
+
+  return (
+    <>
+      <PageHead title="Backups">
+        {app.admin && (
+          <Link to="/settings/backups" className="btn btn-s press" style={{ textDecoration: "none" }}>
+            {ic.gear}Targets and schedules
+          </Link>
+        )}
+      </PageHead>
+      {noTargets ? (
+        <div className="panel" style={{ padding: 24 }}>
+          <p className="dim" style={{ margin: 0 }}>
+            {app.admin ? (
+              <>
+                No backup target is set up yet. <Link to="/settings/backups">Add one under Settings, Backups</Link>, then back up instances from their Backups or Snapshots tab, or with a schedule.
+              </>
+            ) : (
+              "No backup target is set up yet. Ask an admin to add one."
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="fbar">
+            <Search value={search} onChange={setSearch} placeholder="Filter by instance, name or project" />
+            {targets.data && targets.data.length > 1 && <Select aria-label="Backup target" value={target} onChange={setTarget} options={[{ v: "", l: "All targets" }, ...targets.data.map((t) => ({ v: t.name, l: t.name }))]} />}
+            <span className="dim fnote">Backups and snapshots kept on your backup targets. A restore makes a new instance; the original stays as it is.</span>
+          </div>
+          {q.data?.errors?.map((e) => (
+            <p key={e} className="bad">
+              {e}
+            </p>
+          ))}
+          <Table<Meta>
+            rows={rows}
+            loading={!q.data && !q.error}
+            rowKey={(m) => m.target + m.key}
+            initial={{ k: "created", asc: false }}
+            empty={q.error ? friendlyError(q.error) : search || target ? "No backups match." : "No backups yet."}
+            cols={[
+              {
+                k: "instance",
+                label: "Instance",
+                sort: (m) => m.instance,
+                cell: (m) => (
+                  <>
+                    <Link className="mono" to={`/instances/${encodeURIComponent(m.server)}/${encodeURIComponent(m.instance)}?project=${encodeURIComponent(m.project)}`}>
+                      {m.instance}
+                    </Link>
+                    {m.name && (
+                      <span className="tag" style={{ marginLeft: 8 }}>
+                        {m.name}
+                      </span>
+                    )}
+                  </>
+                ),
+              },
+              { k: "project", label: "Project", sort: (m) => m.project, cell: (m) => m.project, hide: !allProjects, cls: "hide-s" },
+              { k: "server", label: "Server", sort: (m) => m.server, cell: (m) => m.server, hide: !multi, cls: "hide-m" },
+              { k: "target", label: "Target", sort: (m) => m.target, cell: (m) => m.target },
+              { k: "created", label: "Made", sort: (m) => m.created, cell: (m) => dateTime(m.created) },
+              { k: "size", label: "Size", cls: "num hide-s", sort: (m) => m.size, cell: (m) => bytes(m.size) },
+              { k: "by", label: "By", sort: madeBy, cell: madeBy, cls: "hide-m" },
+              { k: "act", label: "", cls: "act", hide: !anyManage, cell: (m) => (app.can(m.server, m.project, "manager") ? <BackupActions m={m} onRestore={setRestore} /> : null) },
+            ]}
+          />
+        </>
+      )}
+      <RestoreDialog m={restore} onClose={() => setRestore(null)} />
+    </>
+  );
+}
 
 // The backups of one instance, on every target.
 export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
@@ -14,7 +151,7 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
   const canManage = app.can(inst.server, inst.project, "manager");
   const qs = new URLSearchParams({ project: inst.project, instance: inst.name });
   const q = useData<{ backups: Meta[]; errors: string[] | null }>(`backups:${inst.server}:${qs}`, () => ui(`/backups/${encodeURIComponent(inst.server)}?${qs}`), 30000);
-  const targets = useData<TargetName[]>("ui-backup-targets", () => ui("/backup-targets"));
+  const targets = useBackupTargets();
   const [target, setTarget] = useState("");
   const tgt = target || targets.data?.[0]?.name || "";
   const [restore, setRestore] = useState<Meta | null>(null);
@@ -28,17 +165,6 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
       app.fail(e, "Couldn't start the backup.");
     }
   };
-  const del = async (m: Meta) => {
-    const ok = await confirmDialog({ title: "Delete backup", body: `Delete the backup of ${m.instance} from ${dateTime(m.created)} on ${m.target}? This can't be undone.`, confirm: "Delete", danger: true });
-    if (!ok) return;
-    try {
-      await ui(`/backup?${new URLSearchParams({ target: m.target, key: m.key })}`, { method: "DELETE" });
-      invalidate("backups:");
-    } catch (e) {
-      app.fail(e, "Couldn't delete the backup.");
-    }
-  };
-  const dl = (m: Meta) => `/api/ui/backup/download?${new URLSearchParams({ target: m.target, key: m.key })}`;
 
   return (
     <div className="panel bk">
@@ -66,29 +192,11 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
         initial={{ k: "created", asc: false }}
         empty={q.error ? friendlyError(q.error) : "No backups of this instance yet."}
         cols={[
-          { k: "created", label: "Made", cell: (m) => dateTime(m.created), sort: (m) => m.created },
+          { k: "created", label: "Made", cell: (m) => (m.name ? <>{dateTime(m.created)}<span className="tag" style={{ marginLeft: 8 }}>{m.name}</span></> : dateTime(m.created)), sort: (m) => m.created },
           { k: "target", label: "Target", cell: (m) => m.target, sort: (m) => m.target },
           { k: "size", label: "Size", cls: "num", cell: (m) => bytes(m.size), sort: (m) => m.size },
-          { k: "by", label: "By", cell: (m) => (m.schedule ? `Schedule ${m.schedule}` : m.by || ""), sort: (m) => m.schedule || m.by },
-          {
-            k: "act",
-            label: "",
-            cls: "act",
-            hide: !canManage,
-            cell: (m) => (
-              <span className="bk-act">
-                <button className="lnk" onClick={() => setRestore(m)}>
-                  Restore
-                </button>
-                <a className="lnk" href={dl(m)} download>
-                  Download
-                </a>
-                <button className="lnk" onClick={() => del(m)}>
-                  Delete
-                </button>
-              </span>
-            ),
-          },
+          { k: "by", label: "By", cell: madeBy, sort: madeBy },
+          { k: "act", label: "", cls: "act", hide: !canManage, cell: (m) => <BackupActions m={m} onRestore={setRestore} /> },
         ]}
       />
       <RestoreDialog m={restore} onClose={() => setRestore(null)} />
@@ -96,31 +204,40 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
   );
 }
 
-function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => void }) {
+export function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => void }) {
   const app = useApp();
   const [name, setName] = useState("");
   const [project, setProject] = useState("");
+  const [pool, setPool] = useState("");
+  const projects = (useNames(m?.server || "", "projects").data || []).filter((p) => m && app.can(m.server, p, "manager"));
+  const taken = useNames(m?.server || "", "instances" as any, project).data || [];
+  const pools = useNames(m?.server || "", "storage-pools", project).data || [];
+  const takenLoaded = taken.length > 0;
   useEffect(() => {
     if (m) {
       setName(`${m.instance}-restored`);
       setProject(m.project);
+      setPool("");
     }
   }, [m]);
-  const projects = (useNames(m?.server || "", "projects").data || []).filter((p) => m && app.can(m.server, p, "manager"));
-  const taken = useNames(m?.server || "", "instances" as any, project).data || [];
+  // When the instance is gone, offer to bring it back under its own name.
+  useEffect(() => {
+    if (m && takenLoaded && project === m.project && !taken.includes(m.instance)) setName((n) => (n === `${m.instance}-restored` ? m.instance : n));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m, takenLoaded, project]);
   const bad = nameProblem(name, taken);
   return (
     <Dialog open={!!m} onClose={onClose} size="sm">
       {m && (
         <DlgForm
           title="Restore backup"
-          intro={`Makes a new instance from the backup of ${m.instance} made ${dateTime(m.created)}. The original stays as it is. The backup's checksum is checked on the way.`}
+          intro={`Makes a new instance from the backup of ${m.instance}${m.name ? ` (${m.name})` : ""} made ${dateTime(m.created)}. An instance that still exists stays as it is. The backup's checksum is checked on the way.`}
           confirm="Restore"
           disabled={!name || !!bad}
           onClose={onClose}
           onSubmit={async () => {
             try {
-              await ui("/backup/restore", { method: "POST", body: { target: m.target, key: m.key, server: m.server, project, name } });
+              await ui("/backup/restore", { method: "POST", body: { target: m.target, key: m.key, server: m.server, project, name, pool } });
               invalidate("ui-jobs");
               app.toast(`Restoring as ${name}. Follow it under Tasks.`);
               onClose();
@@ -137,6 +254,11 @@ function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => void }) 
           <F label="Project">
             <Select value={project} onChange={setProject} options={projects.length ? projects : [project]} />
           </F>
+          {pools.length > 1 && (
+            <F label="Storage pool">
+              <Select value={pool} onChange={setPool} options={[{ v: "", l: "The one in the backup" }, ...pools.map((p) => ({ v: p, l: p }))]} />
+            </F>
+          )}
         </DlgForm>
       )}
     </Dialog>

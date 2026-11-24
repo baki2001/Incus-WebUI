@@ -13,9 +13,13 @@ Backups land under `<server>/<project>/<instance>/` on the target. Each backup i
 
 ## Back up and restore
 
-An instance's Backups tab lists its backups on every target. Back up now makes one right away. For each backup you can:
+The Backups page in the sidebar lists the backups of every instance in the current server and project scope, on every target. Filter by instance, name or project, or by target. An instance's Backups tab lists only that instance's backups. Back up now makes one right away.
 
-- **Restore** it as a new instance, in the same project or another one. The original is not touched. The UI checks the checksum on the way, and a damaged file is refused without leaving a half-made instance behind.
+The Snapshots tab of an instance can also keep a snapshot on a backup target instead of on the server: pick the target in the list next to the name before you take it. The snapshot is a full backup that carries the name you gave it, and it shows on the Backups page and tab with that name. It doesn't expire and doesn't include memory; it stays until you delete it.
+
+For each backup you can:
+
+- **Restore** it as a new instance, in the same project or another one, and on another storage pool if you like. An instance that still exists is not touched; when the original is gone, the restore offers its old name. The UI checks the checksum on the way, and a damaged file is refused without leaving a half-made instance behind.
 - **Download** it. `incus import` reads the file on any Incus server.
 - **Delete** it.
 
