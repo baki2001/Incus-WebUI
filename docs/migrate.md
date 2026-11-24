@@ -13,6 +13,8 @@ Make a backup in Proxmox (Backup now, or `vzdump <id>`), copy the file from `/va
 
 LZO files are refused. Make the backup again with zstd, which is the Proxmox default.
 
+Backups on a Proxmox Backup Server (PBS) can't be imported yet. Restore the backup in Proxmox first, then make a vzdump backup of it.
+
 ### What carries over
 
 | Proxmox | Incus |
@@ -30,15 +32,25 @@ The preview lists everything else as a warning, such as PCI or USB passthrough, 
 
 ### What happens during the import
 
+The import has two parts:
+
+- **Upload.** Your browser sends the backup to the UI server. This is the only part that needs the browser, so keep the page open until the upload reaches 100%. The file then waits in the UI's data folder until you import or remove it, for a day at most. The import sheet shows when each upload goes and how much space they take.
+- **Import.** This runs on the UI server. Once you click Import you can close the browser; the import keeps going and shows under Tasks.
+
+The import itself:
+
 1. The UI reads the backup and builds an Incus image from it. A VM disk is converted to qcow2 on the fly; a container keeps its files and gets its user IDs shifted back if Proxmox stored them shifted.
 2. Incus creates the instance from that image with its disks and network cards, and the image is deleted again.
 3. If you chose to start it, the UI starts it and waits up to 3 minutes for a network address.
 
-If any step fails, the UI deletes what it created and keeps the uploaded file so you can try again. Uploads nobody imports are deleted after a day.
+If any step fails, the UI deletes what it created and keeps the uploaded file so you can try again. A successful import deletes the uploaded file.
 
 ### Things to know
 
 - The import needs free space for the backup and the converted disk in the UI's data folder, plus the space on the Incus server.
+- Once the image is sent, Incus still checks and stores it before the instance exists. For a big disk this takes a few minutes; the task counts the time so you can see it's still busy.
+- A UI restart stops a running import. The UI then deletes its half-finished files; the uploaded backup stays so you can start again.
+- Unpacking and converting a backup keeps about one CPU core busy on the UI server for the length of the import. It runs at a lower priority, so the rest of the UI stays responsive. To cap it, set `limits.cpu` on the UI's instance.
 - UEFI VMs boot the disk's default loader (`EFI/BOOT/BOOTX64.EFI`), because the boot entries in Proxmox's EFI disk are not imported. Most Linux and Windows installs have one.
 - Legacy BIOS VMs need SeaBIOS on the Incus server. When it's missing and the disk has an EFI partition, the VM boots with UEFI instead and the task says so. Otherwise the import stops and tells you to install SeaBIOS.
 - Windows VMs need the virtio drivers installed in Proxmox before the move if they used SATA or IDE disks.

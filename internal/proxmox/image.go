@@ -31,7 +31,7 @@ func Open(path string) (io.ReadCloser, error) {
 	closeBoth := func(c io.Closer) io.ReadCloser { return readCloser{br, c, f} }
 	switch {
 	case len(magic) == 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
-		d, err := zstd.NewReader(br, zstd.WithDecoderConcurrency(2), zstd.WithDecoderMaxWindow(1<<31))
+		d, err := zstd.NewReader(br, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(1<<31))
 		if err != nil {
 			f.Close()
 			return nil, err
