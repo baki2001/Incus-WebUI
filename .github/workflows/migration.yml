@@ -141,7 +141,8 @@ jobs:
           done
       - name: Start a Proxmox Backup Server
         run: |
-          docker run -d --name pbs -p 8007:8007 -v /tmp/fx:/fx debian:bookworm sleep infinity
+          # PBS keeps shared memory in /run/proxmox-backup/shmem and wants tmpfs there.
+          docker run -d --name pbs -p 8007:8007 --tmpfs /run:exec,mode=755 -v /tmp/fx:/fx debian:bookworm sleep infinity
           docker exec pbs bash -ec '
             apt-get update -qq && apt-get install -y -qq wget ca-certificates xz-utils >/dev/null
             wget -qO /etc/apt/trusted.gpg.d/proxmox.gpg https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
