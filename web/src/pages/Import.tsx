@@ -8,7 +8,6 @@ type Upload = { id: string; name: string; kind: "container" | "virtual-machine";
 
 type Snap = { ref: string; kind: "container" | "virtual-machine"; id: string; created: string; comment?: string; size?: number; problem?: string };
 
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 type Plan = {
   type: string;
   name: string;
@@ -196,7 +195,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
                       {u.name}
                     </button>
                     <span className="dim">
-                      {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, on the server until {day(u.expires)}
+                      {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
                     </span>
                     <button className="lnk" onClick={() => drop(u)}>
                       Remove
@@ -204,6 +203,11 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
                   </li>
                 ))}
               </ul>
+            )}
+            {(uploads.data || []).length > 0 && (
+              <p className="dim" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+                These uploads take {bytes(uploads.data!.reduce((n, u) => n + u.size, 0))} on the UI server. Each one is deleted when its import is done, or a day after it was uploaded or last imported.
+              </p>
             )}
           </>
         )}

@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -41,9 +42,10 @@ type importFile struct {
 	Expires time.Time `json:"expires"` // when pruneImports removes it
 }
 
-// Uploads stay on the UI server until they are imported or removed, or for a
-// week at most, so a big backup doesn't fill the disk forever.
-const importKeep = 7 * 24 * time.Hour
+// An upload stays on the UI server until it is imported or removed, for a
+// day at most, so a big backup doesn't take up disk space for long. The
+// import sheet shows when each one goes.
+const importKeep = 24 * time.Hour
 
 var importID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
@@ -55,15 +57,17 @@ func (a *App) readImport(id string, s *Session) (*importFile, error) {
 	if !importID.MatchString(id) {
 		return nil, errors.New("no such upload")
 	}
-	b, err := os.ReadFile(filepath.Join(a.importDir(), id+".json"))
-	if err != nil {
+	path := filepath.Join(a.importDir(), id+".json")
+	b, err := os.ReadFile(path)
+	st, serr := os.Stat(path)
+	if err != nil || serr != nil {
 		return nil, errors.New("no such upload")
 	}
 	var f importFile
 	if json.Unmarshal(b, &f) != nil || (f.Owner != owner(s) && !a.isAdmin(s)) {
 		return nil, errors.New("no such upload")
 	}
-	f.Expires = f.Created.Add(importKeep)
+	f.Expires = st.ModTime().Add(importKeep)
 	return &f, nil
 }
 
@@ -72,13 +76,34 @@ func (a *App) removeImport(id string) {
 	os.Remove(filepath.Join(a.importDir(), id+".json"))
 }
 
-// pruneImports removes old uploads and leftovers of a crash.
+// cleanImports removes the work folders of imports that a restart cut off,
+// then prunes old uploads every 10 minutes, whether or not anyone opens the
+// import sheet.
+func (a *App) cleanImports(ctx context.Context) {
+	ents, _ := os.ReadDir(a.importDir())
+	for _, e := range ents {
+		if e.IsDir() {
+			os.RemoveAll(filepath.Join(a.importDir(), e.Name()))
+		}
+	}
+	for {
+		a.pruneImports()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+		}
+	}
+}
+
+// pruneImports removes old uploads. A work folder is never old: it lives
+// only while its import runs.
 func (a *App) pruneImports() {
 	ents, _ := os.ReadDir(a.importDir())
 	for _, e := range ents {
 		info, err := e.Info()
-		if err == nil && time.Since(info.ModTime()) > importKeep {
-			os.RemoveAll(filepath.Join(a.importDir(), e.Name()))
+		if err == nil && !e.IsDir() && time.Since(info.ModTime()) > importKeep {
+			os.Remove(filepath.Join(a.importDir(), e.Name()))
 		}
 	}
 }
@@ -221,6 +246,10 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	// The day starts again, so pruning can't remove the file mid-import.
+	now := time.Now()
+	os.Chtimes(a.importPath(f.ID), now, now)
+	os.Chtimes(filepath.Join(a.importDir(), f.ID+".json"), now, now)
 	a.startImport(w, r, s, q, a.fileSource(f))
 }
 
@@ -366,7 +395,9 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		fp, err = uploadImage(ctx, c, q.Project, []string{img}, nil, func(x float64) { set(0.4+0.3*x, "Sending the image to Incus") })
+		sp := newSendProgress(set, 0.4, 0.8, "the image")
+		fp, err = uploadImage(ctx, c, q.Project, []string{img}, nil, sp.update)
+		sp.stop()
 		if err != nil {
 			return "", err
 		}
@@ -417,15 +448,20 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		if err := os.WriteFile(metaPath, meta, 0o600); err != nil {
 			return "", err
 		}
-		fp, err = uploadImage(ctx, c, q.Project, []string{metaPath, boot.Name()}, []string{"metadata", "rootfs.img"}, func(x float64) { set(0.5+0.25*x, "Sending the image to Incus") })
+		sp := newSendProgress(set, 0.5, 0.75, "the image")
+		fp, err = uploadImage(ctx, c, q.Project, []string{metaPath, boot.Name()}, []string{"metadata", "rootfs.img"}, sp.update)
+		sp.stop()
 		if err != nil {
 			return "", err
 		}
 		defer deleteImage(c, q.Project, fp)
 		for i, d := range p.ExtraDisks {
 			name := extraVolName(p.Name, d.Key)
-			set(0.75+0.1*float64(i)/float64(len(p.ExtraDisks)), "Sending disk "+d.Key)
-			if err := importVolume(ctx, c, q.Project, q.Pool, name, filepath.Join(tmp, d.Key+".img")); err != nil {
+			lo := 0.75 + 0.1*float64(i)/float64(len(p.ExtraDisks))
+			sp := newSendProgress(set, lo, lo+0.1/float64(len(p.ExtraDisks)), "disk "+d.Key)
+			err := importVolume(ctx, c, q.Project, q.Pool, name, filepath.Join(tmp, d.Key+".img"), sp.update)
+			sp.stop()
+			if err != nil {
 				return "", fmt.Errorf("disk %s: %w", d.Key, err)
 			}
 			undo = append(undo, func(ctx context.Context) {
@@ -435,7 +471,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		}
 	}
 
-	set(0.85, "Creating the instance")
+	set(0.85, "Creating the instance: Incus copies the disk into the storage pool")
 	body := map[string]any{
 		"name": p.Name, "type": p.Type, "config": p.Config, "devices": p.Devices,
 		"description": "Imported from Proxmox (" + src.label + ")",
@@ -497,6 +533,56 @@ func lowPriority() {
 	}
 }
 
+// sendProgress reports an upload to Incus. Once every byte is sent, Incus
+// still has to check and store the data, which can take minutes for a big
+// disk, so it then counts the time instead of leaving the task at one spot.
+type sendProgress struct {
+	set    func(float64, string)
+	lo, hi float64
+	what   string
+	once   sync.Once
+	done   chan struct{}
+}
+
+func newSendProgress(set func(float64, string), lo, hi float64, what string) *sendProgress {
+	set(lo, "Sending "+what+" to Incus")
+	return &sendProgress{set: set, lo: lo, hi: hi, what: what, done: make(chan struct{})}
+}
+
+func (s *sendProgress) update(sent, total int64) {
+	if sent < total {
+		s.set(s.lo+(s.hi-s.lo)*0.9*float64(sent)/float64(max(total, 1)), fmt.Sprintf("Sending %s to Incus: %s of %s", s.what, gib(sent), gib(total)))
+		return
+	}
+	s.once.Do(func() {
+		start := time.Now()
+		at := s.lo + (s.hi-s.lo)*0.9
+		s.set(at, "Incus is checking and storing "+s.what)
+		go func() {
+			t := time.NewTicker(10 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-s.done:
+					return
+				case <-t.C:
+					s.set(at, fmt.Sprintf("Incus is checking and storing %s (%s so far)", s.what, time.Since(start).Round(time.Second)))
+				}
+			}
+		}()
+	})
+}
+
+func (s *sendProgress) stop() {
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+}
+
+func gib(n int64) string { return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30)) }
+
 func biosMissing(err error) bool {
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "seabios") || strings.Contains(m, "csm") || strings.Contains(m, "firmware")
@@ -504,7 +590,7 @@ func biosMissing(err error) bool {
 
 // uploadImage sends a unified image (one file) or a split image (metadata
 // plus rootfs) and returns its fingerprint.
-func uploadImage(ctx context.Context, c *incusConn, project string, files, fields []string, progress func(float64)) (string, error) {
+func uploadImage(ctx context.Context, c *incusConn, project string, files, fields []string, progress func(sent, total int64)) (string, error) {
 	var total int64
 	for _, p := range files {
 		st, err := os.Stat(p)
@@ -569,16 +655,18 @@ type countReader struct {
 	r        io.Reader
 	n        *atomic.Int64
 	total    int64
-	progress func(float64)
+	progress func(sent, total int64)
 	last     time.Time
 }
 
 func (c *countReader) Read(b []byte) (int, error) {
 	n, err := c.r.Read(b)
 	done := c.n.Add(int64(n))
-	if time.Since(c.last) > time.Second {
+	if err == io.EOF {
+		c.progress(c.total, c.total)
+	} else if time.Since(c.last) > time.Second {
 		c.last = time.Now()
-		c.progress(min(1, float64(done)/float64(max(c.total, 1))))
+		c.progress(min(done, c.total), c.total)
 	}
 	return n, err
 }
@@ -586,7 +674,7 @@ func (c *countReader) Read(b []byte) (int, error) {
 // importVolume creates a custom block volume from a raw disk, sent as an
 // Incus volume backup: a tarball of backup/index.yaml and backup/volume.img.
 // It is gzipped on the fly, which keeps the empty parts of the disk small.
-func importVolume(ctx context.Context, c *incusConn, project, pool, name, img string) error {
+func importVolume(ctx context.Context, c *incusConn, project, pool, name, img string, progress func(sent, total int64)) error {
 	f, err := os.Open(img)
 	if err != nil {
 		return err
@@ -599,7 +687,8 @@ func importVolume(ctx context.Context, c *incusConn, project, pool, name, img st
 	pr, pw := io.Pipe()
 	go func() {
 		lowPriority()
-		pw.CloseWithError(volumeBackup(pw, pool, name, f, st.Size()))
+		var sent atomic.Int64
+		pw.CloseWithError(volumeBackup(pw, pool, name, &countReader{r: f, n: &sent, total: st.Size(), progress: progress}, st.Size()))
 	}()
 	defer pr.Close()
 	_, err = c.send(ctx, "POST", "/1.0/storage-pools/"+url.PathEscape(pool)+"/volumes/custom", project, pr,
