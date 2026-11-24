@@ -80,6 +80,8 @@ type BackupMeta struct {
 	SHA256   string    `json:"sha256"`
 	Schedule string    `json:"schedule,omitempty"`
 	By       string    `json:"by,omitempty"`
+	// Name is an optional label, such as the snapshot name it was taken as.
+	Name string `json:"name,omitempty"`
 }
 
 var (
@@ -275,6 +277,11 @@ func listBackups(ctx context.Context, st backupStore, target, prefix string) ([]
 
 // backupInstance exports one instance to a target.
 func (a *App) backupInstance(ctx context.Context, c *incusConn, t BackupTarget, st backupStore, server, project, inst, schedule, by string, set func(float64, string)) (*BackupMeta, error) {
+	return a.backupInstanceNamed(ctx, c, t, st, server, project, inst, schedule, by, "", set)
+}
+
+// backupInstanceNamed is backupInstance with a label kept in the backup's metadata.
+func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTarget, st backupStore, server, project, inst, schedule, by, label string, set func(float64, string)) (*BackupMeta, error) {
 	b, err := c.call(ctx, "GET", "/1.0/instances/"+url.PathEscape(inst), project, nil)
 	if err != nil {
 		return nil, err
@@ -285,7 +292,7 @@ func (a *App) backupInstance(ctx context.Context, c *incusConn, t BackupTarget, 
 	_ = json.Unmarshal(b, &info)
 
 	now := time.Now().UTC()
-	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by}
+	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by, Name: label}
 	if _, _, _, _, ok := splitKey(m.Key); !ok {
 		return nil, fmt.Errorf("can't back up %s: the server, project or instance name doesn't fit a file name", inst)
 	}
@@ -747,20 +754,31 @@ func (a *App) handleBackupTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBackups lists the backups of a project, or of one instance, on all
-// targets. Needs the viewer role on the project.
+// targets. Needs the viewer role on the project. Project "*" lists the
+// backups of every project the user may view on this server.
 func (a *App) handleBackups(w http.ResponseWriter, r *http.Request) {
+	s, _ := a.currentSession(r)
 	q := r.URL.Query()
 	server, project, inst := r.PathValue("server"), q.Get("project"), q.Get("instance")
 	if project == "" {
 		project = "default"
 	}
-	prefix := server + "/" + project + "/"
-	if inst != "" {
-		prefix += inst + "/"
-	}
-	if !backupPart.MatchString(server) || !backupPart.MatchString(project) || (inst != "" && !backupPart.MatchString(inst)) {
+	all := project == "*"
+	if !backupPart.MatchString(server) || (!all && !backupPart.MatchString(project)) || (inst != "" && (all || !backupPart.MatchString(inst))) {
 		jsonError(w, http.StatusBadRequest, "bad name")
 		return
+	}
+	access := a.store.Get().Access
+	if s == nil || (!all && roleFor(access, s, server, project) < RoleViewer) {
+		jsonError(w, http.StatusForbidden, deniedMsg(RoleViewer, project))
+		return
+	}
+	prefix := server + "/"
+	if !all {
+		prefix += project + "/"
+		if inst != "" {
+			prefix += inst + "/"
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -771,7 +789,11 @@ func (a *App) handleBackups(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			var l []BackupMeta
 			if l, err = listBackups(ctx, st, t.Name, prefix); err == nil {
-				out = append(out, l...)
+				for _, m := range l {
+					if !all || roleFor(access, s, server, m.Project) >= RoleViewer {
+						out = append(out, m)
+					}
+				}
 			}
 		}
 		if err != nil {
@@ -784,9 +806,13 @@ func (a *App) handleBackups(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 	s, _ := a.currentSession(r)
-	var in struct{ Project, Instance, Target string }
+	var in struct{ Project, Instance, Target, Name string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if in.Name != "" && !backupPart.MatchString(in.Name) {
+		jsonError(w, http.StatusBadRequest, "Pick a name with letters, numbers, dashes, dots and underscores.")
 		return
 	}
 	server := r.PathValue("server")
@@ -807,8 +833,12 @@ func (a *App) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	job := a.jobs.start("backup", "Back up "+in.Instance+" to "+t.Name, s, server, in.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
-		m, err := a.backupInstance(ctx, c, t, st, server, in.Project, in.Instance, "", s.User, set)
+	title := "Back up " + in.Instance + " to " + t.Name
+	if in.Name != "" {
+		title = "Snapshot " + in.Instance + " to " + t.Name + " as " + in.Name
+	}
+	job := a.jobs.start("backup", title, s, server, in.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
+		m, err := a.backupInstanceNamed(ctx, c, t, st, server, in.Project, in.Instance, "", s.User, in.Name, set)
 		if err != nil {
 			return jobResult{}, err
 		}

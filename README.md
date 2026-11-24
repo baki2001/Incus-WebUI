@@ -25,7 +25,7 @@
 - Create instances from an image server, an image already on the server, an OCI registry, or an ISO you uploaded.
 - Images: pull from an image server or OCI registry and keep them cached, with aliases and auto update.
 - Networks, ACLs and IPAM; storage pools, volumes, buckets and custom ISOs; profiles and projects with limits. Each one can be created, edited as a form or YAML, and deleted.
-- Backups to a directory or an S3 bucket, by hand or on a daily schedule that keeps a number of daily and weekly backups. Each backup has a checksum that restores check, and a schedule can test-restore its backups every week. See [Backups](docs/backups.md).
+- Backups to a directory or an S3 bucket, by hand, as a snapshot kept off the server, or on a daily schedule that keeps a number of daily and weekly backups. Each backup has a checksum that restores check, and a schedule can test-restore its backups every week. A Backups page lists and restores them all. See [Backups](docs/backups.md).
 - Import from Proxmox (VM and container backup files) and from Docker Compose files. A preview shows what each part becomes and what doesn't carry over; a failed import cleans up after itself. See [Import](docs/migrate.md).
 - Roles per server and project (viewer, operator, manager, admin), for local users, SSO users and SSO groups, and an audit log of every change and sign-in. See [Roles and the audit log](docs/roles.md).
 - A week of CPU, memory, network and disk history for every instance and host, kept by the UI itself.

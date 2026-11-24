@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { incus, incusOp, since, ui } from "./api";
+import { dateTime, incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside } from "./ui";
@@ -195,8 +195,8 @@ function Tasks() {
             <JobRow key={j.id} j={j} onOpen={close} />
           ))}
           {recent.length > 0 && <h3>Recent</h3>}
-          {recent.map((j) => (
-            <JobRow key={j.id} j={j} onOpen={close} />
+          {groupRepeats(recent).map(({ j, n }) => (
+            <DoneRow key={j.id} j={j} n={n} onOpen={close} />
           ))}
           {!busy && !recent.length && <p className="tray-empty">No tasks yet. Backups, imports and actions like starting an instance show up here, and stay for 30 days.</p>}
           <Link className="tray-all" to="/tasks" onClick={close}>
@@ -229,25 +229,84 @@ function JobRow({ j, onOpen }: { j: Job; onOpen: () => void }) {
         </small>
       </div>
     );
+  return <DoneRow j={j} onOpen={onOpen} />;
+}
+
+// A finished task reads as one short sentence ("Deleted test-nieuw",
+// "Couldn't delete test-nieuw") with the time on the right. A failure shows
+// its whole error underneath; a long one opens on click.
+function DoneRow({ j, n = 1, onOpen }: { j: Job; n?: number; onOpen: () => void }) {
+  const [full, setFull] = useState(false);
+  const t = taskText(j);
+  const when = j.ended ? since(j.ended).replace(/^(\d.*)$/, "$1 ago") : "";
   return (
-    <div className="op">
-      <span>{j.title}</span>
-      <small className={j.state === "failed" ? "bad" : undefined}>
-        <span className="op-res">{jobResult(j)}</span>
-        {j.link && j.state === "done" ? (
-          <Link className="lnk" to={j.link} onClick={onOpen}>
-            Open
-          </Link>
-        ) : (
-          <span className="op-when">{j.ended ? since(j.ended).replace(/^(\d.*)$/, "$1 ago") : ""}</span>
-        )}
-      </small>
+    <div className={"op op-done" + (j.state === "failed" ? " op-bad" : "")}>
+      <div className="op-l1">
+        <span className="op-what">
+          {t.line}
+          {n > 1 && <span className="op-n"> ×{n}</span>}
+        </span>
+        <span className="op-when" title={dateTime(j.ended || j.started)}>
+          {when}
+        </span>
+      </div>
+      {t.detail && (
+        <button type="button" className={"op-detail" + (full ? " full" : "")} onClick={() => setFull(!full)} title={full ? undefined : t.detail}>
+          {t.detail}
+        </button>
+      )}
+      {j.link && j.state === "done" && (
+        <Link className="lnk op-open" to={j.link} onClick={onOpen}>
+          Open
+        </Link>
+      )}
     </div>
   );
 }
 
+// The same task can fail a few times in a row with the same error; show it once.
+export function groupRepeats(list: Job[]) {
+  const out: { j: Job; n: number }[] = [];
+  for (const j of list) {
+    const last = out[out.length - 1];
+    if (last && last.j.title === j.title && last.j.state === j.state && (last.j.error || "") === (j.error || "")) last.n++;
+    else out.push({ j, n: 1 });
+  }
+  return out;
+}
+
+// Labels are written while the task runs ("Deleting web"). Once it ended,
+// say what happened instead.
+const tenses: Record<string, [string, string]> = {
+  Deleting: ["Deleted", "delete"], Saving: ["Saved", "save"], Creating: ["Created", "create"], Restoring: ["Restored", "restore"],
+  Removing: ["Removed", "remove"], Starting: ["Started", "start"], Stopping: ["Stopped", "stop"], Restarting: ["Restarted", "restart"],
+  Pausing: ["Paused", "pause"], Resuming: ["Resumed", "resume"], Pulling: ["Pulled", "pull"], Marking: ["Marked", "mark"],
+  Cancelling: ["Cancelled", "cancel"], Attaching: ["Attached", "attach"], Adding: ["Added", "add"], Acknowledging: ["Acknowledged", "acknowledge"],
+  Import: ["Imported", "import"], Restore: ["Restored", "restore"], "Back up": ["Backed up", "back up"],
+};
+
+export function taskText(j: Job): { line: string; detail?: string } {
+  const m = Object.keys(tenses).find((v) => j.title === v || j.title.startsWith(v + " "));
+  const rest = m ? j.title.slice(m.length) : "";
+  if (j.state === "failed") return { line: m ? `Couldn't ${tenses[m][1]}${rest}` : `${j.title} failed`, detail: j.error || "No reason given." };
+  if (j.state === "cancelled") return { line: j.title, detail: "Cancelled" };
+  if (j.state === "running") return { line: j.title, detail: j.detail || "working" };
+  const line = m ? tenses[m][0] + rest : j.title;
+  if (!j.note || j.note === "Done") return { line };
+  // The note is the message shown when it finished, like "Network web
+  // deleted". When it says the same thing with more detail, it becomes the line.
+  if (covers(j.note, line)) return { line: j.note };
+  return { line, detail: j.note };
+}
+
+const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}._-]+/gu) || [];
+function covers(note: string, line: string) {
+  const n = new Set(words(note));
+  return words(line).every((w) => n.has(w));
+}
+
 export function jobResult(j: Job) {
-  return j.state === "done" ? j.note || "Done" : j.state === "cancelled" ? "Cancelled" : j.state === "failed" ? j.error || "Failed" : j.detail || "working";
+  return taskText(j).detail || "Done";
 }
 
 type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; admin?: boolean };
@@ -404,6 +463,10 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {ic.folder}
           {lbl("Projects")}
         </NavLink>
+        <NavLink to="/backups" className="ni" title="Backups">
+          {ic.backup}
+          {lbl("Backups")}
+        </NavLink>
         {app.servers.length > 0 && <div className="grp">Hosts</div>}
         {app.servers.map((s) => (
           <NavLink key={s.name} to={`/hosts/${s.name}`} className="ni" title={s.name}>
@@ -447,15 +510,15 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   );
 }
 
-// ModeBtn cycles Auto -> Light -> Dark. Settings > Appearance has the same choice.
+// ModeBtn cycles Kyoto -> Light -> Graphite. Settings > Appearance has the same choice.
 function ModeBtn() {
   const app = useApp();
-  const order: Mode[] = ["auto", "light", "dark"];
+  const order: Mode[] = ["kyoto", "light", "graphite"];
   const next = order[(order.indexOf(app.mode) + 1) % order.length];
   const name = (m: Mode) => m[0].toUpperCase() + m.slice(1);
   return (
-    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Colour mode: ${name(app.mode)}. Switch to ${name(next)}`} title={`Colour mode: ${name(app.mode)}`}>
-      {app.mode === "light" ? ic.sun : app.mode === "dark" ? ic.moon : ic.auto}
+    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Look: ${name(app.mode)}. Switch to ${name(next)}`} title={`Look: ${name(app.mode)}`}>
+      {app.mode === "light" ? ic.sun : app.mode === "graphite" ? ic.moon : ic.auto}
     </button>
   );
 }
@@ -625,6 +688,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
       { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
       { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
+      { group: "Go to", label: "Backups", icon: ic.backup, run: go("/backups") },
       { group: "Go to", label: "Tasks", icon: ic.tasks, run: go("/tasks") },
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
@@ -633,8 +697,9 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
-      { group: "Actions", label: "Switch to dark mode", icon: ic.screen, run: () => (app.setMode("dark"), onClose()) },
-      { group: "Actions", label: "Switch to light mode", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
+      { group: "Actions", label: "Switch to Kyoto", icon: ic.screen, run: () => (app.setMode("kyoto"), onClose()) },
+      { group: "Actions", label: "Switch to Light", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
+      { group: "Actions", label: "Switch to Graphite (dark)", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
     ];
     const where = (project: string | undefined, server: string, always = false) => [project && (always || project !== "default") ? project : "", multi ? server : ""].filter(Boolean).join(" · ");
     for (const r of found.data?.instances || []) {

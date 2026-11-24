@@ -391,7 +391,7 @@ pre.code .k{color:var(--ink)}
 .menu button.danger{color:var(--err)}
 .menu .kbd{margin-left:auto}
 .menu hr{border:0;border-top:1px solid var(--line);margin:5px 0}
-.tray{position:absolute;right:0;top:40px;width:320px;padding:6px 0;background:var(--s1);border-radius:var(--r-sm);box-shadow:var(--pop);z-index:20;animation:mIn var(--t2) var(--spring)}
+.tray{position:absolute;right:0;top:40px;width:340px;padding:6px 0;background:var(--s1);border-radius:var(--r-sm);box-shadow:var(--pop);z-index:20;animation:mIn var(--t2) var(--spring)}
 .tray .op{padding:10px 14px}
 .tray h3{font-size:12.5px;font-weight:500;color:var(--ink-3);padding:6px 14px 2px}
 
@@ -448,22 +448,6 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   --ok:#142950; --info:#3b5180; --idle:#9599aa; --warn:#9c5a05; --err:#b3261e;
   --side:#142950; --side-ink:rgba(255,255,255,.92); --side-ink-2:#bbbecb; --side-s:rgba(187,190,203,.12); --side-line:rgba(187,190,203,.16);
 }
-@media (prefers-color-scheme: dark){:root[data-brand="kyoto"]:not([data-theme="light"]){
-  --bg:#111214; --s1:#18191c; --s2:#1f2024; --s3:#28292e;
-  --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
-  --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
-  --cta:#db390c; --cta-ink:#ffffff;
-  --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
-  --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}}
-:root[data-brand="kyoto"][data-theme="dark"]{
-  --bg:#111214; --s1:#18191c; --s2:#1f2024; --s3:#28292e;
-  --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
-  --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
-  --cta:#db390c; --cta-ink:#ffffff;
-  --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
-  --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}
 /* Kyoto carries the indigo into the sidebar */
 :root[data-brand="kyoto"] .side{background:var(--side);border-right-color:var(--side-line);color:var(--side-ink)}
 :root[data-brand="kyoto"] .side .brand,:root[data-brand="kyoto"] .side .acct-txt{color:var(--side-ink)}

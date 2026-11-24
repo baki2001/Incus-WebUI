@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./styles.css";
 import "./extra.css";
 import { setUnauthorizedHandler, ui } from "./api";
-import { AppProvider, applyTheme, type Mode, type Theme } from "./state";
+import { AppProvider, applyTheme, defaultLook, storedLook, type Theme } from "./state";
 import { Shell } from "./Shell";
 import { Login, takeNext } from "./pages/Login";
 import { Overview } from "./pages/Overview";
@@ -19,6 +19,7 @@ import { Audit, Operations, Tasks, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
 import { Tunnels } from "./pages/Tunnels";
+import { BackupsPage } from "./pages/Backups";
 
 type AuthInfo = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; theme: Theme; user?: string; method?: string };
 
@@ -39,13 +40,7 @@ function Root() {
   }, []);
   useEffect(() => {
     if (auth) {
-      let mode: Mode = "auto";
-      try {
-        mode = (localStorage.getItem("iwui.mode") as Mode) || "auto";
-      } catch {
-        /* ignore */
-      }
-      applyTheme(auth.theme, mode);
+      applyTheme(auth.theme, storedLook() || defaultLook(auth.theme));
     }
   }, [auth]);
   if (!auth) return null;
@@ -69,6 +64,7 @@ function Root() {
             <Route path="/tunnels" element={<Tunnels />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/projects" element={<Projects />} />
+            <Route path="/backups" element={<BackupsPage />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/operations" element={<Operations />} />
             <Route path="/warnings" element={<Warnings />} />

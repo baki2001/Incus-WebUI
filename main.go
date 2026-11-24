@@ -232,7 +232,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/ui/backup-targets/test", admin(a.handleBackupTest))
 	mux.Handle("GET /api/ui/backup-targets", auth(a.handleBackupTargets))
 	mux.Handle("POST /api/ui/backup-schedules/{name}/run", admin(a.handleScheduleRun))
-	mux.Handle("GET /api/ui/backups/{server}", auth(a.requireRole(RoleViewer, a.handleBackups)))
+	mux.Handle("GET /api/ui/backups/{server}", auth(a.handleBackups))
 	mux.Handle("POST /api/ui/backups/{server}", auth(a.handleBackupRun))
 	mux.Handle("GET /api/ui/backup/download", auth(a.handleBackupDownload))
 	mux.Handle("DELETE /api/ui/backup", auth(a.handleBackupDelete))
@@ -268,7 +268,7 @@ func (a *App) handleTheme(w http.ResponseWriter, r *http.Request) {
 		t.Name = "kyoto"
 	}
 	switch t.Name {
-	case "graphite", "kyoto":
+	case "kyoto", "light", "graphite":
 		t.Accent = ""
 	case "custom":
 		if !hexColor.MatchString(t.Accent) {
