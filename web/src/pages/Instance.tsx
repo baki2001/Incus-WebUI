@@ -337,7 +337,12 @@ function OverviewTab({ inst }: { inst: Instance & { server: string } }) {
                             <CopyBtn text={a.address} />
                           </div>
                         ))}
-                      <div className="mono dim">{d.hwaddr}</div>
+                      {d.hwaddr && (
+                        <div className="mono dim">
+                          {d.hwaddr}
+                          <CopyBtn text={d.hwaddr} />
+                        </div>
+                      )}
                     </dd>
                   </div>
                 ))}
