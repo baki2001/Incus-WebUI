@@ -19,6 +19,7 @@ import { Audit, Operations, Tasks, Warnings } from "./pages/Activity";
 import { Settings } from "./pages/Settings";
 import { Host } from "./pages/Host";
 import { Tunnels } from "./pages/Tunnels";
+import { BackupsPage } from "./pages/Backups";
 
 type AuthInfo = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; theme: Theme; user?: string; method?: string };
 
@@ -69,6 +70,7 @@ function Root() {
             <Route path="/tunnels" element={<Tunnels />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/projects" element={<Projects />} />
+            <Route path="/backups" element={<BackupsPage />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/operations" element={<Operations />} />
             <Route path="/warnings" element={<Warnings />} />
