@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { bytes, incus, incusOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
@@ -37,7 +37,6 @@ export function Projects() {
 
   const save = async (d: PrPut) => {
     if (!edit) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the project a name: letters, numbers, dashes, dots.");
       const config = Object.fromEntries(Object.entries(d.config).filter(([k, v]) => k && v !== ""));
       const ok = await app.run(
         `Creating project ${d.name}`,
@@ -65,7 +64,7 @@ export function Projects() {
   };
   const del = async (p: Project) => {
     const used = (p.used_by || []).filter((u) => !u.includes("/profiles/default"));
-    if (!(await confirmDialog({ title: `Delete project ${p.name}?`, body: used.length ? usedByBody(`It still holds ${used.length} things. Incus refuses to delete it until it's empty.`, used, p.server) : "The project is empty.", confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
+    if (!(await confirmDialog({ title: `Delete project ${p.name}?`, body: used.length ? usedByBody(`It still holds ${used.length} things. Incus refuses to delete it until it's empty.`, used, p.server) : "The project is empty.", confirm: "Delete", danger: true, noConfirm: used.length > 0, typeToConfirm: used.length ? undefined : p.name }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/projects/${encodeURIComponent(p.name)}`, { method: "DELETE" }).then(() => true), `Project ${p.name} deleted`);
     if (ok) {
       if (app.project === p.name) app.setProject("default");
@@ -100,7 +99,7 @@ export function Projects() {
               <span className="nm">
                 <span className="nm2">
                   {p.name}
-                  {app.project === p.name && <span className="tag" style={{ marginLeft: 8 }}>current</span>}
+                  {app.project === p.name && <span className="tag">current</span>}
                 </span>
                 {p.description && <small className="dim">{p.description}</small>}
               </span>
@@ -135,6 +134,7 @@ export function Projects() {
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Project ${edit.name}` : "Create project"}
         create={!edit}
+        validate={(d) => (!edit && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "") ? "Give the project a name: letters, numbers, dashes, dots." : "")}
         value={
           edit
             ? { description: edit.description, config: edit.config }
@@ -182,7 +182,7 @@ export function Projects() {
                 {!edit && d.config["features.profiles"] === "true" && (
                   <TglRow title="Copy the default profile" note="Gives the new project the same root disk and network card, so instances start right away." on={!!d.copyDefault} onChange={(o) => set((x) => void (x.copyDefault = o))} />
                 )}
-                {edit && <span className="dim" style={{ fontSize: 12.5 }}>Most of these can only change while the project is empty.</span>}
+                {edit && <span className="note">Most of these can only change while the project is empty.</span>}
               </SheetSec>
               <SheetSec title="Limits">
                 <div className="two">
@@ -199,7 +199,7 @@ export function Projects() {
                     <Input mono value={d.config["limits.disk"] || ""} onChange={(v) => setCfg("limits.disk", v)} />
                   </Field>
                 </div>
-                <span className="dim" style={{ fontSize: 12.5 }}>
+                <span className="note">
                   With a CPU, memory or disk limit, every instance in the project needs its own limit for that too.
                 </span>
               </SheetSec>
@@ -229,30 +229,42 @@ function Usage({ server, name }: { server: string; name: string }) {
     ["processes", "Processes", false],
     ["networks", "Networks", false],
   ];
+  const shown = rows
+    .filter(([k]) => r[k])
+    .map(([k, l, isBytes]) => ({
+      k,
+      l,
+      isBytes,
+      u: (r[k].Usage ?? r[k].usage ?? 0) as number,
+      lim: (r[k].Limit ?? r[k].limit ?? -1) as number,
+    }))
+    .filter((x) => x.u > 0 || x.lim >= 0);
   return (
     <SheetSec title="Usage">
-      <div className="usage panel" style={{ boxShadow: "inset 0 0 0 1px var(--line)" }}>
-        {rows
-          .filter(([k]) => r[k])
-          .map(([k, l, isBytes]) => {
-            const u = r[k].Usage ?? r[k].usage ?? 0;
-            const lim = r[k].Limit ?? r[k].limit ?? -1;
+      {!shown.length ? (
+        <span className="none">No limits or usage yet.</span>
+      ) : (
+        <dl className="kv tight">
+          {shown.map(({ k, l, isBytes, u, lim }) => {
             const f = (n: number) => (isBytes ? bytes(n) : String(n));
             return (
-              <div key={k}>
-                <label>{l}</label>
-                <div className="v">
-                  {f(u)} <span className="dim">{lim >= 0 ? `of ${f(lim)}` : "no limit"}</span>
-                </div>
-                {lim > 0 && (
-                  <div className="bar">
-                    <i style={{ transform: `scaleX(${Math.min(1, u / lim)})` }} className={u / lim > 0.9 ? "hot" : ""} />
-                  </div>
-                )}
-              </div>
+              <Fragment key={k}>
+                <dt>{l}</dt>
+                <dd>
+                  <span>
+                    {f(u)} {lim >= 0 ? <span className="dim">of {f(lim)}</span> : <span className="dim">no limit</span>}
+                  </span>
+                  {lim > 0 && (
+                    <div className="bar" style={{ marginTop: 6 }}>
+                      <i style={{ transform: `scaleX(${Math.min(1, u / lim)})` }} className={u / lim > 0.9 ? "hot" : ""} />
+                    </div>
+                  )}
+                </dd>
+              </Fragment>
             );
           })}
-      </div>
+        </dl>
+      )}
     </SheetSec>
   );
 }

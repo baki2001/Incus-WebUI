@@ -5,7 +5,7 @@ import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useCurrentProject, useInstances } from "../data";
-import { confirmDialog, CopyBtn, Dialog, Empty, Field, Input, Menu, Select, Sheet, SheetSec } from "../ui";
+import { confirmDialog, CopyBtn, Dialog, Empty, Field, Input, Menu, Select, Sheet, SheetSec, Skel } from "../ui";
 import { PageHead, Search, matches } from "./Resource";
 import { genKeyPair, genPSK, qrPath } from "./tunnelkit";
 
@@ -100,22 +100,36 @@ export function Tunnels() {
         </Menu>
       </PageHead>
 
-      {q.error && !list && <div className="panel" style={{ padding: 16 }}>{q.error}</div>}
+      {!list && !q.error && (
+        <div className="panel" style={{ padding: 16 }}>
+          <Skel lines={3} />
+        </div>
+      )}
+      {q.error && !list && <div className="note-box bad">{q.error}</div>}
       {list && list.length === 0 && (
         <div className="panel">
           <Empty title="No tunnels yet">WireGuard runs in a small gateway instance, never on the host. Pick what you want to do.</Empty>
-          <div className="tn-start">
-            <button className="press" onClick={() => setWizard("remote")}>
-              <b>Remote access</b>
-              <span>Reach your homelab from a laptop or phone.</span>
+          <div className="ilinks tn-start-links">
+            <button className="ilink press" onClick={() => setWizard("remote")}>
+              <span className="tn-pn">
+                <b>Remote access</b>
+                <small className="dim">Reach your homelab from a laptop or phone.</small>
+              </span>
+              <span className="dim">{ic.right}</span>
             </button>
-            <button className="press" onClick={() => setWizard("vps")}>
-              <b>Homelab to VPS</b>
-              <span>Your homelab dials out to a VPS. No port opens at home.</span>
+            <button className="ilink press" onClick={() => setWizard("vps")}>
+              <span className="tn-pn">
+                <b>Homelab to VPS</b>
+                <small className="dim">Your homelab dials out to a VPS. No port opens at home.</small>
+              </span>
+              <span className="dim">{ic.right}</span>
             </button>
-            <button className="press" onClick={() => setWizard("monitor")}>
-              <b>Monitor an existing tunnel</b>
-              <span>Watch a WireGuard instance you already run.</span>
+            <button className="ilink press" onClick={() => setWizard("monitor")}>
+              <span className="tn-pn">
+                <b>Monitor an existing tunnel</b>
+                <small className="dim">Watch a WireGuard instance you already run.</small>
+              </span>
+              <span className="dim">{ic.right}</span>
             </button>
           </div>
         </div>
@@ -160,7 +174,7 @@ function TunnelPanel({ t, multi, onAdd, onRemove, onRetry, onRevoke }: { t: Tunn
           </button>
         </span>
       </div>
-      <dl className="tn-meta">
+      <dl className="kv">
         {t.iface && <Meta k="Interface" v={t.iface} />}
         {t.listenPort > 0 && <Meta k="UDP port" v={String(t.listenPort)} />}
         {t.endpoint && <Meta k="Public endpoint" v={t.endpoint} />}
@@ -169,7 +183,7 @@ function TunnelPanel({ t, multi, onAdd, onRemove, onRetry, onRevoke }: { t: Tunn
         {multi && <Meta k="Server" v={t.server} plain />}
         {t.project !== "default" && <Meta k="Project" v={t.project} plain />}
       </dl>
-      {t.error && <div className="tn-err">{t.error}</div>}
+      {t.error && <div className="note-box bad tn-err">{t.error}</div>}
       {t.peers.length > 0 ? (
         <div className="tn-peers" role="table" aria-label={`Peers of ${t.instance}`}>
           <div className="tn-peer tn-head" role="row">
@@ -196,7 +210,7 @@ function TunnelPanel({ t, multi, onAdd, onRemove, onRetry, onRevoke }: { t: Tunn
                 </span>
                 <span className="tn-x">
                   {t.kind === "remote-access" && (
-                    <button className="btn btn-q btn-sm press" onClick={() => onRevoke(p)} aria-label={`Remove ${p.name || "device"}`} title="Remove device">
+                    <button className="btn btn-q ib btn-sm press" onClick={() => onRevoke(p)} aria-label={`Remove ${p.name || "device"}`} title="Remove device">
                       {ic.x}
                     </button>
                   )}
@@ -206,7 +220,11 @@ function TunnelPanel({ t, multi, onAdd, onRemove, onRetry, onRevoke }: { t: Tunn
           })}
         </div>
       ) : (
-        !t.error && <div className="tn-none dim">{t.kind === "remote-access" ? "No devices yet. Add one to get a QR code for your phone or a config file for your laptop." : "No peers."}</div>
+        !t.error && (
+          <div className="pfoot">
+            <span className="none">{t.kind === "remote-access" ? "No devices yet. Add one to get a QR code for your phone or a config file for your laptop." : "No peers."}</span>
+          </div>
+        )
       )}
     </div>
   );
@@ -214,10 +232,10 @@ function TunnelPanel({ t, multi, onAdd, onRemove, onRetry, onRevoke }: { t: Tunn
 
 function Meta({ k, v, plain }: { k: string; v: string; plain?: boolean }) {
   return (
-    <div>
+    <>
       <dt>{k}</dt>
       <dd className={plain ? undefined : "mono"}>{v}</dd>
-    </div>
+    </>
   );
 }
 
@@ -371,7 +389,7 @@ function RemoteWizard({ open, onClose, onAdd }: { open: boolean; onClose: () => 
           <p className="tn-p">
             Gateway <b>{res.instance}</b> is created. {res.up ? "WireGuard is running." : "WireGuard is installed but isn't running yet."}
           </p>
-          {!res.up && <div className="tn-err">{res.error}</div>}
+          {!res.up && <div className="note-box bad">{res.error}</div>}
           <p className="tn-p dim">Next, add your first device. Its private key is made in this browser and never reaches the server.</p>
         </>
       ) : (
@@ -399,7 +417,7 @@ function RemoteWizard({ open, onClose, onAdd }: { open: boolean; onClose: () => 
               <Input value={subnet} onChange={setSubnet} mono />
             </Field>
           </SheetSec>
-          {err && <div className="tn-err">{err}</div>}
+          {err && <div className="note-box bad">{err}</div>}
         </>
       )}
       </div>
@@ -474,16 +492,13 @@ function AddDevice({ t, onClose }: { t: Tunnel | null; onClose: () => void }) {
             <Field label="Device name" hint="For example laptop or Anna's phone." bad={!!name && !okName}>
               <Input value={name} onChange={setName} onKeyDown={(e) => e.key === "Enter" && okName && !busy && go()} autoFocus />
             </Field>
-            {err && <div className="tn-err">{err}</div>}
+            {err && <div className="note-box bad">{err}</div>}
           </>
         ) : (
           <>
             <p>Scan this with the WireGuard app, or download the file. This is the only time the private key is shown.</p>
             <QR text={conf} />
             <div className="tn-row">
-              <button className="btn btn-p press" onClick={() => download(`${fileSafe(name)}.conf`, conf)}>
-                {ic.dl}Download .conf
-              </button>
               <button className="btn btn-s press" onClick={() => navigator.clipboard?.writeText(conf).then(() => app.toast("Copied"))}>
                 {ic.copy}Copy
               </button>
@@ -491,7 +506,7 @@ function AddDevice({ t, onClose }: { t: Tunnel | null; onClose: () => void }) {
                 {showText ? "Hide" : "Show"} config
               </button>
             </div>
-            {showText && <pre className="tn-pre">{conf}</pre>}
+            {showText && <pre className="code box">{conf}</pre>}
           </>
         )}
       </div>
@@ -499,7 +514,11 @@ function AddDevice({ t, onClose }: { t: Tunnel | null; onClose: () => void }) {
         <button className="btn btn-s press tn-fb" onClick={close}>
           {conf ? "Done" : "Cancel"}
         </button>
-        {!conf && (
+        {conf ? (
+          <button className="btn btn-p press tn-fb" onClick={() => download(`${fileSafe(name)}.conf`, conf)}>
+            {ic.dl}Download .conf
+          </button>
+        ) : (
           <button className="btn btn-p press tn-fb" onClick={go} disabled={!okName || busy}>
             {busy ? "Creating…" : "Create device"}
           </button>
@@ -609,7 +628,7 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
           <p className="tn-p">
             Gateway <b>{res.instance}</b> is created and {res.up ? "dialling out to your VPS as soon as it answers." : "installed, but it isn't running."}
           </p>
-          {!res.up && <div className="tn-err">{res.error}</div>}
+          {!res.up && <div className="note-box bad">{res.error}</div>}
           <SheetSec
             title="1. Run this on the VPS as root"
             action={
@@ -621,7 +640,7 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
               </>
             }
           >
-            <pre className="tn-pre">{res.script}</pre>
+            <pre className="code box">{res.script}</pre>
           </SheetSec>
           <SheetSec
             title="Or just the config for /etc/wireguard/wg0.conf"
@@ -634,7 +653,7 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
               </>
             }
           >
-            <pre className="tn-pre">{res.conf}</pre>
+            <pre className="code box">{res.conf}</pre>
           </SheetSec>
           <p className="tn-p dim">The VPS private key is in these texts and nowhere else. Open UDP port {port} on the VPS firewall. The tunnel shows up on this page once the gateway has connected.</p>
         </>
@@ -655,6 +674,15 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
           </SheetSec>
           <SheetSec title="Publish ports through the VPS" action={<button className="btn btn-q btn-sm press" onClick={() => setRules((r) => [...r, { proto: "tcp", port: "", ip: targets[0]?.ip || "", targetPort: "" }])}>{ic.plus}Add port</button>}>
             {rules.length === 0 && <div className="dim tn-h">Optional. Forward a public port on the VPS to a service at home.</div>}
+            {rules.length > 0 && (
+              <div className="tn-rule ghdr">
+                <span>Protocol</span>
+                <span>VPS port</span>
+                <span>Instance</span>
+                <span>Port</span>
+                <span />
+              </div>
+            )}
             {rules.map((r, i) => (
               <div className="tn-rule" key={i}>
                 <Select value={r.proto} onChange={(v) => setRule(i, { proto: v as Rule["proto"] })} options={["tcp", "udp"]} aria-label="Protocol" />
@@ -676,7 +704,7 @@ function VpsWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
               <Input value={subnet} onChange={setSubnet} mono />
             </Field>
           </SheetSec>
-          {err && <div className="tn-err">{err}</div>}
+          {err && <div className="note-box bad">{err}</div>}
         </>
       )}
       </div>
@@ -738,7 +766,7 @@ function MonitorWizard({ open, onClose, watched }: { open: boolean; onClose: () 
             </div>
           );
         })}
-        {!rows.length && <div className="dim tn-h">{inst.data ? "No running containers to pick." : "Loading…"}</div>}
+        {!rows.length && (!inst.data ? <Skel lines={3} /> : <div className="dim tn-h">No running containers to pick.</div>)}
       </div>
       </div>
     </Sheet>

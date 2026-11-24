@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
+import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { BackupSettings } from "./Backups";
 import { Security } from "./Security";
 import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
-import { confirmDialog, CopyBtn, Field, Input, Seg, Select } from "../ui";
+import { confirmDialog, CopyBtn, Field, Input, Menu, Seg, Select, usePresence, useThumb } from "../ui";
 
 type Section = "appearance" | "security" | "servers" | "users" | "backups" | "about";
 const sections: { v: Section; l: string; admin?: boolean; local?: boolean }[] = [
@@ -22,6 +23,11 @@ export function Settings() {
   const nav = useNavigate();
   const { admin, method } = useApp();
   const local = method === "password";
+  const navRef = useRef<HTMLElement>(null);
+  useThumb(navRef, 'button[aria-current="page"]', [section, admin, local]);
+  useEffect(() => {
+    navRef.current?.querySelector('button[aria-current="page"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [section]);
   useCrumbs([{ label: "Settings", to: "/settings" }, { label: sections.find((s) => s.v === section)?.l || "" }]);
   return (
     <>
@@ -29,7 +35,7 @@ export function Settings() {
         <h1>Settings</h1>
       </div>
       <div className="set">
-        <nav className="set-nav">
+        <nav className="set-nav" ref={navRef}>
           {sections.filter((s) => (admin || !s.admin) && (local || !s.local)).map((s) => (
             <button key={s.v} aria-current={section === s.v ? "page" : undefined} onClick={() => nav(`/settings/${s.v}`)}>
               {s.l}
@@ -70,7 +76,7 @@ function Appearance() {
     { v: "kyoto", l: "Kyoto", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#fff", card: "#fff", cardInk: "#101a30", btn: "#db390c" } },
     { v: "light", l: "Light", note: "Plain light", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: "#3d5fc4" } },
     { v: "graphite", l: "Graphite", note: "Dark", pv: { page: "#0e0e10", side: "transparent", sideInk: "rgba(255,255,255,.7)", card: "#1d1d20", cardInk: "rgba(255,255,255,.8)", btn: "#93a8ee" } },
-    { v: "custom", l: "Custom", note: "Your accent on Light and Graphite", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: pair.light } },
+    { v: "custom", l: "Custom", note: "Your accent", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: pair.light } },
   ];
   return (
     <>
@@ -78,7 +84,6 @@ function Appearance() {
         <h2>
           Look<span className="scope-tag">Just for you, on this browser</span>
         </h2>
-        <p>Kyoto is stone and indigo, Light is plain light, Graphite is dark.</p>
         <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "kyoto", l: "Kyoto" }, { v: "light", l: "Light" }, { v: "graphite", l: "Graphite" }]} />
       </section>
       {app.admin && <section className="set-sec">
@@ -129,18 +134,18 @@ function Appearance() {
               <div className="row">
                 <span className="sw" style={{ background: pair.light }} />
                 <span className="mono">{pair.light}</span>
-                <span className="ok">{contrast(pair.light, "#f5f5f7").toFixed(1)}:1</span>
+                <span className="dim2">{contrast(pair.light, "#f5f5f7").toFixed(1)}:1</span>
               </div>
               Dark mode
               <div className="row">
                 <span className="sw" style={{ background: pair.dark }} />
                 <span className="mono">{pair.dark}</span>
-                <span className="ok">{contrast(pair.dark, "#0e0e10").toFixed(1)}:1</span>
+                <span className="dim2">{contrast(pair.dark, "#0e0e10").toFixed(1)}:1</span>
               </div>
             </div>
             <div className="cr" style={{ justifyContent: "flex-end" }}>
               <span>Adjusted where needed so text stays readable.</span>
-              <button className="btn btn-p btn-sm press" disabled={!/^#[0-9a-fA-F]{6}$/.test(custom) || custom === app.theme.accent} onClick={() => setTheme({ name: "custom", accent: custom })}>
+              <button className="btn btn-s btn-sm press" disabled={!/^#[0-9a-fA-F]{6}$/.test(custom) || custom === app.theme.accent} onClick={() => setTheme({ name: "custom", accent: custom })}>
                 Use this colour
               </button>
             </div>
@@ -218,7 +223,7 @@ function Servers() {
         <p>
           The easiest way is a trust token. On the Incus server, run <span className="mono">incus config trust add incus-webui</span> and paste what it prints. The server needs <span className="mono">core.https_address</span> set.
         </p>
-        <div className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
+        <div className="set-form">
           <Field label="Name" hint="Shown in the sidebar, like atlas or nas.">
             <div className="field">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="atlas" />
@@ -227,8 +232,8 @@ function Servers() {
           <Seg value={how} onChange={setHow} options={[{ v: "token", l: "Trust token" }, { v: "url", l: "Address" }]} />
           {how === "token" ? (
             <Field label="Trust token">
-              <div className="field" style={{ height: "auto", padding: 0 }}>
-                <textarea className="mono" rows={3} style={{ border: 0, outline: 0, background: "none", width: "100%", padding: "8px 10px", resize: "vertical" }} value={token} onChange={(e) => setToken(e.target.value)} />
+              <div className="field">
+                <textarea className="mono" rows={3} value={token} onChange={(e) => setToken(e.target.value)} />
               </div>
             </Field>
           ) : (
@@ -240,7 +245,7 @@ function Servers() {
           )}
           {err && <div className="bad">{err}</div>}
           <div>
-            <button className="btn btn-p press" disabled={busy || !name || (how === "token" ? !token : !url)} onClick={add}>
+            <button className="btn btn-s press" disabled={busy || !name || (how === "token" ? !token : !url)} onClick={add}>
               {busy ? "Connecting…" : "Add server"}
             </button>
           </div>
@@ -319,6 +324,7 @@ function Users() {
     try {
       await ui(`/users/${encodeURIComponent(name)}`, { method: "DELETE" });
       invalidate("ui-users");
+      invalidate("ui-access");
     } catch (e: any) {
       app.fail(e, "Could not remove the user.");
     }
@@ -328,59 +334,77 @@ function Users() {
       <section className="set-sec">
         <h2>Local users</h2>
         <div className="panel">
-          {users.map((x) => (
-            <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
-              <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-              <span>
-                {x.username}
-                {x.username === app.user && <span className="dim"> · you</span>}
-                {x.totp && <span className="dim"> · 2FA</span>}
-                {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
-              </span>
-              <span className="r">
-                {x.username !== app.user && (x.totp || !!x.passkeys) && (
-                  <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => resetSignIn(x.username)}>
-                    Reset 2FA and passkeys
+          {users.map((x) => {
+            const canReset = x.username !== app.user && (x.totp || !!x.passkeys);
+            const canDel = x.username !== app.user && users.length > 1;
+            return (
+              <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
+                <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
+                <span>
+                  {x.username}
+                  {x.username === app.user && <span className="dim"> · you</span>}
+                  {x.totp && <span className="dim"> · 2FA</span>}
+                  {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
+                </span>
+                <span className="r" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button className="btn btn-q btn-sm" onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
+                    Change password
                   </button>
-                )}
-                <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
-                  Change password
-                </button>
-                {x.username !== app.user && users.length > 1 && (
-                  <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => del(x.username)}>
-                    Remove
-                  </button>
-                )}
-              </span>
-              {pw?.name === x.username && (
-                <form
-                  style={{ flexBasis: "100%", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", paddingTop: 8 }}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    changePw();
-                  }}
-                >
-                  <Field label={`New password for ${x.username}`} hint="At least 10 characters.">
-                    <div className="field">
-                      <input type="password" autoFocus value={pw.pass} onChange={(e) => setPw({ ...pw, pass: e.target.value, err: "" })} autoComplete="new-password" />
+                  {(canReset || canDel) && (
+                    <Menu
+                      button={(p) => (
+                        <button className="btn btn-q ib btn-sm" aria-label={`Actions for ${x.username}`} {...p}>
+                          {ic.more}
+                        </button>
+                      )}
+                    >
+                      {(close) => (
+                        <>
+                          {canReset && (
+                            <button onClick={() => (close(), resetSignIn(x.username))}>
+                              Reset 2FA and passkeys
+                            </button>
+                          )}
+                          {canDel && (
+                            <button className="danger" onClick={() => (close(), del(x.username))}>
+                              {ic.trash}Remove
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </Menu>
+                  )}
+                </span>
+                {pw?.name === x.username && (
+                  <form
+                    style={{ flexBasis: "100%", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", paddingTop: 8 }}
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      changePw();
+                    }}
+                  >
+                    <Field label={`New password for ${x.username}`} hint="At least 10 characters.">
+                      <div className="field">
+                        <input type="password" autoFocus value={pw.pass} onChange={(e) => setPw({ ...pw, pass: e.target.value, err: "" })} autoComplete="new-password" />
+                      </div>
+                    </Field>
+                    <div className="fl">
+                      <button className="btn btn-s press" disabled={!pw.pass}>
+                        Save
+                      </button>
+                      <div className="hint" />
                     </div>
-                  </Field>
-                  <div className="fl">
-                    <button className="btn btn-p press" disabled={!pw.pass} style={{ minHeight: 40 }}>
-                      Save
-                    </button>
-                    <div className="hint" />
-                  </div>
-                  {pw.err && <div className="bad" style={{ width: "100%" }}>{pw.err}</div>}
-                </form>
-              )}
-            </div>
-          ))}
+                    {pw.err && <div className="bad" style={{ width: "100%" }}>{pw.err}</div>}
+                  </form>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
       <section className="set-sec">
         <h2>Add a user</h2>
-        <div className="panel useradd">
+        <div className="set-form">
           <Field label="Username">
             <div className="field">
               <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
@@ -394,12 +418,12 @@ function Users() {
           <Field label="Role" hint="On every server and project. Narrow it under Roles.">
             <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
           </Field>
-          <div className="fl">
-            <button className="btn btn-p press" disabled={!u || !p} style={{ minHeight: 40 }} onClick={add}>
+          <div>
+            <button className="btn btn-s press" disabled={!u || !p} onClick={add}>
               Add user
             </button>
           </div>
-          {err && <div className="bad" style={{ width: "100%" }}>{err}</div>}
+          {err && <div className="bad">{err}</div>}
         </div>
       </section>
       <Roles />
@@ -437,8 +461,9 @@ function Roles() {
   const [rows, setRows] = useState<AccessEntry[] | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => setRows(q.data?.access || null), [q.data]);
+  const dirty = !!rows && JSON.stringify(rows) !== JSON.stringify(q.data?.access);
+  const bar = usePresence(dirty || !!err);
   if (!rows) return null;
-  const dirty = JSON.stringify(rows) !== JSON.stringify(q.data?.access);
   const set = (i: number, k: keyof AccessEntry, v: string) => {
     setErr("");
     setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v, ...(k === "role" && v === "admin" ? { server: "*", project: "*" } : {}) } : r)));
@@ -470,10 +495,22 @@ function Roles() {
         </div>
         {rows.map((r, i) => (
           <div className="roles-r" key={i}>
-            <Input mono aria-label="Who" value={r.who} onChange={(v) => set(i, "who", v)} />
-            <Select aria-label="Server" disabled={r.role === "admin"} value={r.server} onChange={(v) => set(i, "server", v)} options={servers.includes(r.server) ? servers : [...servers, r.server]} />
-            <Input mono aria-label="Project" disabled={r.role === "admin"} value={r.project} onChange={(v) => set(i, "project", v)} placeholder="*" />
-            <Select aria-label="Role" value={r.role} onChange={(v) => set(i, "role", v)} options={roleOptions.map((o) => ({ v: o.v, l: o.v[0].toUpperCase() + o.v.slice(1) }))} />
+            <div>
+              <span className="show-s-only dim" style={{ fontSize: 12 }}>Who</span>
+              <Input mono aria-label="Who" value={r.who} onChange={(v) => set(i, "who", v)} />
+            </div>
+            <div>
+              <span className="show-s-only dim" style={{ fontSize: 12 }}>Server</span>
+              <Select aria-label="Server" disabled={r.role === "admin"} value={r.server} onChange={(v) => set(i, "server", v)} options={servers.includes(r.server) ? servers : [...servers, r.server]} />
+            </div>
+            <div>
+              <span className="show-s-only dim" style={{ fontSize: 12 }}>Project</span>
+              <Input mono aria-label="Project" disabled={r.role === "admin"} value={r.project} onChange={(v) => set(i, "project", v)} placeholder="*" />
+            </div>
+            <div>
+              <span className="show-s-only dim" style={{ fontSize: 12 }}>Role</span>
+              <Select aria-label="Role" value={r.role} onChange={(v) => set(i, "role", v)} options={roleOptions.map((o) => ({ v: o.v, l: o.v[0].toUpperCase() + o.v.slice(1) }))} />
+            </div>
             <button className="btn btn-q btn-sm" aria-label={`Remove ${r.who}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>
               Remove
             </button>
@@ -483,19 +520,19 @@ function Roles() {
           <button className="btn btn-q btn-sm" onClick={() => setRows([...rows, { who: "user:", server: "*", project: "*", role: "viewer" }])}>
             Add entry
           </button>
-          <span className="r">
-            {dirty && (
-              <button className="btn btn-q btn-sm" onClick={() => setRows(q.data?.access || [])}>
-                Discard
-              </button>
-            )}
-            <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
-              Save roles
-            </button>
-          </span>
         </div>
-        {err && <div className="bad">{err}</div>}
       </div>
+      {bar.mounted && (
+        <div className={"hwbar" + (bar.leaving ? " leaving" : "")}>
+          {err ? <span className="bad">{err}</span> : <b>Unsaved role changes</b>}
+          <button className="btn btn-q btn-sm" onClick={() => (setRows(q.data?.access || []), setErr(""))}>
+            Discard
+          </button>
+          <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
+            Save roles
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -593,9 +630,11 @@ function About() {
             </a>
           )}
         </div>
-        <p role="status" aria-live="polite" className="upd-note" style={{ minHeight: 20, color: result?.bad ? "var(--err)" : undefined }}>
-          {busy === "check" ? "Checking for updates…" : result?.text}
-        </p>
+        {(busy === "check" || result?.text) && (
+          <p role="status" aria-live="polite" className={result?.bad ? "upd-note bad" : "upd-note"}>
+            {busy === "check" ? "Checking for updates…" : result?.text}
+          </p>
+        )}
         {u?.newer && !u.can_update && <p className="upd-note">{u.reason}</p>}
       </section>
       <section className="set-sec">

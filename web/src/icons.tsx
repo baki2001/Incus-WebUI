@@ -74,6 +74,15 @@ export const ic = {
   sun: sv(<><circle cx="8" cy="8" r="2.8" /><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" /></>, 14),
   moon: sv(<path d="M13 9.6A5.5 5.5 0 1 1 6.4 3a4.5 4.5 0 0 0 6.6 6.6z" />, 14),
   auto: sv(<><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor" stroke="none" /></>, 14),
+  kyoto: sv(<><rect x="2" y="2.5" width="12" height="11" rx="2" /><rect x="2" y="2.5" width="4.5" height="11" rx="1.5" fill="currentColor" stroke="none" /></>, 14),
+  menu: sv(<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />),
+  grip: (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="5.5" cy="4" r="1.2" /><circle cx="10.5" cy="4" r="1.2" />
+      <circle cx="5.5" cy="8" r="1.2" /><circle cx="10.5" cy="8" r="1.2" />
+      <circle cx="5.5" cy="12" r="1.2" /><circle cx="10.5" cy="12" r="1.2" />
+    </svg>
+  ),
   full: sv(<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />, 14),
 };
 

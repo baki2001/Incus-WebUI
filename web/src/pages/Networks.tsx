@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, incus, incusOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useCollection, useCurrentProject, useServerInfo } from "../data";
-import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, Table, TglRow, type Col } from "../ui";
+import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, shake, Sheet, SheetSec, Table, TglRow, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 
@@ -92,7 +92,8 @@ export function Networks() {
   const [hostNet, setHostNet] = useState<Net | null>(null);
 
   const del = async (n: Net) => {
-    if (!(await confirmDialog({ title: `Delete network ${n.name}?`, body: usedByBody("These still use it; Incus refuses to delete it until they don't.", n.used_by, n.server), confirm: "Delete", danger: true }))) return;
+    const used = !!n.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete network ${n.name}?`, body: usedByBody("These still use it; Incus refuses to delete it until they don't.", n.used_by, n.server), confirm: "Delete", danger: true, noConfirm: used }))) return;
     const ok = await app.run(`Deleting ${n.name}`, (progress) => netChange(n.server, n.name, project, () => incusOp(n.server, `/1.0/networks/${encodeURIComponent(n.name)}`, { method: "DELETE", project }), (x) => !x, "deleting it", progress), `Network ${n.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -160,12 +161,11 @@ function HostNetSheet({ net, project, onClose }: { net: Net | null; project: str
     <Sheet open={!!net} onClose={onClose} title={n ? `Host interface ${n.name}` : ""}>
       {n && (
         <>
-          <div className="notice sm">
-            The host manages this {n.type}, not Incus, so it can't be changed here. Instances can use it to sit on your LAN: pick it as the network of a network card.
-            {n.type !== "bridge" && " Through macvlan the host itself can't reach those instances; a bridge on the host avoids that."}
+          <div className="note-box">
+            The host manages this interface, not Incus, so it can't be changed here. Pick it as the network of a network card to put instances on your LAN.
           </div>
           <SheetSec title="Details">
-            <dl className="kv">
+            <dl className="kv tight">
               <dt>State</dt>
               <dd>{st.data ? (st.data.state === "up" ? "Up" : "Down") : "–"}</dd>
               <dt>Addresses</dt>
@@ -200,10 +200,6 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
 
   const save = async (d: NetPut) => {
     if (!net) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,14}$/.test(d.name || "")) {
-        app.toast("Network names are up to 15 letters, numbers and dashes.");
-        return false;
-      }
       const ok = await app.run(`Creating ${d.name}`, (progress) => netChange(srv, d.name!, project, () => incusOp(srv, "/1.0/networks", { method: "POST", project, body: { ...d, config: clean(d.config) } }), created, "creating it", progress), `Network ${d.name} created`);
       if (ok) onSaved();
       return ok;
@@ -220,13 +216,14 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
       title={net ? `Network ${net.name}` : "Create network"}
       value={value}
       create={!net}
+      validate={(d) => (!net && !/^[a-zA-Z0-9][a-zA-Z0-9-]{0,14}$/.test(d.name || "") ? "Network names are up to 15 letters, numbers and dashes." : "")}
       onSave={save}
       onDelete={onDelete}
       info={
         net && (
           <>
             {net.status !== "Created" && (
-              <div className="notice sm">
+              <div className="note-box">
                 {net.status === "Pending" ? "This network is still being set up. If it stays like this, delete it and create it again." : `This network is ${netState(net.status).toLowerCase()}. Delete it and create it again, or check the settings below.`}
               </div>
             )}
@@ -321,7 +318,7 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
                 </div>
                 <SheetSec title="ACLs">
                   {(acls.data?.length || 0) + aclList.length === 0 ? (
-                    <span className="dim" style={{ fontSize: 12.5 }}>
+                    <span className="note">
                       No ACLs yet. Create one under Networking, ACLs, then pick it here.
                     </span>
                   ) : (
@@ -387,7 +384,6 @@ function Forwards({ net, project }: { net: Net; project: string }) {
   const close = () => setEdit(null);
 
   const save = async (f: Fwd) => {
-    if (!f.listen_address.trim()) return void app.toast("Enter the listen address, an address on this server like 192.168.1.20.");
     const dflt = f.config.target_address?.trim() || "";
     // Incus wants a target on every port and refuses one that equals the default
     // target, so a port without its own target gets the default, and then the
@@ -395,7 +391,6 @@ function Forwards({ net, project }: { net: Net; project: string }) {
     const ports = f.ports
       .filter((p) => p.listen_port.trim())
       .map((p) => Object.fromEntries(Object.entries({ ...p, target_address: p.target_address?.trim() || dflt }).filter(([, v]) => v !== "" && v !== undefined)));
-    if (!ports.length && !dflt) return void app.toast("Add a port, or a target address that gets all traffic.");
     const config = dflt && !ports.some((p) => p.target_address === dflt) ? { target_address: dflt } : {};
     const body = { listen_address: f.listen_address.trim(), description: f.description, config, ports };
     const ok = await app.run(
@@ -455,7 +450,7 @@ function Forwards({ net, project }: { net: Net; project: string }) {
             ))}
           </div>
         ) : (
-          <span className="dim" style={{ fontSize: 12.5 }}>
+          <span className="note">
             {q.error || "No forwards. A forward sends traffic that arrives on a server address to an instance on this network."}
           </span>
         )}
@@ -545,6 +540,7 @@ function AddrPick({ value, onChange, options, placeholder, label, readOnly, auto
 function FwdForm({ net, project, init, isNew, onSave, onDelete, onClose }: { net: Net; project: string; init: Fwd; isNew: boolean; onSave: (f: Fwd) => void; onDelete: () => void; onClose: () => void }) {
   const [f, setF] = useState(init);
   const [tried, setTried] = useState(false);
+  const dlgBody = useRef<HTMLDivElement>(null);
   const hostAddrs = useHostAddrs(net.server, project);
   const insts = useNetInstances(net, project);
   const eg = subnetExample(net.config["ipv4.address"]);
@@ -554,13 +550,16 @@ function FwdForm({ net, project, init, isNew, onSave, onDelete, onClose }: { net
   const defErr = tried && !f.ports.some((p) => p.listen_port.trim()) && !dflt ? "Enter a target address, or add a port." : "";
   const submit = () => {
     setTried(true);
-    if (!f.listen_address.trim() || f.ports.some(noTarget) || (!f.ports.some((p) => p.listen_port.trim()) && !dflt)) return;
+    if (!f.listen_address.trim() || f.ports.some(noTarget) || (!f.ports.some((p) => p.listen_port.trim()) && !dflt)) {
+      requestAnimationFrame(() => shake(dlgBody.current?.querySelector<HTMLElement>(".hint.bad, .field.bad") ?? null));
+      return;
+    }
     onSave(f);
   };
   const setPort = (i: number, k: keyof FPort, v: string) => setF({ ...f, ports: f.ports.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
   return (
     <>
-      <div className="dlg-b fdlg">
+      <div className="dlg-b fdlg" ref={dlgBody}>
         <h2>{isNew ? "Add port forward" : "Port forward " + f.listen_address}</h2>
         <div className="two" style={{ marginTop: 12 }}>
           <Field label="Listen address" bad={!!listenErr} hint={listenErr || "An address on the server."}>
@@ -615,7 +614,7 @@ function FwdForm({ net, project, init, isNew, onSave, onDelete, onClose }: { net
       </div>
       <div className="dlg-f">
         {!isNew && (
-          <button className="btn btn-q press" style={{ color: "var(--err)", marginRight: "auto" }} onClick={onDelete}>
+          <button className="btn btn-q danger press" style={{ marginRight: "auto" }} onClick={onDelete}>
             {ic.trash}Delete
           </button>
         )}
@@ -678,7 +677,6 @@ export function Acls() {
     const { networks: want = [], ...rest } = d;
     const body = { ...rest, ingress: d.ingress.map(cleanRule), egress: d.egress.map(cleanRule) };
     if (!edit) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the ACL a name.");
       const ok = await app.run(`Creating ${d.name}`, async (progress) => (await incusOp(srv, "/1.0/network-acls", { method: "POST", project, body }), want.length ? attach(d.name!, want, [], progress) : true), `ACL ${d.name} created`);
       if (ok) invalidate("acls:"), invalidate("acl-names:"), invalidate("networks:");
       return ok;
@@ -688,7 +686,8 @@ export function Acls() {
     return ok;
   };
   const del = async (a: Acl) => {
-    if (!(await confirmDialog({ title: `Delete ACL ${a.name}?`, body: usedByBody("These still use it; remove it from them first.", a.used_by, a.server), confirm: "Delete", danger: true }))) return;
+    const used = !!a.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete ACL ${a.name}?`, body: usedByBody("These still use it; remove it from them first.", a.used_by, a.server), confirm: "Delete", danger: true, noConfirm: used }))) return;
     const ok = await app.run(`Deleting ${a.name}`, () => incusOp(a.server, `/1.0/network-acls/${encodeURIComponent(a.name)}`, { method: "DELETE", project }).then(() => true), `ACL ${a.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -730,6 +729,7 @@ export function Acls() {
         info={edit && <UsedBySec list={edit.used_by} server={edit.server} />}
         onSave={save}
         validate={(d) => {
+          if (!edit && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return "Give the ACL a name.";
           for (const [dir, rules] of [["Ingress", d.ingress], ["Egress", d.egress]] as const)
             for (const [i, r] of (rules || []).entries()) {
               const bad = r.destination_port && badPorts(r.destination_port);
@@ -771,17 +771,14 @@ export function Acls() {
                   ))}
                 </div>
               ) : (
-                <span className="dim" style={{ fontSize: 12.5 }}>
+                <span className="note">
                   No bridge or OVN networks to attach it to.
                 </span>
               )}
-              <span className="dim" style={{ fontSize: 12.5 }}>
+              <span className="note">
                 Ticked networks apply this ACL to everything connected to them.
               </span>
             </SheetSec>
-            <span className="dim" style={{ fontSize: 12.5 }}>
-              Source and destination take addresses, ranges or subnets (comma separated), or another ACL's name. Traffic no rule matches gets the network's default action.
-            </span>
           </>
         )}
       />

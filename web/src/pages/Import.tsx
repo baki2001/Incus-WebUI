@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { bytes, dateTime, friendlyError, memBytes, ui, upload } from "../api";
+import { ic } from "../icons";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useManagedNetworks, useNames } from "../data";
-import { Field, Input, Seg, Select, Sheet, SheetSec, TglRow } from "../ui";
+import { Field, Input, Seg, Select, Sheet, SheetSec, Skel, TglRow } from "../ui";
 
 type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string; expires: string };
 
@@ -27,11 +28,16 @@ type Kind = "proxmox" | "compose";
 // Import from Proxmox (a vzdump backup) or Docker Compose (a compose file).
 export function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [kind, setKind] = useState<Kind>("proxmox");
+  const [state, setState] = useState<{ dirty: boolean; footer: React.ReactNode }>({ dirty: false, footer: null });
   const head = <Seg value={kind} onChange={setKind} label="Import from" options={[{ v: "proxmox", l: "Proxmox" }, { v: "compose", l: "Docker Compose" }]} />;
-  return kind === "proxmox" ? <ProxmoxSheet open={open} onClose={onClose} head={head} /> : <ComposeSheet open={open} onClose={onClose} head={head} />;
+  return (
+    <Sheet open={open} onClose={onClose} dirty={state.dirty} title="Import" head={head} wide footer={state.footer}>
+      {kind === "proxmox" ? <ProxmoxBody open={open} onClose={onClose} setSheet={setState} /> : <ComposeBody open={open} onClose={onClose} setSheet={setState} />}
+    </Sheet>
+  );
 }
 
-function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => void; head: React.ReactNode }) {
+function ProxmoxBody({ open, onClose, setSheet }: { open: boolean; onClose: () => void; setSheet: (s: { dirty: boolean; footer: React.ReactNode }) => void }) {
   const app = useApp();
   const servers = useScopedServers().filter((s) => app.can(s.name, "*", "manager"));
   const uploads = useData<Upload[]>(open ? "ui-imports" : null, () => ui("/imports"));
@@ -114,7 +120,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
       await ui(`${chosen!.base}/run`, { method: "POST", body: { server: srv, project, name, network, pool: storage, keep_mac: keepMAC, start, ...chosen!.extra } });
       invalidate("ui-jobs");
       invalidate("ui-imports");
-      app.toast(`Importing ${p!.name} on the server. You can close this page; follow it under Tasks.`);
+      app.toast(`Importing ${p!.name}. Follow it under Tasks.`);
       onClose();
     } catch (e) {
       setErr(friendlyError(e));
@@ -129,18 +135,14 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
     invalidate("ui-imports");
   };
 
-  return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      dirty={sending != null}
-      title="Import"
-      head={head}
-      wide
-      footer={
+  const chosenLabel = chosen?.label || "";
+  useEffect(() => {
+    setSheet({
+      dirty: sending != null,
+      footer: (
         <>
           <span className="dim l" style={{ fontSize: 12.5 }}>
-            {chosen ? chosen.label : from === "file" ? "Upload a vzdump backup first" : "Pick a backup first"}
+            {chosenLabel || (from === "file" ? "Upload a vzdump backup first" : "Pick a backup first")}
           </span>
           <button className="btn btn-s press" onClick={onClose}>
             Cancel
@@ -149,8 +151,13 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
             {busy ? "Starting…" : "Import"}
           </button>
         </>
-      }
-    >
+      ),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sending != null, chosenLabel, from, ok, busy]);
+
+  return (
+    <>
       {err && (
         <div className="cerr stick" role="alert">
           {err}
@@ -171,38 +178,48 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
         ) : (
           <>
             <p className="dim" style={{ margin: "10px 0 0" }}>
-              A vzdump file from Proxmox: <code>vzdump-qemu-*.vma</code> for a VM or <code>vzdump-lxc-*.tar</code> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <code>/var/lib/vz/dump</code>.
+              A vzdump file from Proxmox: <span className="mono">vzdump-qemu-*.vma</span> for a VM or <span className="mono">vzdump-lxc-*.tar</span> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <span className="mono">/var/lib/vz/dump</span>.
             </p>
             <p className="dim" style={{ margin: "8px 0 0" }}>
               Your browser sends the file to the UI server. Keep this page open until the upload is done. After that the browser isn't needed anymore.
             </p>
-            <div className="imp-up">
+            <div
+              className="drop slim"
+              onClick={() => sending == null && input.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (sending == null && e.dataTransfer.files[0]) send(e.dataTransfer.files[0]);
+              }}
+            >
+              {ic.up}
+              <b>{sending != null ? `Uploading ${Math.round(sending * 100)}%` : "Drop a vzdump file here or click to choose"}</b>
+              <span className="dim">.vma, .tar, .tgz, .zst, .gz or .lzo</span>
               <input ref={input} type="file" hidden accept=".vma,.zst,.gz,.tgz,.tar,.lzo" onChange={(e) => e.target.files?.[0] && send(e.target.files[0])} />
-              <button className="btn btn-s press" disabled={sending != null} onClick={() => input.current?.click()}>
-                {sending != null ? `Uploading ${Math.round(sending * 100)}%` : "Choose a file"}
-              </button>
-              {sending != null && (
-                <div className="jbar" role="progressbar" aria-valuenow={Math.round(sending * 100)} aria-valuemin={0} aria-valuemax={100}>
-                  <i style={{ transform: `scaleX(${Math.max(0.02, sending)})` }} />
-                </div>
-              )}
             </div>
+            {sending != null && (
+              <div className="prog" role="progressbar" aria-valuenow={Math.round(sending * 100)} aria-valuemin={0} aria-valuemax={100}>
+                <i style={{ transform: `scaleX(${Math.max(0.02, sending)})` }} />
+              </div>
+            )}
             {(uploads.data || []).length > 0 && (
-              <ul className="imp-list">
+              <div className="ilinks">
                 {uploads.data!.map((u) => (
-                  <li key={u.id} className={file?.id === u.id ? "on" : undefined}>
-                    <button className="lnk" onClick={() => setFile(u)} aria-pressed={file?.id === u.id}>
-                      {u.name}
+                  <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 6, borderTop: "1px solid var(--line)" }} className="imp-iopt-row">
+                    <button type="button" className="iopt" style={{ flex: 1, minWidth: 0 }} aria-selected={file?.id === u.id} onClick={() => setFile(u)}>
+                      <span className="os">
+                        {u.name}
+                        <small>
+                          {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
+                        </small>
+                      </span>
                     </button>
-                    <span className="dim">
-                      {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
-                    </span>
-                    <button className="lnk" onClick={() => drop(u)}>
+                    <button type="button" className="btn btn-q btn-sm" style={{ marginRight: 6 }} onClick={() => drop(u)}>
                       Remove
                     </button>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
             {(uploads.data || []).length > 0 && (
               <p className="dim" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
@@ -243,13 +260,13 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
             <p className="dim" style={{ margin: 0 }}>
               The import runs on the UI server. Once it has started you can close the browser: it keeps going and shows under Tasks.{from === "file" && " The uploaded file is deleted when the import is done."}
             </p>
-            {plan.error && <p className="bad">{friendlyError(plan.error)}</p>}
-            {!p && !plan.error && <p className="dim">Reading the backup…</p>}
+            {plan.error && <div className="note-box bad">{friendlyError(plan.error)}</div>}
+            {!p && !plan.error && <Skel lines={2} />}
             {p && <PlanView p={p} />}
           </SheetSec>
         </>
       )}
-    </Sheet>
+    </>
   );
 }
 
@@ -264,8 +281,8 @@ function PBSPicker(props: {
   setSnap: (s: Snap) => void;
 }) {
   const { servers, pbs, snaps, snap } = props;
-  if (props.error) return <p className="bad">{friendlyError(props.error)}</p>;
-  if (!servers) return <p className="dim">Loading…</p>;
+  if (props.error) return <div className="note-box bad">{friendlyError(props.error)}</div>;
+  if (!servers) return <Skel lines={2} />;
   if (!props.admin) {
     return (
       <p className="dim" style={{ margin: "10px 0 0" }}>
@@ -290,8 +307,8 @@ function PBSPicker(props: {
           <Select value={pbs} onChange={props.setPbs} options={servers.map((x) => ({ v: x.name, l: `${x.name} (${x.datastore})` }))} />
         </Field>
       )}
-      {snaps.error && <p className="bad">{friendlyError(snaps.error)}</p>}
-      {!snaps.data && !snaps.error && <p className="dim">Loading backups…</p>}
+      {snaps.error && <div className="note-box bad">{friendlyError(snaps.error)}</div>}
+      {!snaps.data && !snaps.error && <Skel lines={2} />}
       {snaps.data?.length === 0 && <p className="dim">No VM or container backups in this datastore.</p>}
       {!!snaps.data?.length && <PBSGuests snaps={snaps.data} snap={snap} setSnap={props.setSnap} />}
     </>
@@ -340,19 +357,24 @@ function PBSGuests({ snaps, snap, setSnap }: { snaps: Snap[]; snap: Snap | null;
               </span>
             </button>
             {isOpen && (
-              <ul className="pbs-snaps">
+              <div className="pbs-snaps" style={{ padding: 4 }}>
                 {list.map((x) => (
-                  <li key={x.ref} className={snap?.ref === x.ref ? "on" : undefined}>
-                    <button className="lnk" disabled={!!x.problem} onClick={() => setSnap(x)} aria-pressed={snap?.ref === x.ref}>
+                  <button
+                    type="button"
+                    key={x.ref}
+                    className="iopt"
+                    disabled={!!x.problem}
+                    aria-selected={snap?.ref === x.ref}
+                    onClick={() => setSnap(x)}
+                  >
+                    <span className="os">
                       {dateTime(x.created)}
-                    </button>
-                    <span className="dim">
-                      {x.size ? bytes(x.size) : ""}
-                      {x.problem ? `${x.size ? ". " : ""}${x.problem}` : ""}
+                      {x.size ? <small>{bytes(x.size)}</small> : null}
+                      {x.problem && <small className="bad">{x.problem}</small>}
                     </span>
-                  </li>
+                  </button>
                 ))}
-              </ul>
+              </div>
             )}
           </li>
         );
@@ -379,9 +401,9 @@ function PlanView({ p }: { p: Plan }) {
   if (p.config["boot.autostart"] === "true") rows.push(["Autostart", "Yes"]);
   return (
     <>
-      <dl className="imp-plan">
+      <dl className="kv tight">
         {rows.map(([k, v]) => (
-          <div key={k}>
+          <div key={k} style={{ display: "contents" }}>
             <dt>{k}</dt>
             <dd>{v}</dd>
           </div>
@@ -393,7 +415,7 @@ function PlanView({ p }: { p: Plan }) {
         </div>
       )}
       {p.warnings.length > 0 && (
-        <ul className="imp-warn">
+        <ul className="wlist">
           {p.warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}
@@ -408,7 +430,7 @@ function PlanView({ p }: { p: Plan }) {
 type ComposeService = { service: string; name: string; server: string; image: string; config: Record<string, string>; devices: Record<string, Record<string, string>>; depends_on?: string[] };
 type ComposePlan = { stack: string; services: ComposeService[]; volumes: string[]; warnings: string[]; blockers: string[] };
 
-function ComposeSheet({ open, onClose, head }: { open: boolean; onClose: () => void; head: React.ReactNode }) {
+function ComposeBody({ open, onClose, setSheet }: { open: boolean; onClose: () => void; setSheet: (s: { dirty: boolean; footer: React.ReactNode }) => void }) {
   const app = useApp();
   const servers = useScopedServers().filter((s) => app.can(s.name, "*", "manager"));
   const [server, setServer] = useState("");
@@ -465,18 +487,14 @@ function ComposeSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   };
 
   const projOpts = [...(app.admin ? [{ v: "", l: `New project ${stack || plan.data?.plan.stack || ""}`.trim() }] : []), ...(projects.data || []).filter((x) => app.can(srv, x, "manager")).map((x) => ({ v: x, l: x }))];
-  return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      dirty={!!text}
-      title="Import"
-      head={head}
-      wide
-      footer={
+  const summary = p ? `${p.services.length} service${p.services.length === 1 ? "" : "s"} into ${plan.data!.project}` : "";
+  useEffect(() => {
+    setSheet({
+      dirty: !!text,
+      footer: (
         <>
           <span className="dim l" style={{ fontSize: 12.5 }}>
-            {p ? `${p.services.length} service${p.services.length === 1 ? "" : "s"} into ${plan.data!.project}` : "Paste a compose file first"}
+            {summary || "Paste a compose file first"}
           </span>
           <button className="btn btn-s press" onClick={onClose}>
             Cancel
@@ -485,8 +503,13 @@ function ComposeSheet({ open, onClose, head }: { open: boolean; onClose: () => v
             {busy ? "Starting…" : "Import"}
           </button>
         </>
-      }
-    >
+      ),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!text, summary, ok, busy]);
+
+  return (
+    <>
       {err && (
         <div className="cerr stick" role="alert">
           {err}
@@ -544,12 +567,12 @@ function ComposeSheet({ open, onClose, head }: { open: boolean; onClose: () => v
 
       {text.trim() && (
         <SheetSec title="What it becomes">
-          {plan.error && <p className="bad">{friendlyError(plan.error)}</p>}
-          {!p && !plan.error && <p className="dim">Reading the file…</p>}
+          {plan.error && <div className="note-box bad">{friendlyError(plan.error)}</div>}
+          {!p && !plan.error && <Skel lines={2} />}
           {p && <ComposeView p={p} />}
         </SheetSec>
       )}
-    </Sheet>
+    </>
   );
 }
 
@@ -580,7 +603,7 @@ function ComposeView({ p }: { p: ComposePlan }) {
         </div>
       )}
       {p.warnings.length > 0 && (
-        <ul className="imp-warn">
+        <ul className="wlist">
           {p.warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}

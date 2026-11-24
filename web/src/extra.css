@@ -31,6 +31,7 @@ html,body,#root{height:100%}
 .login-form .fl .hint{min-height:0}
 .login-err{color:var(--err);font-size:13px}
 .login-or{text-align:center;color:var(--ink-3);font-size:12.5px}
+.login-card .btn{width:100%}
 
 /* terminal + console */
 .term{min-height:0;height:max(440px,calc(100dvh - 290px))}
@@ -51,7 +52,7 @@ html,body,#root{height:100%}
 
 /* file explorer */
 .pathbar{flex:1;display:flex;align-items:center;flex-wrap:wrap;gap:2px;min-height:32px;padding:0 6px;border-radius:var(--r-sm);background:var(--s1);box-shadow:inset 0 0 0 1px var(--line-2);font:12.5px var(--f-mono);min-width:0}
-.pathbar button{border:0;background:none;padding:3px 5px;border-radius:5px;color:var(--ink-2)}
+.pathbar button{border:0;background:none;padding:3px 5px;border-radius:var(--r-xs);color:var(--ink-2)}
 .pathbar button:hover{background:var(--s2);color:var(--ink)}
 .pathbar .pathedit{margin-left:auto;font:12px var(--f-ui);color:var(--ink-3)}
 .fname{display:flex;align-items:center;gap:10px;min-width:0}
@@ -111,8 +112,8 @@ th.right .sortb{justify-content:flex-end}
 .sheet-f .l{margin-right:auto}
 .ss .dl{background:var(--s1)}
 /* image picker */
-.ipick{display:flex;flex-direction:column;border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px var(--line-2);overflow:hidden}
-.ipick .field{border-radius:0;box-shadow:none;border-bottom:1px solid var(--line)}
+.ipick{display:flex;flex-direction:column;border-radius:var(--r-sm);border:1px solid var(--line-2);box-shadow:none;background:var(--s1);overflow:hidden}
+.ipick .field{border-radius:0;box-shadow:none;background:transparent;border-bottom:1px solid var(--line)}
 .ilist{max-height:260px;overflow:auto;padding:4px}
 .iopt{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:4px 8px;border:0;border-radius:var(--r-xs);background:none;text-align:left;color:var(--ink)}
 .iopt:hover{background:var(--s2)}
@@ -126,7 +127,7 @@ th.right .sortb{justify-content:flex-end}
 .picked .btn{margin-left:auto}
 /* progress of a running pull or upload */
 .prog{height:4px;border-radius:2px;background:var(--s3);overflow:hidden}
-.prog i{display:block;height:100%;background:var(--accent);transform-origin:left;transition:transform var(--t2) var(--ease)}
+.prog i{display:block;height:100%;background:var(--ink-2);transform-origin:left;transition:transform var(--t2) var(--ease)}
 .prog.ind i{width:30%;animation:ind 1.2s var(--ease) infinite}
 @keyframes ind{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 /* subnav for grouped pages (Networking, Storage) */
@@ -167,7 +168,12 @@ th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50
 .toast.err .tm{flex:1;min-width:0;overflow-wrap:anywhere}
 .toast.err .tm b{display:block;font-weight:600}
 .toast.err button{align-self:center}
-@media (max-width:640px){.toasts{left:16px;right:16px;transform:none;align-items:center}.toast.err{width:100%;max-width:none}.toast button{min-height:40px;min-width:40px}}
+@media (max-width:640px){
+  .toasts{left:16px;right:16px;transform:none;align-items:center}
+  .toast,.toast.err{width:100%;max-width:none}
+  .toast button{min-height:40px;min-width:40px}
+  .tray{position:fixed;left:16px;right:16px;top:calc(54px + env(safe-area-inset-top,0px));width:auto}
+}
 /* ---------- touch & phone (WS8) ---------- */
 /* Row actions never sit invisible-but-tappable: no hover on touch, so show them. */
 @media (hover:none){
@@ -181,28 +187,37 @@ th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50
   tbody tr td .qa{min-height:40px;gap:4px}
   .collapse,.copy,.chip-x,.menu-btn,.step button,.toast button,.sortb{min-width:40px;min-height:40px}
   .chip{height:40px}
-  .chip-b{padding-left:14px}
+  .chip-b{padding-left:14px;display:inline-flex;align-items:center}
   .chip-x{width:40px;height:40px;margin-right:0}
-  .seg button{min-height:40px;height:40px}
+  .seg button{min-height:40px;height:40px;min-width:40px}
   .pre{height:40px}
   .crumbs button,.crumbs a{display:inline-flex;align-items:center;min-height:40px;padding:0 8px}
-  .pathbar button{min-height:40px;padding:0 8px}
-  .tabs button,.views>button,.vtab,.set-nav button{min-height:40px;height:40px}
+  .pathbar button{min-height:40px;min-width:40px;padding:0 8px}
+  .tabs button,.set-nav button{min-height:40px;height:40px}
   .ni{min-height:44px}
   .menu button,.fopt,.pt label,.fbtn,.kbtn,.opsbtn,.scope{min-height:40px}
+  .opsbtn,.kbtn{min-width:40px;justify-content:center}
   .menu button{height:40px}
+  .field{min-height:40px;height:40px}
+  .field input,.field select{height:100%}
+  .field:has(textarea){height:auto}
+  .rule .field,.fports .field,.kvr .field{height:40px}
+  .toggle::before{content:"";position:absolute;inset:-10px -4px}
+  .bk-days button,.bk-pick>.field,.pbs-g,.tray-all{min-height:40px}
+  .ul-r a,.prow>a{display:inline-flex;align-items:center;min-height:40px}
+  .cmdk-f,.cmdk-in kbd{display:none}
   input[type=checkbox],.radios input{width:20px;height:20px}
   .chk{width:48px}
 }
 /* Scroll hint: a soft edge where a sideways scroller has more content. Pure CSS, no JS. */
-.tw,.views,.tabs,.fbar,.set-nav{--fb:var(--bg)}
+.tw,.tabs,.fbar,.set-nav{--fb:var(--bg)}
 .tw{--fb:var(--s1)}
-.tw,.views,.tabs,.fbar,.set-nav{
+.tw,.tabs,.fbar,.set-nav{
   background:
     linear-gradient(to right,var(--fb) 30%,transparent) 0 0/36px 100% no-repeat local,
     linear-gradient(to left,var(--fb) 30%,transparent) 100% 0/36px 100% no-repeat local,
-    linear-gradient(to right,var(--line-2),transparent) 0 0/14px 100% no-repeat scroll,
-    linear-gradient(to left,var(--line-2),transparent) 100% 0/14px 100% no-repeat scroll;
+    linear-gradient(to right,var(--line),transparent) 0 0/14px 100% no-repeat scroll,
+    linear-gradient(to left,var(--line),transparent) 100% 0/14px 100% no-repeat scroll;
   background-color:var(--fb);
 }
 /* Sideways-scrolling tables keep their first column in view. */
@@ -223,6 +238,7 @@ pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break
   .side{height:100vh;height:100dvh;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
   .side .nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
   .side .side-foot{flex:none;background:var(--s1)}
+  :root[data-brand="kyoto"] .side .side-foot{background:var(--side)}
 }
 /* ---- WS6: sidebar scroll, command menu, operations ---- */
 .side{height:100vh;height:100dvh}
@@ -239,12 +255,6 @@ pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break
 .cmdk-i svg{width:16px;height:16px}
 .rlink{color:inherit;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:2px}
 .rlink:hover{color:var(--ink);text-decoration-color:currentColor}
-.hostlist{margin:0;padding:0;list-style:none}
-.hostlist li{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 16px;border-top:1px solid var(--line)}
-.hostlist li:first-child{border-top:0}
-.hostlist a{color:var(--ink);text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hostlist a:hover{text-decoration:underline}
-.hostlist .dim{white-space:nowrap;font-size:12.5px}
 @media (max-width:860px){
   .side{background:var(--s1);padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
   .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--s1))}
@@ -258,10 +268,7 @@ pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break
 .ul-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:28px}
 .ul-r a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
 .ul-r a:hover{text-decoration-color:var(--ink)}
-.snr{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--line);font-size:13.5px}
-.snr:first-child{border-top:0}
-.snr>span{flex:1;min-width:0;display:flex;flex-direction:column}
-@media (max-width:560px){.snr .btn,.ul-r .btn,.tt{min-height:40px}.snr .ib{min-width:40px}}
+@media (max-width:560px){.ul-r .btn,.tt{min-height:40px}}
 .drop.slim{padding:14px 16px}
 p.fnote{align-self:flex-start;margin:0}
 @media (max-width:560px){dl.kv.tight dd{padding-left:12px}}
@@ -288,7 +295,7 @@ p.fnote{align-self:flex-start;margin:0}
 /* ---------- WS2: instances list and detail ---------- */
 .qa-more,.qa-more-w{display:none}
 .qa-stop{margin-left:14px}
-.show-s-only{display:none}
+.show-s-only,.nm .show-s-only{display:none}
 .check-row{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:13.5px;cursor:pointer}
 .check-row input{margin-top:3px}
 .check-row small{display:block;color:var(--ink-3);font-size:12.5px}
@@ -307,9 +314,10 @@ p.fnote{align-self:flex-start;margin:0}
 }
 @media (max-width:560px){
   .show-s-only{display:inline}
+  .nm .show-s-only{display:block}
   .fbar .fsearch{flex:1 0 232px;min-width:232px}
   .fsearch kbd{display:none}
-  .bulk{left:12px;right:12px;max-width:none;transform:none;animation:none;justify-content:flex-start;padding:8px 8px 8px 12px}
+  .bulk{left:12px;right:12px;max-width:none;transform:none;animation:up2 var(--t2) var(--spring);justify-content:flex-start;padding:8px 8px 8px 12px}
   .bulk b{flex-basis:100%;margin:0 0 2px}
   .bulk .btn{min-height:40px}
   .bulk .vsep{display:none}
@@ -317,7 +325,7 @@ p.fnote{align-self:flex-start;margin:0}
 }
 
 /* UX-A */
-.tw-menu{overflow:visible;background:none}
+.tw-menu{overflow:visible}
 .tabwrap{overflow:visible;overflow-x:clip}
 .menu-hint{padding:6px 10px 2px;font-size:12px;line-height:1.4;color:var(--ink-3)}
 .chk-l{display:inline-flex;align-items:center;justify-content:center}
@@ -326,9 +334,6 @@ p.fnote{align-self:flex-start;margin:0}
 @media (pointer:coarse){
   .chk-l{width:40px;height:40px;margin:-10px 0 -10px -10px}
   .iopt{min-height:44px}
-  .seg0.b-r>button{min-height:40px;padding:0 12px}
-  .chip{height:40px}
-  .chip-b{display:inline-flex;align-items:center}
 }
 @media (max-width:560px){
   .fbar{flex-wrap:wrap;overflow-x:visible;margin:0;padding:0;background:none}
@@ -340,11 +345,6 @@ p.fnote{align-self:flex-start;margin:0}
 /* Empty-table message: a sticky first cell would shrink it to the first column. */
 tr.empty{display:table-row;padding:0}
 .tw td.emp{position:static;text-align:center}
-/* Add user form: stacked, full width. */
-.useradd{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:640px}
-.useradd .fl{margin:0}
-.useradd .fl .hint:empty{display:none}
-.useradd .btn{align-self:flex-start}
 @media (max-width:560px){
   /* File explorer: the path gets its own full-width row. */
   .toolbar .pathbar{order:-1;flex:1 1 100%}
@@ -380,12 +380,8 @@ tr.empty{display:table-row;padding:0}
 .tnum{font-variant-numeric:tabular-nums}
 @media (max-width:720px){.opsbtn .lbl2{display:none}.opsbtn{padding:0 8px}}
 .lnk{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:none}
-.jbar{height:4px;border-radius:2px;background:var(--s3);overflow:hidden;margin:6px 0 4px}
-.jbar i{display:block;height:100%;background:var(--accent);transform-origin:left;transition:transform var(--t3) var(--ease)}
 /* metric history */
 .charts{padding:14px 16px}
-.charts-h{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.charts-h h3{font-size:14px;font-weight:600}
 .charts-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px 28px}
 .chart{margin:0}
 .chart figcaption{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--ink-2);margin-bottom:6px}
@@ -399,13 +395,7 @@ tr.empty{display:table-row;padding:0}
 .chart .cx{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:4px;font-variant-numeric:tabular-nums}
 
 /* Import from Proxmox */
-.imp-up { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.imp-up .jbar { flex: 1; }
-.imp-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
-.imp-list li { display: flex; gap: 10px; align-items: baseline; padding: 6px 8px; border-radius: 6px; }
-.imp-list li.on { background: var(--s3); }
-.imp-list li .dim { flex: 1; font-size: 12.5px; }
-.pbs-guests { list-style: none; margin: 10px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+.pbs-guests { list-style: none; margin: 10px 0 0; padding: 0; box-shadow: inset 0 0 0 1px var(--line); border-radius: var(--r-sm); overflow: hidden; }
 .pbs-guests > li + li { border-top: 1px solid var(--line); }
 .pbs-g { display: grid; grid-template-columns: 26px 44px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; width: 100%; padding: 9px 12px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .pbs-g:hover, .pbs-guests > li.open > .pbs-g { background: var(--s2); }
@@ -414,26 +404,16 @@ tr.empty{display:table-row;padding:0}
 .pbs-g .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pbs-g .m { font-size: 12.5px; color: var(--ink-3); }
 .pbs-snaps { list-style: none; margin: 0; padding: 4px 12px 8px 90px; display: grid; gap: 2px; background: var(--s2); }
-.pbs-snaps li { display: flex; gap: 12px; align-items: baseline; padding: 4px 8px; border-radius: 6px; }
-.pbs-snaps li.on { background: var(--s3); }
-.pbs-snaps li .dim { font-size: 12.5px; }
 @media (max-width: 640px) {
   .pbs-g { grid-template-columns: 26px 44px minmax(0, 1fr); }
   .pbs-g .m { grid-column: 3; }
   .pbs-snaps { padding-left: 12px; }
 }
-.imp-plan { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; margin: 0; }
-.imp-plan dt { font-size: 12px; color: var(--ink-3); }
-.imp-plan dd { margin: 2px 0 0; }
-.imp-warn { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
 
 /* Backups */
-.bk .ptitle .r { display: flex; gap: 8px; align-items: center; }
-.bk-act { display: inline-flex; gap: 14px; }
 .bk-card { padding: 16px; margin-bottom: 12px; display: grid; gap: 12px; }
-.bk-card .roles-f { display: flex; align-items: center; gap: 12px; }
-.bk-card .roles-f .r { margin-left: auto; }
 .bk-st { font-size: 12.5px; color: var(--ink-3); }
+.bk-st.bad { color: var(--err); }
 .bk-pick > .field { width: 100%; border: 0; cursor: pointer; text-align: left; justify-content: space-between; color: var(--ink); font-size: 13.5px; }
 .bk-pick > .field[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 .bk-pick .fpop { width: 100%; min-width: 240px; }
@@ -447,9 +427,6 @@ tr.empty{display:table-row;padding:0}
 .bk-sub { padding-top: 12px; border-top: 1px solid var(--line); }
 .bk-sub h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
 .bk-sub p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
-.bk-sum { margin: 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--s2); font-size: 13px; color: var(--ink-2); }
-.bk-save { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); }
-.bk-save .r { margin-left: auto; display: flex; gap: 8px; }
 .yaml.box.env { min-height: 72px; }
 .imp-svcs { display: grid; gap: 8px; }
 .imp-svc { display: grid; gap: 2px; font-size: 13.5px; }
@@ -457,16 +434,14 @@ tr.empty{display:table-row;padding:0}
 
 /* sign-in security */
 .sec-setup{padding:16px;display:flex;gap:20px;flex-wrap:wrap;max-width:640px;margin-bottom:14px}
-.sec-qr{flex:0 0 auto;width:196px;height:196px;padding:8px;background:#fff;border-radius:8px;display:grid;place-items:center}
+.sec-qr{flex:0 0 auto;width:196px;height:196px;padding:8px;background:#fff;border-radius:var(--r-sm);display:grid;place-items:center}
 .sec-qr img{image-rendering:pixelated;display:block}
 .sec-steps{flex:1 1 260px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .sec-steps ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:13.5px;color:var(--ink-2)}
 .sec-key{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
 .sec-key .mono{overflow-wrap:anywhere;color:var(--ink)}
-.sec-steps .fl,.sec-pass .fl,.sec-add .fl{margin:0}
+.sec-steps .fl,.sec-add .fl{margin:0}
 .sec-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.sec-pass{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:420px}
-.sec-codes{padding:16px;display:flex;flex-direction:column;gap:14px;max-width:420px}
 .sec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 20px;font-size:14px}
 .sec-add{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;max-width:640px}
 .sec-add .fl:first-child{flex:1 1 220px}

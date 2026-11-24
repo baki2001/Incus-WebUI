@@ -24,7 +24,7 @@ export function Status({ status }: { status: string }) {
 }
 
 // Overlay mounts, then animates in; unmounts after animating out.
-function useShown(open: boolean) {
+export function useShown(open: boolean) {
   const [mounted, setMounted] = useState(open);
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -34,10 +34,24 @@ function useShown(open: boolean) {
       return () => cancelAnimationFrame(r);
     }
     setOn(false);
-    const t = setTimeout(() => setMounted(false), 280);
+    const t = setTimeout(() => setMounted(false), 200);
     return () => clearTimeout(t);
   }, [open]);
   return { mounted, on };
+}
+
+// Keeps popovers/menus/trays mounted for exit animation while applying .leaving.
+export function usePresence(open: boolean, ms = 160) {
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    const t = setTimeout(() => setMounted(false), ms);
+    return () => clearTimeout(t);
+  }, [open, ms]);
+  return { mounted, leaving: !open && mounted };
 }
 
 // useGuard wraps onClose: when dirty, ask "Discard your changes?" first.
@@ -104,7 +118,7 @@ export function Sheet({ open, onClose, title, children, footer, wide, head, dirt
   );
 }
 
-type ConfirmOpts = { title: string; body: ReactNode; confirm: string; danger?: boolean; typeToConfirm?: string };
+type ConfirmOpts = { title: string; body: ReactNode; confirm?: string; danger?: boolean; typeToConfirm?: string; noConfirm?: boolean };
 let openConfirm: (o: ConfirmOpts) => Promise<boolean> = async () => false;
 export const confirmDialog = (o: ConfirmOpts) => openConfirm(o);
 
@@ -130,7 +144,7 @@ export function ConfirmHost() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (ok) close(true);
+            if (ok && !o.noConfirm) close(true);
           }}
         >
           <div className="dlg-b">
@@ -148,12 +162,14 @@ export function ConfirmHost() {
             )}
           </div>
           <div className="dlg-f">
-            <button type="button" className="btn btn-s press" onClick={() => close(false)}>
-              Cancel
+            <button type="button" className="btn btn-s press" onClick={() => close(false)} autoFocus={o.noConfirm}>
+              {o.noConfirm ? "Close" : "Cancel"}
             </button>
-            <button type="submit" className={"btn press " + (o.danger ? "btn-d" : "btn-p")} disabled={!ok} autoFocus={!o.typeToConfirm}>
-              {o.confirm}
-            </button>
+            {!o.noConfirm && (
+              <button type="submit" className={"btn press " + (o.danger ? "btn-d" : "btn-p")} disabled={!ok} autoFocus={!o.typeToConfirm}>
+                {o.confirm}
+              </button>
+            )}
           </div>
         </form>
       )}
@@ -163,13 +179,14 @@ export function ConfirmHost() {
 
 export function Menu({ button, children, align = "right" }: { button: (p: { onClick: () => void; "aria-expanded": boolean }) => ReactNode; children: (close: () => void) => ReactNode; align?: "left" | "right" }) {
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   return (
     <div ref={ref} style={{ position: "relative" }}>
       {button({ onClick: () => setOpen((o) => !o), "aria-expanded": open })}
-      {open && (
-        <div className="menu" style={align === "left" ? { left: 0, right: "auto", transformOrigin: "top left" } : undefined}>
+      {mounted && (
+        <div className={"menu" + (leaving ? " leaving" : "")} style={align === "left" ? { left: 0, right: "auto", transformOrigin: "top left" } : undefined}>
           {children(() => setOpen(false))}
         </div>
       )}
@@ -184,7 +201,13 @@ export function Seg<T extends string>({ value, options, onChange, label }: { val
     <div className="seg" role="group" aria-label={label} ref={ref}>
       {options.map((o) => (
         <button key={o.v} type="button" aria-pressed={value === o.v} onClick={() => onChange(o.v)}>
-          {o.l}
+          {typeof o.l === "string" ? (
+            <span className="lbl" data-t={o.l}>
+              <span>{o.l}</span>
+            </span>
+          ) : (
+            o.l
+          )}
         </button>
       ))}
     </div>
@@ -197,7 +220,10 @@ export function Tabs<T extends string>({ value, tabs, onChange }: { value: T; ta
   const ind = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const b = wrap.current?.querySelector<HTMLButtonElement>('button[aria-selected="true"]');
-    if (b && ind.current) ind.current.style.transform = `translateX(${b.offsetLeft + 12}px) scaleX(${b.offsetWidth - 24})`;
+    if (b && ind.current) {
+      ind.current.style.transform = `translateX(${b.offsetLeft + 12}px) scaleX(${b.offsetWidth - 24})`;
+      b.scrollIntoView({ inline: "nearest", block: "nearest" });
+    }
   });
   return (
     <div className="tabs" role="tablist" ref={wrap}>
@@ -244,6 +270,16 @@ export function SkRows({ cols, rows = 6 }: { cols: number; rows?: number }) {
         </tr>
       ))}
     </>
+  );
+}
+
+export function Skel({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="b-sk" aria-busy="true">
+      {Array.from({ length: lines }, (_, i) => (
+        <span className="sk" key={i} style={{ width: `${88 - i * 14}%` }} />
+      ))}
+    </div>
   );
 }
 
@@ -306,9 +342,14 @@ export function useThumb(ref: React.RefObject<HTMLElement | null>, selector: str
         return;
       }
       if (!animate) th.style.transition = "none";
+      let x = 0, y = 0;
+      for (let p: HTMLElement | null = el; p && p !== box; p = p.offsetParent as HTMLElement | null) {
+        x += p.offsetLeft + (p !== el ? p.clientLeft : 0);
+        y += p.offsetTop + (p !== el ? p.clientTop : 0);
+      }
       th.style.width = el.offsetWidth + "px";
       th.style.height = el.offsetHeight + "px";
-      th.style.transform = `translate(${el.offsetLeft}px,${el.offsetTop}px)`;
+      th.style.transform = `translate(${x}px,${y}px)`;
       th.style.opacity = "1";
       if (!animate) {
         void th.offsetWidth;
@@ -322,7 +363,16 @@ export function useThumb(ref: React.RefObject<HTMLElement | null>, selector: str
       box.prepend(th);
       place(false);
     } else place(true);
-    const ro = new ResizeObserver(() => place(false));
+    let lastW = box.offsetWidth;
+    let lastH = box.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const w = box.offsetWidth;
+      const h = box.offsetHeight;
+      if (Math.abs(w - lastW) <= 2 && Math.abs(h - lastH) <= 2) return;
+      lastW = w;
+      lastH = h;
+      place(false);
+    });
     ro.observe(box);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps

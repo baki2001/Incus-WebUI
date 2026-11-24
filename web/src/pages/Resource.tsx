@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import YAML from "yaml";
 import { ic } from "../icons";
 import { friendlyError } from "../api";
 import { setErrorSink } from "../state";
-import { Dialog, Seg, Sheet } from "../ui";
+import { Dialog, Seg, shake, Sheet } from "../ui";
 import { diffLines } from "./Config";
 
 // EditSheet edits one Incus object (network, pool, profile, project...) as a
@@ -43,6 +43,7 @@ export function EditSheet<T extends object>({
   const [err, setErr] = useState("");
   const [review, setReview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (open) {
       setDraft(value ? JSON.parse(JSON.stringify(value)) : null);
@@ -89,12 +90,15 @@ export function EditSheet<T extends object>({
   const save = async (d: T) => {
     setBusy(true);
     setApplyErr("");
-    // Errors show in the review dialog, not as a toast behind it.
-    if (review) setErrorSink((e) => setApplyErr(friendlyError(e)));
+    setErr("");
+    // Errors show inline in the review dialog or sticky sheet banner, not as a toast behind it.
+    setErrorSink((e) => (review ? setApplyErr(friendlyError(e)) : setErr(friendlyError(e))));
     const ok = await onSave(d).finally(() => (setErrorSink(null), setBusy(false)));
     if (ok) {
       setReview(false);
       onClose();
+    } else if (!review) {
+      requestAnimationFrame(() => shake(bodyRef.current?.querySelector<HTMLElement>(".note-box.bad, .hint.bad") ?? null));
     }
   };
   const next = review ? (view === "yaml" ? parseYaml().v : draft) : null;
@@ -115,7 +119,7 @@ export function EditSheet<T extends object>({
               label="View"
               options={[
                 { v: "form", l: "Form" },
-                { v: "yaml", l: <span className="ac">YAML</span> },
+                { v: "yaml", l: "YAML" },
               ]}
             />
           ) : undefined
@@ -123,7 +127,7 @@ export function EditSheet<T extends object>({
         footer={
           <>
             {onDelete && (
-              <button className="btn btn-q press l" style={{ color: "var(--err)" }} onClick={onDelete}>
+              <button className="btn btn-q danger press l" onClick={onDelete}>
                 {ic.trash}Delete
               </button>
             )}
@@ -136,9 +140,16 @@ export function EditSheet<T extends object>({
               disabled={busy}
               onClick={() => {
                 const d = current();
-                if (!d) return;
+                if (!d) {
+                  requestAnimationFrame(() => shake(bodyRef.current?.querySelector<HTMLElement>(".note-box.bad, .hint.bad") ?? null));
+                  return;
+                }
                 const bad = validate?.(d);
-                if (bad) return setErr(bad);
+                if (bad) {
+                  setErr(bad);
+                  requestAnimationFrame(() => shake(bodyRef.current?.querySelector<HTMLElement>(".note-box.bad, .hint.bad") ?? null));
+                  return;
+                }
                 setErr("");
                 if (create) save(d);
                 else setReview(true);
@@ -149,14 +160,16 @@ export function EditSheet<T extends object>({
           </>
         }
       >
-        {info}
-        {err && (
-          <div className="hint bad" role="alert">
-            {err}
-          </div>
-        )}
-        {draft && view === "form" && form(draft, set)}
-        {view === "yaml" && <textarea className="yaml box" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} style={{ minHeight: "50vh" }} />}
+        <div ref={bodyRef} style={{ display: "contents" }}>
+          {err && (
+            <div className="note-box bad stick" role="alert">
+              {err}
+            </div>
+          )}
+          {info}
+          {draft && view === "form" && form(draft, set)}
+          {view === "yaml" && <textarea className="yaml box" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} style={{ minHeight: "50vh" }} />}
+        </div>
       </Sheet>
       <Dialog open={review} onClose={() => (setReview(false), setApplyErr(""))} size="md">
         <div className="dlg-b">

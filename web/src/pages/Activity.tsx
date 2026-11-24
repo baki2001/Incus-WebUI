@@ -4,7 +4,7 @@ import { dateTime, incus, opProgress, since, ui } from "../api";
 import { ic } from "../icons";
 import { cancelJob, taskText, useCrumbs, useJobs, type Job } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Seg, Select, Table } from "../ui";
+import { confirmDialog, Menu, Seg, Select, Table } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
 
 type Op = { id: string; class: string; description: string; created_at: string; updated_at: string; status: string; status_code: number; resources: Record<string, string[]> | null; metadata: any; may_cancel: boolean; err: string; location: string; server: string; project?: string };
@@ -20,6 +20,7 @@ export function Tasks() {
   const all = q.data;
   const rows = all?.filter((j) => (show === "all" || j.state === show) && matches(search, j.title, j.user, j.note, j.error));
   const users = new Set(all?.map((j) => j.user || ""));
+  const total = all?.length || 0;
   const running = all?.filter((j) => j.state === "running").length || 0;
   const failed = all?.filter((j) => j.state === "failed").length || 0;
   return (
@@ -32,7 +33,7 @@ export function Tasks() {
           onChange={setShow}
           label="Show"
           options={[
-            { v: "all", l: "All" },
+            { v: "all", l: <>All<span className="n">{total}</span></> },
             { v: "running", l: <>Running<span className="n">{running}</span></> },
             { v: "failed", l: <>Failed<span className="n">{failed}</span></> },
           ]}
@@ -53,6 +54,9 @@ export function Tasks() {
             cell: (j) => (
               <span className="nm">
                 <span className="nm2">{taskText(j).line}</span>
+                <small className={j.state === "failed" ? "bad show-s-only" : "dim show-s-only"}>
+                  {j.state === "running" ? `${Math.round(j.progress * 100)}% · ${j.detail || "working"}` : j.state === "done" ? taskText(j).detail || "Done" : taskText(j).detail}
+                </small>
                 {j.link && j.state === "done" && (
                   <small>
                     <Link to={j.link} className="rlink">
@@ -66,6 +70,7 @@ export function Tasks() {
           {
             k: "state",
             label: "Result",
+            cls: "hide-s",
             sort: (j) => j.state,
             cell: (j) =>
               j.state === "running" ? (
@@ -74,7 +79,7 @@ export function Tasks() {
                   <small className="dim" style={{ display: "block" }}>{j.detail || "working"}</small>
                 </span>
               ) : (
-                <span className={"st" + (j.state === "failed" ? " error" : " unknown")}>
+                <span className={"st" + (j.state === "failed" ? " error" : "")}>
                   <span className="task-res">{j.state === "done" ? taskText(j).detail || "Done" : taskText(j).detail}</span>
                 </span>
               ),
@@ -140,7 +145,9 @@ export function Operations() {
     await app.run("Cancelling", () => incus(o.server, `/1.0/operations/${o.id}`, { method: "DELETE", project: o.project }), "Cancelled");
     invalidate("operations:");
   };
+  const total = q.data?.length || 0;
   const running = q.data?.filter((o) => o.status_code < 200).length || 0;
+  const failed = q.data?.filter((o) => o.status_code >= 400).length || 0;
   return (
     <>
       <PageHead title="Operations" />
@@ -151,9 +158,9 @@ export function Operations() {
           onChange={setShow}
           label="Show"
           options={[
-            { v: "all", l: "All" },
+            { v: "all", l: <>All<span className="n">{total}</span></> },
             { v: "running", l: <>Running<span className="n">{running}</span></> },
-            { v: "failed", l: "Failed" },
+            { v: "failed", l: <>Failed<span className="n">{failed}</span></> },
           ]}
         />
         <span className="dim fnote">Incus keeps finished operations for a few seconds only.</span>
@@ -182,7 +189,7 @@ export function Operations() {
             sort: (o) => o.status,
             cell: (o) => (
               <span className="nm" style={{ display: "block" }}>
-                <span className={"st " + (o.status_code === 200 ? "running" : o.status_code >= 400 ? "error" : "busy")}>{o.status}</span>
+                <span className={"st" + (o.status_code === 200 ? "" : o.status_code >= 400 ? " error" : " busy")}>{o.status}</span>
                 {(o.err || (o.status_code < 200 && opProgress(o as any))) && <small className={o.err ? "bad" : "dim"} style={{ display: "block" }}>{o.err || opProgress(o as any)}</small>}
               </span>
             ),
@@ -244,7 +251,7 @@ function resourceLinks(o: Op) {
       {i > 0 && ", "}
       {r.kind}{" "}
       {r.to ? (
-        <Link to={r.to} className="rlink" onClick={(e) => e.stopPropagation()}>
+        <Link to={r.to} onClick={(e) => e.stopPropagation()}>
           {r.name}
         </Link>
       ) : (
@@ -261,6 +268,8 @@ const ago = (iso: string) => {
 };
 
 type Warning = { uuid: string; type: string; status: string; severity: string; count: number; first_seen_at: string; last_seen_at: string; last_message: string; project: string; entity_url: string; location: string; server: string };
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
 export function Warnings() {
   useCrumbs([{ label: "Warnings" }]);
@@ -314,8 +323,8 @@ export function Warnings() {
               </span>
             ),
           },
-          { k: "sev", label: "Severity", sort: (w) => ["low", "moderate", "high"].indexOf(w.severity), cell: (w) => <span className={"st " + (w.severity === "high" ? "error" : w.severity === "moderate" ? "busy" : "")}>{w.severity}</span>, cls: "hide-s" },
-          { k: "status", label: "Status", sort: (w) => w.status, cell: (w) => <span className={"st " + (w.status === "new" ? "busy" : "")}>{w.status === "new" ? "New" : w.status === "acknowledged" ? "Acknowledged" : w.status}</span>, hide: show !== "all", cls: "hide-s" },
+          { k: "sev", label: "Severity", sort: (w) => ["low", "moderate", "high"].indexOf(w.severity), cell: (w) => <span className={"st " + (w.severity === "high" ? "error" : w.severity === "moderate" ? "warn" : "")}>{cap(w.severity)}</span>, cls: "hide-s" },
+          { k: "status", label: "Status", sort: (w) => w.status, cell: (w) => <span className={"st " + (w.status === "new" ? "warn" : "")}>{w.status === "new" ? "New" : w.status === "acknowledged" ? "Acknowledged" : cap(w.status)}</span>, hide: show !== "all", cls: "hide-s" },
           { k: "count", label: "Times", sort: (w) => w.count, cell: (w) => w.count, cls: "right hide-s" },
           { k: "seen", label: "Last seen", sort: (w) => w.last_seen_at, cell: (w) => <span className="dim" title={dateTime(w.last_seen_at)}>{ago(w.last_seen_at)}</span>, cls: "hide-m" },
           { k: "server", label: "Server", sort: (w) => w.server, cell: (w) => w.server, hide: !multi, cls: "hide-m" },
@@ -323,20 +332,41 @@ export function Warnings() {
             k: "act",
             label: "",
             cell: (w) => (
-              <div className="qa" style={{ opacity: 1 }}>
-                {w.status === "new" && (
-                  <button className="btn btn-q btn-sm" onClick={() => ack(w)}>
-                    Acknowledge
+              <div onClick={(e) => e.stopPropagation()}>
+                <div className="qa qa-inline" style={{ opacity: 1 }}>
+                  {w.status === "new" && (
+                    <button className="btn btn-q btn-sm" onClick={() => ack(w)}>
+                      Acknowledge
+                    </button>
+                  )}
+                  {w.status === "acknowledged" && (
+                    <button className="btn btn-q btn-sm" onClick={() => reopen(w)}>
+                      Mark as new
+                    </button>
+                  )}
+                  <button className="btn btn-q ib btn-sm" aria-label="Delete warning" onClick={() => del(w)}>
+                    {ic.trash}
                   </button>
-                )}
-                {w.status === "acknowledged" && (
-                  <button className="btn btn-q btn-sm" onClick={() => reopen(w)}>
-                    Mark as new
-                  </button>
-                )}
-                <button className="btn btn-q ib btn-sm" aria-label="Delete warning" onClick={() => del(w)}>
-                  {ic.trash}
-                </button>
+                </div>
+                <div className="qa qa-more-w">
+                  <Menu
+                    button={(p) => (
+                      <button className="btn btn-q ib qa-more" aria-label="More actions" {...p}>
+                        {ic.more}
+                      </button>
+                    )}
+                  >
+                    {(close) => (
+                      <>
+                        {w.status === "new" && <button onClick={() => (close(), ack(w))}>Acknowledge</button>}
+                        {w.status === "acknowledged" && <button onClick={() => (close(), reopen(w))}>Mark as new</button>}
+                        <button className="danger" onClick={() => (close(), del(w))}>
+                          {ic.trash}Delete
+                        </button>
+                      </>
+                    )}
+                  </Menu>
+                </div>
               </div>
             ),
           },
@@ -348,6 +378,57 @@ export function Warnings() {
 
 type AuditEntry = { time: string; user: string; method?: string; ip: string; action: string; server?: string; project?: string; status: number };
 
+const resourceNames: Record<string, string> = {
+  instances: "instance",
+  profiles: "profile",
+  networks: "network",
+  "network-acls": "network ACL",
+  "storage-pools": "storage pool",
+  "storage-volumes": "volume",
+  "storage-buckets": "bucket",
+  images: "image",
+  projects: "project",
+  certificates: "certificate",
+  warnings: "warning",
+  backups: "backup",
+  snapshots: "snapshot",
+  operations: "operation",
+  servers: "server",
+  users: "user",
+  schedules: "backup schedule",
+  tunnels: "tunnel",
+};
+
+function humanAction(action: string): string {
+  if (action === "login") return "Signed in";
+  if (action === "login failed") return "Failed sign-in";
+  if (action === "logout") return "Signed out";
+  if (action.startsWith("backup ")) return `Backed up ${action.slice(7)}`;
+  const sp = action.indexOf(" ");
+  if (sp < 0) return action;
+  const method = action.slice(0, sp);
+  const path = action.slice(sp + 1).split("?")[0];
+  if (path === "/api/ui/logout") return "Signed out";
+  if (path === "/api/ui/login") return "Signed in";
+  const segs = path.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+  const clean = segs[0] === "1.0" ? segs.slice(1) : segs[0] === "api" && segs[1] === "ui" ? segs.slice(2) : segs;
+  const [col, name, sub, subName] = clean;
+  const noun = resourceNames[col] || col;
+  if (col === "instances" && name) {
+    if (sub === "state") return `Changed state of ${name}`;
+    if (sub === "exec") return `Opened terminal in ${name}`;
+    if (sub === "console") return `Opened console in ${name}`;
+    if (sub === "files") return method === "DELETE" ? `Deleted file in ${name}` : `Uploaded file to ${name}`;
+    if (sub === "snapshots") return method === "POST" ? `Created snapshot of ${name}` : subName ? `Changed snapshot ${subName} of ${name}` : `Updated snapshots of ${name}`;
+    if (sub === "backups") return method === "POST" ? `Created backup of ${name}` : subName ? `Removed backup ${subName} of ${name}` : `Updated backups of ${name}`;
+  }
+  if (!clean.length) return method === "PUT" || method === "PATCH" ? "Updated server settings" : action;
+  const verb = method === "POST" ? "Created" : method === "DELETE" ? "Deleted" : method === "PUT" || method === "PATCH" ? "Updated" : method;
+  if (!name) return `${verb} ${noun}`;
+  if (sub && subName) return `${verb} ${resourceNames[sub] || sub} ${subName}`;
+  return `${verb} ${noun} ${name}`;
+}
+
 // Audit log: every change made through the UI and every sign-in. Admins only.
 export function Audit() {
   useCrumbs([{ label: "Audit log" }]);
@@ -355,8 +436,12 @@ export function Audit() {
   const q = useData<{ month: string; months: string[]; entries: AuditEntry[] }>(`audit:${month}`, () => ui(`/audit${month ? `?month=${month}` : ""}`), 15000);
   const [search, setSearch] = useState("");
   const [show, setShow] = useState<"all" | "failed" | "logins">("all");
-  const rows = q.data?.entries.filter(
-    (e) => (show === "all" || (show === "failed" ? e.status >= 400 : e.action.startsWith("login"))) && matches(search, e.user, e.action, e.server || "", e.project || "", e.ip),
+  const all = q.data?.entries;
+  const total = all?.length || 0;
+  const failed = all?.filter((e) => e.status >= 400).length || 0;
+  const logins = all?.filter((e) => e.action.startsWith("login")).length || 0;
+  const rows = all?.filter(
+    (e) => (show === "all" || (show === "failed" ? e.status >= 400 : e.action.startsWith("login"))) && matches(search, e.user, e.action, humanAction(e.action), e.server || "", e.project || "", e.ip),
   );
   const months = q.data?.months || [];
   return (
@@ -369,9 +454,9 @@ export function Audit() {
           onChange={setShow}
           label="Show"
           options={[
-            { v: "all", l: "All" },
-            { v: "failed", l: "Failed" },
-            { v: "logins", l: "Sign-ins" },
+            { v: "all", l: <>All<span className="n">{total}</span></> },
+            { v: "failed", l: <>Failed<span className="n">{failed}</span></> },
+            { v: "logins", l: <>Sign-ins<span className="n">{logins}</span></> },
           ]}
         />
         {months.length > 1 && <Select aria-label="Month" value={q.data?.month || ""} onChange={setMonth} options={months} />}
@@ -384,11 +469,32 @@ export function Audit() {
         empty={q.error || "Nothing logged this month."}
         initial={{ k: "when", asc: false }}
         cols={[
-          { k: "when", label: "When", sort: (e) => e.time, cell: (e) => <span className="dim" title={dateTime(e.time)}>{ago(e.time)}</span> },
-          { k: "user", label: "Who", sort: (e) => e.user, cell: (e) => <span className="nm"><span className="nm2">{e.user || "unknown"}</span><small className="dim">{e.ip}</small></span> },
-          { k: "action", label: "What", sort: (e) => e.action, cell: (e) => <span className="mono">{e.action}</span> },
+          {
+            k: "action",
+            label: "What",
+            sort: (e) => humanAction(e.action),
+            cell: (e) => (
+              <span className="nm">
+                <span className="nm2" title={e.action}>{humanAction(e.action)}</span>
+                <small className="dim show-s-only">{e.user || "unknown"} · {e.ip}</small>
+              </span>
+            ),
+          },
+          { k: "user", label: "Who", cls: "hide-s", sort: (e) => e.user, cell: (e) => <span className="nm"><span className="nm2">{e.user || "unknown"}</span><small className="dim">{e.ip}</small></span> },
           { k: "where", label: "Where", sort: (e) => (e.server || "") + (e.project || ""), cell: (e) => (e.server ? `${e.server}${e.project ? " / " + e.project : ""}` : ""), cls: "hide-s" },
-          { k: "status", label: "Result", sort: (e) => e.status, cell: (e) => (e.status >= 400 ? <span className="bad">{e.status}</span> : <span className="dim">{e.status}</span>) },
+          {
+            k: "status",
+            label: "Result",
+            cls: "hide-s",
+            sort: (e) => e.status,
+            cell: (e) =>
+              e.status >= 400 ? (
+                <span className="st error" title={String(e.status)}>{e.status === 401 || e.status === 403 ? "Denied" : "Failed"}</span>
+              ) : (
+                <span className="st" title={String(e.status)}>OK</span>
+              ),
+          },
+          { k: "when", label: "When", sort: (e) => e.time, cell: (e) => <span className="dim" title={dateTime(e.time)}>{ago(e.time)}</span> },
         ]}
       />
     </>

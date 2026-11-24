@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { dateTime, incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
-import { ConfirmHost, Dialog, useOutside } from "./ui";
+import { ConfirmHost, Dialog, useOutside, usePresence, useShown, useThumb } from "./ui";
 import { canDo } from "./pages/Instances";
 import { askStop, StopHost } from "./pages/InstanceDialogs";
 import { usePins, useInstances, useProjects } from "./data";
@@ -36,9 +36,19 @@ export function Shell() {
     }
   });
   const [navOpen, setNavOpen] = useState(false);
+  const { mounted: scrimMounted, on: scrimOn } = useShown(navOpen);
   const [cmdk, setCmdk] = useState(false);
   const loc = useLocation();
   useEffect(() => setNavOpen(false), [loc.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", k);
+    return () => document.removeEventListener("keydown", k);
+  }, [navOpen]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -65,13 +75,11 @@ export function Shell() {
   return (
     <div className={"app" + (navOpen ? " nav-open" : "")}>
       <Sidebar rail={rail} toggleRail={toggleRail} />
-      {navOpen && <div className="scrim on" style={{ zIndex: 44 }} onClick={() => setNavOpen(false)} />}
+      {scrimMounted && <div className={"scrim" + (scrimOn ? " on" : "")} style={{ zIndex: 44 }} onClick={() => setNavOpen(false)} />}
       <div className="main">
         <header className="top">
           <button className="btn btn-q ib menu-btn press" aria-label="Open navigation" onClick={() => setNavOpen(true)}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-              <path d="M3 5h12M3 9h12M3 13h12" />
-            </svg>
+            {ic.menu}
           </button>
           <nav className="crumbs" aria-label="Breadcrumb">
             {crumbs.map((c, i) => (
@@ -163,6 +171,7 @@ function Tasks() {
   const { tasks } = useApp();
   const jobs = useJobs().data || [];
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   const running = jobs.filter((j) => j.state === "running");
@@ -182,8 +191,8 @@ function Tasks() {
         )}
         <span className="lbl2">{busy > 0 ? `${busy} running` : "Tasks"}</span>
       </button>
-      {open && (
-        <div className="tray">
+      {mounted && (
+        <div className={"tray" + (leaving ? " leaving" : "")}>
           {busy > 0 && <h3>Running</h3>}
           {tasks.map((t) => (
             <div className="op" key={t.id}>
@@ -218,7 +227,7 @@ function JobRow({ j, onOpen }: { j: Job; onOpen: () => void }) {
     return (
       <div className="op">
         <span>{j.title}</span>
-        <div className="jbar" role="progressbar" aria-valuenow={Math.round(j.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+        <div className="prog" style={{ margin: "6px 0 4px" }} role="progressbar" aria-valuenow={Math.round(j.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
           <i style={{ transform: `scaleX(${Math.max(0.02, j.progress)})` }} />
         </div>
         <small>
@@ -404,6 +413,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const [openG, toggleG] = useOpenGroups();
   // The menu scrolls between the scope picker and the footer; a fade hints at more below.
   const navRef = useRef<HTMLElement>(null);
+  useThumb(navRef, '.ni.active, .ni[aria-current="page"]', [loc.pathname, rail, openG, pinned.length, app.servers.length]);
   const [more, setMore] = useState(false);
   useEffect(() => {
     const el = navRef.current;
@@ -428,7 +438,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
       </div>
       <Scope online={online} />
       <div className={"nav-wrap" + (more ? " more" : "")}>
-      <nav className="nav" ref={navRef}>
+      <nav className="nav" id="side-nav" ref={navRef}>
         <NavLink to="/" end className="ni" title="Overview">
           {ic.home}
           {lbl("Overview")}
@@ -518,7 +528,7 @@ function ModeBtn() {
   const name = (m: Mode) => m[0].toUpperCase() + m.slice(1);
   return (
     <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Look: ${name(app.mode)}. Switch to ${name(next)}`} title={`Look: ${name(app.mode)}`}>
-      {app.mode === "light" ? ic.sun : app.mode === "graphite" ? ic.moon : ic.auto}
+      {app.mode === "light" ? ic.sun : app.mode === "graphite" ? ic.moon : ic.kyoto}
     </button>
   );
 }
@@ -570,6 +580,7 @@ function Scope({ online }: { online: number }) {
   const app = useApp();
   const projects = useProjects();
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   const label = app.scope === "*" ? "All servers" : app.scope;
@@ -591,8 +602,8 @@ function Scope({ online }: { online: number }) {
         </span>
         <span className="chev">{ic.chev}</span>
       </button>
-      {open && (
-        <div className="menu" style={{ left: 0, right: 0, top: 46 }}>
+      {mounted && (
+        <div className={"menu" + (leaving ? " leaving" : "")} style={{ left: 0, right: 0, top: 46 }}>
           <button onClick={() => (app.setScope("*"), setOpen(false))}>
             All servers{app.scope === "*" && <span className="kbd">✓</span>}
           </button>
@@ -678,28 +689,30 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
     const list: Cmd[] = [
       { group: "Go to", label: "Overview", icon: ic.home, run: go("/") },
       { group: "Go to", label: "Instances", icon: ic.inst, run: go("/instances") },
-      { group: "Go to", label: "Images", icon: ic.img, run: go("/images") },
       { group: "Go to", label: "Profiles", icon: ic.prof, run: go("/profiles") },
       { group: "Go to", label: "Networks", icon: ic.net, run: go("/networks") },
-      { group: "Go to", label: "Network ACLs", icon: ic.shield, run: go("/networks/acls") },
-      { group: "Go to", label: "IPAM, addresses in use", icon: ic.net, run: go("/networks/ipam") },
-      { group: "Go to", label: "Storage pools", icon: ic.disk, run: go("/storage") },
-      { group: "Go to", label: "Storage volumes", icon: ic.disk, run: go("/storage/volumes") },
+      { group: "Go to", label: "ACLs", icon: ic.shield, run: go("/networks/acls") },
+      { group: "Go to", label: "IPAM", icon: ic.net, run: go("/networks/ipam") },
+      ...(app.admin ? [{ group: "Go to", label: "Tunnels", icon: ic.net, run: go("/tunnels") }] : []),
+      { group: "Go to", label: "Pools", icon: ic.disk, run: go("/storage") },
+      { group: "Go to", label: "Volumes", icon: ic.disk, run: go("/storage/volumes") },
       { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
       { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
+      { group: "Go to", label: "Images", icon: ic.img, run: go("/images") },
       { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
       { group: "Go to", label: "Backups", icon: ic.backup, run: go("/backups") },
+      ...app.servers.map((s) => ({ group: "Go to", label: `Host ${s.name}`, icon: ic.host, run: go(`/hosts/${s.name}`) })),
       { group: "Go to", label: "Tasks", icon: ic.tasks, run: go("/tasks") },
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
+      ...(app.admin ? [{ group: "Go to", label: "Audit log", icon: ic.shield, run: go("/audit") }] : []),
       { group: "Go to", label: "Settings", icon: ic.gear, run: go("/settings") },
-      ...app.servers.map((s) => ({ group: "Go to", label: `Host ${s.name}`, icon: ic.host, run: go(`/hosts/${s.name}`) })),
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
       { group: "Actions", label: "Switch to Kyoto", icon: ic.screen, run: () => (app.setMode("kyoto"), onClose()) },
       { group: "Actions", label: "Switch to Light", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
-      { group: "Actions", label: "Switch to Graphite (dark)", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
+      { group: "Actions", label: "Switch to Graphite", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
     ];
     const where = (project: string | undefined, server: string, always = false) => [project && (always || project !== "default") ? project : "", multi ? server : ""].filter(Boolean).join(" · ");
     for (const r of found.data?.instances || []) {
@@ -733,7 +746,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
     for (const t of found.data?.things || []) list.push({ group: t.kind, label: t.name, meta: where(t.project, t.server), icon: groupIcon[t.kind], run: go(t.to) });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [found.data, app.servers, multi]);
+  }, [found.data, app.servers, app.admin, multi]);
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = useMemo(() => {
     const idle = !words.length;

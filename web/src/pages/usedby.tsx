@@ -32,7 +32,7 @@ export function parseUsed(u: string, server: string): Item {
     case "images":
       return it({ kind: "Image", name: name.slice(0, 12), to: "/images" });
     case "storage-pools":
-      return it({ kind: parts[2] === "volumes" ? "Volume" : "Pool", name, to: "/storage" });
+      return it({ kind: parts[2] === "volumes" ? "Volume" : "Pool", name, to: parts[2] === "volumes" ? "/storage/volumes" : "/storage" });
     default:
       return it({ kind: parts[0] || "Item", name });
   }
@@ -40,24 +40,45 @@ export function parseUsed(u: string, server: string): Item {
 
 // The things that use an object, as links. In a dialog the links open in a new
 // tab so the dialog stays where it is.
-export function UsedByList({ list, server, blank, max = 8 }: { list?: string[]; server: string; blank?: boolean; max?: number }) {
+export function UsedByList({
+  list,
+  server,
+  blank,
+  max = 8,
+  detach,
+}: {
+  list?: string[];
+  server: string;
+  blank?: boolean;
+  max?: number;
+  detach?: (kind: string, name: string, project: string) => void;
+}) {
   const [all, setAll] = useState(false);
   const items = (list || []).map((u) => parseUsed(u, server));
-  if (!items.length) return <span className="dim">Nothing uses it.</span>;
+  if (!items.length) return <span className="none">Nothing uses it.</span>;
   const shown = all ? items : items.slice(0, max);
   return (
-    <span className="ubl">
-      {shown.map((it, i) =>
-        it.to ? (
-          <Link key={i} to={it.to} {...(blank ? { target: "_blank", rel: "noreferrer" } : {})}>
-            <small>{it.kind}</small> {it.name}
-          </Link>
-        ) : (
-          <span key={i} className="plain">
-            <small>{it.kind}</small> {it.name}
-          </span>
-        ),
-      )}
+    <span className="ulist">
+      {shown.map((it, i) => (
+        <span key={i} className="ul-r">
+          {it.to ? (
+            <Link to={it.to} {...(blank ? { target: "_blank", rel: "noreferrer" } : {})}>
+              {it.name}
+            </Link>
+          ) : (
+            <span>{it.name}</span>
+          )}
+          <small className="dim">
+            {it.kind.toLowerCase()}
+            {it.project !== "default" && it.res === "instances" ? ` in ${it.project}` : ""}
+          </small>
+          {detach && (it.res === "instances" || it.res === "profiles") && (
+            <button type="button" className="btn btn-q btn-sm press" onClick={() => detach(it.res, it.name, it.project)}>
+              Detach
+            </button>
+          )}
+        </span>
+      ))}
       {items.length > max && (
         <button type="button" className="btn btn-q btn-sm" onClick={() => setAll(!all)}>
           {all ? "Show fewer" : `Show all ${items.length}`}
@@ -67,10 +88,20 @@ export function UsedByList({ list, server, blank, max = 8 }: { list?: string[]; 
   );
 }
 
-export function UsedBySec({ list, server, title = "Used by" }: { list?: string[]; server: string; title?: ReactNode }) {
+export function UsedBySec({
+  list,
+  server,
+  title = "Used by",
+  detach,
+}: {
+  list?: string[];
+  server: string;
+  title?: ReactNode;
+  detach?: (kind: string, name: string, project: string) => void;
+}) {
   return (
     <SheetSec title={`${title}${list?.length ? ` (${list.length})` : ""}`}>
-      <UsedByList list={list} server={server} />
+      <UsedByList list={list} server={server} detach={detach} />
     </SheetSec>
   );
 }

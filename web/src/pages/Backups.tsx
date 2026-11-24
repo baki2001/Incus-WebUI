@@ -4,9 +4,9 @@ import { bytes, dateTime, friendlyError, incus, ui, type Instance } from "../api
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Dialog, Input, Seg, Select, Table, TglRow, useOutside } from "../ui";
+import { confirmDialog, Dialog, Empty, Field, Input, Seg, Select, Table, TglRow, useOutside, usePresence } from "../ui";
 import { useNames } from "../data";
-import { DlgForm, F, nameProblem } from "./InstanceDialogs";
+import { DlgForm, nameProblem } from "./InstanceDialogs";
 import { matches, PageHead, Search } from "./Resource";
 
 export type Meta = { key: string; target: string; server: string; project: string; instance: string; type: string; created: string; size: number; sha256: string; schedule?: string; by?: string; name?: string };
@@ -33,17 +33,17 @@ async function deleteBackup(app: ReturnType<typeof useApp>, m: Meta) {
 function BackupActions({ m, onRestore }: { m: Meta; onRestore: (m: Meta) => void }) {
   const app = useApp();
   return (
-    <span className="bk-act">
-      <button className="lnk" onClick={() => onRestore(m)}>
+    <div className="qa" style={{ opacity: 1 }}>
+      <button className="btn btn-q btn-sm" onClick={() => onRestore(m)}>
         Restore
       </button>
-      <a className="lnk" href={dlUrl(m)} download>
-        Download
+      <a className="btn btn-q ib btn-sm" aria-label="Download" title="Download" href={dlUrl(m)} download>
+        {ic.dl}
       </a>
-      <button className="lnk" onClick={() => deleteBackup(app, m)}>
-        Delete
+      <button className="btn btn-q ib btn-sm" aria-label="Delete" title="Delete" onClick={() => deleteBackup(app, m)}>
+        {ic.trash}
       </button>
-    </span>
+    </div>
   );
 }
 
@@ -82,16 +82,16 @@ export function BackupsPage() {
         )}
       </PageHead>
       {noTargets ? (
-        <div className="panel" style={{ padding: 24 }}>
-          <p className="dim" style={{ margin: 0 }}>
+        <div className="panel">
+          <Empty title="No backup targets yet">
             {app.admin ? (
               <>
-                No backup target is set up yet. <Link to="/settings/backups">Add one under Settings, Backups</Link>, then back up instances from their Backups or Snapshots tab, or with a schedule.
+                <Link to="/settings/backups">Add one under Settings, Backups</Link>, then back up instances from their Backups or Snapshots tab, or with a schedule.
               </>
             ) : (
               "No backup target is set up yet. Ask an admin to add one."
             )}
-          </p>
+          </Empty>
         </div>
       ) : (
         <>
@@ -101,9 +101,9 @@ export function BackupsPage() {
             <span className="dim fnote">Backups and snapshots kept on your backup targets. A restore makes a new instance; the original stays as it is.</span>
           </div>
           {q.data?.errors?.map((e) => (
-            <p key={e} className="bad">
+            <div key={e} className="note-box bad">
               {e}
-            </p>
+            </div>
           ))}
           <Table<Meta>
             rows={rows}
@@ -117,25 +117,19 @@ export function BackupsPage() {
                 label: "Instance",
                 sort: (m) => m.instance,
                 cell: (m) => (
-                  <>
-                    <Link className="mono" to={`/instances/${encodeURIComponent(m.server)}/${encodeURIComponent(m.instance)}?project=${encodeURIComponent(m.project)}`}>
-                      {m.instance}
-                    </Link>
-                    {m.name && (
-                      <span className="tag" style={{ marginLeft: 8 }}>
-                        {m.name}
-                      </span>
-                    )}
-                  </>
+                  <Link className="nm2" style={{ textDecoration: "none" }} to={`/instances/${encodeURIComponent(m.server)}/${encodeURIComponent(m.instance)}?project=${encodeURIComponent(m.project)}`}>
+                    {m.instance}
+                    {m.name && <span className="tag">{m.name}</span>}
+                  </Link>
                 ),
               },
               { k: "project", label: "Project", sort: (m) => m.project, cell: (m) => m.project, hide: !allProjects, cls: "hide-s" },
               { k: "server", label: "Server", sort: (m) => m.server, cell: (m) => m.server, hide: !multi, cls: "hide-m" },
               { k: "target", label: "Target", sort: (m) => m.target, cell: (m) => m.target },
               { k: "created", label: "Made", sort: (m) => m.created, cell: (m) => dateTime(m.created) },
-              { k: "size", label: "Size", cls: "num hide-s", sort: (m) => m.size, cell: (m) => bytes(m.size) },
+              { k: "size", label: "Size", cls: "right hide-s", sort: (m) => m.size, cell: (m) => <span className="mono">{bytes(m.size)}</span> },
               { k: "by", label: "By", sort: madeBy, cell: madeBy, cls: "hide-m" },
-              { k: "act", label: "", cls: "act", hide: !anyManage, cell: (m) => (app.can(m.server, m.project, "manager") ? <BackupActions m={m} onRestore={setRestore} /> : null) },
+              { k: "act", label: "", hide: !anyManage, cell: (m) => (app.can(m.server, m.project, "manager") ? <BackupActions m={m} onRestore={setRestore} /> : null) },
             ]}
           />
         </>
@@ -167,23 +161,32 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
   };
 
   return (
-    <div className="panel bk">
-      <div className="ptitle">
-        <h2>Backups</h2>
-        {canManage && targets.data && targets.data.length > 0 && (
-          <span className="r">
-            {targets.data.length > 1 && <Select aria-label="Backup target" value={tgt} onChange={setTarget} options={targets.data.map((t) => t.name)} />}
-            <button className="btn btn-p btn-sm press" onClick={backup}>
-              Back up now
-            </button>
-          </span>
-        )}
-      </div>
-      {targets.data && targets.data.length === 0 && <p className="dim">{app.admin ? "Add a backup target under Settings, Backups, to back up instances." : "No backup target is set up yet. Ask an admin to add one."}</p>}
+    <div className="col">
+      {canManage && targets.data && targets.data.length > 0 && (
+        <div className="toolbar">
+          {targets.data.length > 1 && <Select aria-label="Backup target" value={tgt} onChange={setTarget} options={targets.data.map((t) => t.name)} />}
+          <button className="btn btn-s press" onClick={backup}>
+            Back up now
+          </button>
+        </div>
+      )}
+      {targets.data && targets.data.length === 0 && (
+        <div className="panel">
+          <Empty title="No backup target">
+            {app.admin ? (
+              <>
+                <Link to="/settings/backups">Add a backup target under Settings, Backups</Link> to back up instances.
+              </>
+            ) : (
+              "No backup target is set up yet. Ask an admin to add one."
+            )}
+          </Empty>
+        </div>
+      )}
       {q.data?.errors?.map((e) => (
-        <p key={e} className="bad">
+        <div key={e} className="note-box bad">
           {e}
-        </p>
+        </div>
       ))}
       <Table
         rows={q.data?.backups}
@@ -194,9 +197,9 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
         cols={[
           { k: "created", label: "Made", cell: (m) => (m.name ? <>{dateTime(m.created)}<span className="tag" style={{ marginLeft: 8 }}>{m.name}</span></> : dateTime(m.created)), sort: (m) => m.created },
           { k: "target", label: "Target", cell: (m) => m.target, sort: (m) => m.target },
-          { k: "size", label: "Size", cls: "num", cell: (m) => bytes(m.size), sort: (m) => m.size },
+          { k: "size", label: "Size", cls: "right", cell: (m) => <span className="mono">{bytes(m.size)}</span>, sort: (m) => m.size },
           { k: "by", label: "By", cell: madeBy, sort: madeBy },
-          { k: "act", label: "", cls: "act", hide: !canManage, cell: (m) => <BackupActions m={m} onRestore={setRestore} /> },
+          { k: "act", label: "", hide: !canManage, cell: (m) => <BackupActions m={m} onRestore={setRestore} /> },
         ]}
       />
       <RestoreDialog m={restore} onClose={() => setRestore(null)} />
@@ -246,18 +249,18 @@ export function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => v
             }
           }}
         >
-          <F label="New name" hint={bad} bad>
+          <Field label="New name" hint={bad} bad>
             <div className="field">
-              <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
             </div>
-          </F>
-          <F label="Project">
+          </Field>
+          <Field label="Project">
             <Select value={project} onChange={setProject} options={projects.length ? projects : [project]} />
-          </F>
+          </Field>
           {pools.length > 1 && (
-            <F label="Storage pool">
+            <Field label="Storage pool">
               <Select value={pool} onChange={setPool} options={[{ v: "", l: "The one in the backup" }, ...pools.map((p) => ({ v: p, l: p }))]} />
-            </F>
+            </Field>
           )}
         </DlgForm>
       )}
@@ -294,9 +297,10 @@ export function BackupSettings() {
   const [err, setErr] = useState("");
   const [testing, setTesting] = useState("");
   const conf = draft || q.data;
-  if (!conf) return null;
   const strip = (c: Conf) => JSON.stringify({ targets: c.targets, schedules: c.schedules.map(({ state: _s, ...s }) => s), pbs: c.pbs });
   const dirty = !!draft && !!q.data && strip(draft) !== strip(q.data);
+  const bar = usePresence(dirty || !!err);
+  if (!conf) return null;
   const edit = (f: (c: Conf) => Conf) => {
     setErr("");
     setDraft(f(structuredClone(conf)));
@@ -353,139 +357,149 @@ export function BackupSettings() {
       <section className="set-sec">
         <h2>Backup targets</h2>
         <p>Where backups go: a directory on the machine that runs the UI (a mounted NAS share works), or an S3 bucket. Each backup has a SHA-256 checksum that a restore checks.</p>
-        {conf.targets.map((t, i) => (
-          <div className="panel bk-card" key={i}>
-            <div className="two">
-              <F label="Name">
-                <Input mono value={t.name} onChange={(v) => setT(i, { name: v })} placeholder="nas" />
-              </F>
-              <F label="Type">
-                <Select value={t.type} onChange={(v) => setT(i, { type: v as Target["type"] })} options={[{ v: "dir", l: "Directory" }, { v: "s3", l: "S3 bucket" }]} />
-              </F>
-              {t.type === "dir" ? (
-                <F label="Directory" hint="An absolute path the UI can write to. When the UI runs as an Incus instance, add a disk device for it.">
-                  <Input mono value={t.path || ""} onChange={(v) => setT(i, { path: v })} placeholder="/mnt/backups" />
-                </F>
-              ) : (
-                <>
-                  <F label="Endpoint">
-                    <Input mono value={t.endpoint || ""} onChange={(v) => setT(i, { endpoint: v })} placeholder="https://s3.eu-central-1.amazonaws.com" />
-                  </F>
-                  <F label="Bucket">
-                    <Input mono value={t.bucket || ""} onChange={(v) => setT(i, { bucket: v })} />
-                  </F>
-                  <F label="Region" hint="Leave empty for us-east-1, which MinIO and Garage accept.">
-                    <Input mono value={t.region || ""} onChange={(v) => setT(i, { region: v })} />
-                  </F>
-                  <F label="Folder in the bucket">
-                    <Input mono value={t.prefix || ""} onChange={(v) => setT(i, { prefix: v })} placeholder="incus" />
-                  </F>
-                  <F label="Access key">
-                    <Input mono value={t.access_key || ""} onChange={(v) => setT(i, { access_key: v })} />
-                  </F>
-                  <F label="Secret key">
-                    <Input mono type="password" value={t.secret_key || ""} onChange={(v) => setT(i, { secret_key: v })} />
-                  </F>
-                </>
-              )}
-            </div>
-            <div className="roles-f">
-              <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.targets = c.targets.filter((_, j) => j !== i)), c))}>
-                Remove
-              </button>
-              <span className="r">
-                <button className="btn btn-s btn-sm press" disabled={!!testing} onClick={() => test(t)}>
-                  {testing === t.name ? "Testing…" : "Test"}
+        <div className="col">
+          {conf.targets.map((t, i) => (
+            <div className="panel bk-card" style={{ marginBottom: 0 }} key={i}>
+              <div className="two">
+                <Field label="Name">
+                  <Input value={t.name} onChange={(v) => setT(i, { name: v })} placeholder="nas" />
+                </Field>
+                <Field label="Type">
+                  <Select value={t.type} onChange={(v) => setT(i, { type: v as Target["type"] })} options={[{ v: "dir", l: "Directory" }, { v: "s3", l: "S3 bucket" }]} />
+                </Field>
+                {t.type === "dir" ? (
+                  <Field label="Directory" hint="An absolute path the UI can write to. When the UI runs as an Incus instance, add a disk device for it.">
+                    <Input mono value={t.path || ""} onChange={(v) => setT(i, { path: v })} placeholder="/mnt/backups" />
+                  </Field>
+                ) : (
+                  <>
+                    <Field label="Endpoint">
+                      <Input mono value={t.endpoint || ""} onChange={(v) => setT(i, { endpoint: v })} placeholder="https://s3.eu-central-1.amazonaws.com" />
+                    </Field>
+                    <Field label="Bucket">
+                      <Input mono value={t.bucket || ""} onChange={(v) => setT(i, { bucket: v })} />
+                    </Field>
+                    <Field label="Region" hint="Leave empty for us-east-1, which MinIO and Garage accept.">
+                      <Input mono value={t.region || ""} onChange={(v) => setT(i, { region: v })} />
+                    </Field>
+                    <Field label="Folder in the bucket">
+                      <Input mono value={t.prefix || ""} onChange={(v) => setT(i, { prefix: v })} placeholder="incus" />
+                    </Field>
+                    <Field label="Access key">
+                      <Input mono value={t.access_key || ""} onChange={(v) => setT(i, { access_key: v })} />
+                    </Field>
+                    <Field label="Secret key">
+                      <Input mono type="password" value={t.secret_key || ""} onChange={(v) => setT(i, { secret_key: v })} />
+                    </Field>
+                  </>
+                )}
+              </div>
+              <div className="card-f">
+                <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.targets = c.targets.filter((_, j) => j !== i)), c))}>
+                  Remove
                 </button>
-              </span>
+                <span className="r">
+                  <button className="btn btn-s btn-sm press" disabled={!!testing} onClick={() => test(t)}>
+                    {testing === t.name ? "Testing…" : "Test"}
+                  </button>
+                </span>
+              </div>
             </div>
+          ))}
+          <div>
+            <button className="btn btn-q btn-sm" onClick={() => edit((c) => (c.targets.push({ name: c.targets.length ? `target${c.targets.length + 1}` : "backups", type: "dir", path: "" }), c))}>
+              Add target
+            </button>
           </div>
-        ))}
-        <button className="btn btn-q btn-sm" onClick={() => edit((c) => (c.targets.push({ name: c.targets.length ? `target${c.targets.length + 1}` : "backups", type: "dir", path: "" }), c))}>
-          Add target
-        </button>
+        </div>
       </section>
 
       <section className="set-sec">
         <h2>Schedules</h2>
         <p>Each schedule backs up a project, or some of its instances, on the days you pick. Old backups the schedule made are deleted as you set under Retention. Backups made by hand are never deleted.</p>
-        {conf.schedules.map((s, i) => (
-          <ScheduleCard
-            key={i}
-            s={s}
-            targets={conf.targets.map((t) => t.name)}
-            servers={servers}
-            dirty={dirty}
-            set={(p) => setS(i, p)}
-            remove={() => edit((c) => ((c.schedules = c.schedules.filter((_, j) => j !== i)), c))}
-            run={() => run(s)}
-          />
-        ))}
-        <button
-          className="btn btn-q btn-sm"
-          disabled={conf.targets.length === 0}
-          onClick={() => edit((c) => (c.schedules.push({ name: `daily${c.schedules.length || ""}`, server: servers[0] || "", project: "default", instances: [], target: c.targets[0].name, at: "03:00", days: [], keep_daily: 7, keep_weekly: 4, optimized: false, test_restore: false, paused: false }), c))}
-        >
-          Add schedule
-        </button>
+        <div className="col">
+          {conf.schedules.map((s, i) => (
+            <ScheduleCard
+              key={i}
+              s={s}
+              targets={conf.targets.map((t) => t.name)}
+              servers={servers}
+              dirty={dirty}
+              set={(p) => setS(i, p)}
+              remove={() => edit((c) => ((c.schedules = c.schedules.filter((_, j) => j !== i)), c))}
+              run={() => run(s)}
+            />
+          ))}
+          <div>
+            <button
+              className="btn btn-q btn-sm"
+              disabled={conf.targets.length === 0}
+              onClick={() => edit((c) => (c.schedules.push({ name: `daily${c.schedules.length || ""}`, server: servers[0] || "", project: "default", instances: [], target: c.targets[0].name, at: "03:00", days: [], keep_daily: 7, keep_weekly: 4, optimized: false, test_restore: false, paused: false }), c))}
+            >
+              Add schedule
+            </button>
+          </div>
+        </div>
       </section>
       <section className="set-sec">
         <h2>Proxmox Backup Servers</h2>
         <p>
           Import VMs and containers straight from a Proxmox Backup Server: the UI downloads the backup itself. Make an API token in PBS (Configuration, Access Control, API Token) and give it the DatastoreReader role on the datastore. Encrypted backups can't be imported.
         </p>
-        {(conf.pbs || []).map((p, i) => (
-          <div className="panel bk-card" key={i}>
-            <div className="two">
-              <F label="Name">
-                <Input mono value={p.name} onChange={(v) => setP(i, { name: v })} placeholder="pbs" />
-              </F>
-              <F label="Address">
-                <Input mono value={p.url} onChange={(v) => setP(i, { url: v })} placeholder="https://pbs.lan:8007" />
-              </F>
-              <F label="Datastore">
-                <Input mono value={p.datastore} onChange={(v) => setP(i, { datastore: v })} />
-              </F>
-              <F label="Namespace" hint="Leave empty for the root namespace.">
-                <Input mono value={p.namespace || ""} onChange={(v) => setP(i, { namespace: v })} />
-              </F>
-              <F label="API token ID">
-                <Input mono value={p.token_id} onChange={(v) => setP(i, { token_id: v })} placeholder="root@pam!incus" />
-              </F>
-              <F label="Secret">
-                <Input mono type="password" value={p.secret} onChange={(v) => setP(i, { secret: v })} />
-              </F>
-              <F label="Fingerprint" hint="From the PBS dashboard (Show Fingerprint). Needed when PBS uses its own self-signed certificate.">
-                <Input mono value={p.fingerprint || ""} onChange={(v) => setP(i, { fingerprint: v })} />
-              </F>
-            </div>
-            <div className="roles-f">
-              <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = c.pbs.filter((_, j) => j !== i)), c))}>
-                Remove
-              </button>
-              <span className="r">
-                <button className="btn btn-s btn-sm press" disabled={!!testing} onClick={() => testPBS(p)}>
-                  {testing === "pbs:" + p.name ? "Testing…" : "Test"}
+        <div className="col">
+          {(conf.pbs || []).map((p, i) => (
+            <div className="panel bk-card" style={{ marginBottom: 0 }} key={i}>
+              <div className="two">
+                <Field label="Name">
+                  <Input value={p.name} onChange={(v) => setP(i, { name: v })} placeholder="pbs" />
+                </Field>
+                <Field label="Address">
+                  <Input mono value={p.url} onChange={(v) => setP(i, { url: v })} placeholder="https://pbs.lan:8007" />
+                </Field>
+                <Field label="Datastore">
+                  <Input value={p.datastore} onChange={(v) => setP(i, { datastore: v })} />
+                </Field>
+                <Field label="Namespace" hint="Leave empty for the root namespace.">
+                  <Input mono value={p.namespace || ""} onChange={(v) => setP(i, { namespace: v })} />
+                </Field>
+                <Field label="API token ID">
+                  <Input mono value={p.token_id} onChange={(v) => setP(i, { token_id: v })} placeholder="root@pam!incus" />
+                </Field>
+                <Field label="Secret">
+                  <Input mono type="password" value={p.secret} onChange={(v) => setP(i, { secret: v })} />
+                </Field>
+                <Field label="Fingerprint" hint="From the PBS dashboard (Show Fingerprint). Needed when PBS uses its own self-signed certificate.">
+                  <Input mono value={p.fingerprint || ""} onChange={(v) => setP(i, { fingerprint: v })} />
+                </Field>
+              </div>
+              <div className="card-f">
+                <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = c.pbs.filter((_, j) => j !== i)), c))}>
+                  Remove
                 </button>
-              </span>
+                <span className="r">
+                  <button className="btn btn-s btn-sm press" disabled={!!testing} onClick={() => testPBS(p)}>
+                    {testing === "pbs:" + p.name ? "Testing…" : "Test"}
+                  </button>
+                </span>
+              </div>
             </div>
+          ))}
+          <div>
+            <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = [...(c.pbs || []), { name: c.pbs?.length ? `pbs${c.pbs.length + 1}` : "pbs", url: "", datastore: "", token_id: "", secret: "" }]), c))}>
+              Add backup server
+            </button>
           </div>
-        ))}
-        <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = [...(c.pbs || []), { name: c.pbs?.length ? `pbs${c.pbs.length + 1}` : "pbs", url: "", datastore: "", token_id: "", secret: "" }]), c))}>
-          Add backup server
-        </button>
+        </div>
       </section>
-      {(dirty || err) && (
-        <div className="bk-save">
-          {err && <span className="bad">{err}</span>}
-          <span className="r">
-            <button className="btn btn-q btn-sm" onClick={() => (setDraft(null), setErr(""))}>
-              Discard
-            </button>
-            <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
-              Save backup settings
-            </button>
-          </span>
+      {bar.mounted && (
+        <div className={"hwbar" + (bar.leaving ? " leaving" : "")}>
+          {err ? <span className="bad">{err}</span> : <b>Unsaved changes</b>}
+          <button className="btn btn-q btn-sm" onClick={() => (setDraft(null), setErr(""))}>
+            Discard
+          </button>
+          <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
+            Save backup settings
+          </button>
         </div>
       )}
     </>
@@ -544,26 +558,26 @@ function ScheduleCard({ s, targets, servers, dirty, set, remove, run }: { s: Sch
     if (next.length) set({ days: next });
   };
   return (
-    <div className="panel bk-card">
+    <div className="panel bk-card" style={{ marginBottom: 0 }}>
       <div className="two">
-        <F label="Name">
-          <Input mono value={s.name} onChange={(v) => set({ name: v })} />
-        </F>
-        <F label="Target">
+        <Field label="Name">
+          <Input value={s.name} onChange={(v) => set({ name: v })} />
+        </Field>
+        <Field label="Target">
           <Select value={s.target} onChange={(v) => set({ target: v })} options={targets} />
-        </F>
-        <F label="Server">
+        </Field>
+        <Field label="Server">
           <Select value={s.server} onChange={(v) => set({ server: v, instances: [] })} options={servers.includes(s.server) ? servers : [...servers, s.server]} />
-        </F>
-        <F label="Project">
+        </Field>
+        <Field label="Project">
           <Select value={s.project} onChange={(v) => set({ project: v, instances: [] })} options={projOpts} />
-        </F>
-        <F label="Instances" hint="Leave none ticked to back up every instance in the project, including ones made later.">
+        </Field>
+        <Field label="Instances" hint="Leave none ticked to back up every instance in the project, including ones made later.">
           <InstancePick server={s.server} project={s.project} value={s.instances || []} onChange={(v) => set({ instances: v })} />
-        </F>
-        <F label="Time" hint="In the time zone of the machine that runs the UI.">
-          <Input mono value={s.at} onChange={(v) => set({ at: v })} placeholder="03:00" />
-        </F>
+        </Field>
+        <Field label="Time" hint="In the time zone of the machine that runs the UI.">
+          <Input value={s.at} onChange={(v) => set({ at: v })} placeholder="03:00" />
+        </Field>
       </div>
       <div className="fl">
         <label>Repeat</label>
@@ -600,24 +614,26 @@ function ScheduleCard({ s, targets, servers, dirty, set, remove, run }: { s: Sch
         <p>Which of this schedule's old backups to keep. The rest are deleted after each run.</p>
       </div>
       <div className="two">
-        <F label="Recent backups to keep" hint={repeat === "daily" ? "One per day: 7 keeps the last week of daily backups." : "Counted per day with a backup: 4 keeps the last 4 runs."}>
-          <Input mono inputMode="numeric" value={String(s.keep_daily)} onChange={(v) => set({ keep_daily: parseInt(v) || 0 })} />
-        </F>
-        <F label="Weekly backups to keep" hint="Also keeps the newest backup of each of the last weeks, for older restore points. 0 turns this off.">
-          <Input mono inputMode="numeric" value={String(s.keep_weekly)} onChange={(v) => set({ keep_weekly: parseInt(v) || 0 })} />
-        </F>
+        <Field label="Recent backups to keep" hint={repeat === "daily" ? "One per day: 7 keeps the last week of daily backups." : "Counted per day with a backup: 4 keeps the last 4 runs."}>
+          <Input inputMode="numeric" value={String(s.keep_daily)} onChange={(v) => set({ keep_daily: parseInt(v) || 0 })} />
+        </Field>
+        <Field label="Weekly backups to keep" hint="Also keeps the newest backup of each of the last weeks, for older restore points. 0 turns this off.">
+          <Input inputMode="numeric" value={String(s.keep_weekly)} onChange={(v) => set({ keep_weekly: parseInt(v) || 0 })} />
+        </Field>
       </div>
-      <p className="bk-sum">{keepSummary(s)}</p>
+      <p className="none">{keepSummary(s)}</p>
 
-      <TglRow
-        title="Use the storage pool's own format"
-        note="On ZFS and Btrfs pools, Incus exports a native send stream instead of copying files. It's faster and often smaller, but restores only to a pool of the same kind. Other pools make a normal backup. Each backup is still a full copy: Incus can't make incremental backup files."
-        on={!!s.optimized}
-        onChange={(v) => set({ optimized: v })}
-      />
-      <TglRow title="Test restore once a week" note={`On ${DAY_NAMES[testDay(s.days)]}s, restores that run's backups under a temporary name and deletes them again, to prove they work.`} on={s.test_restore} onChange={(v) => set({ test_restore: v })} />
-      <TglRow title="Paused" on={s.paused} onChange={(v) => set({ paused: v })} />
-      <div className="roles-f">
+      <div className="tgl-list">
+        <TglRow
+          title="Use the storage pool's own format"
+          note="On ZFS and Btrfs pools, Incus exports a native send stream instead of copying files. It's faster and often smaller, but restores only to a pool of the same kind. Other pools make a normal backup. Each backup is still a full copy: Incus can't make incremental backup files."
+          on={!!s.optimized}
+          onChange={(v) => set({ optimized: v })}
+        />
+        <TglRow title="Test restore once a week" note={`On ${DAY_NAMES[testDay(s.days)]}s, restores that run's backups under a temporary name and deletes them again, to prove they work.`} on={s.test_restore} onChange={(v) => set({ test_restore: v })} />
+        <TglRow title="Paused" on={s.paused} onChange={(v) => set({ paused: v })} />
+      </div>
+      <div className="card-f">
         <button className="btn btn-q btn-sm" onClick={remove}>
           Remove
         </button>
@@ -638,6 +654,7 @@ function InstancePick({ server, project, value, onChange }: { server: string; pr
     ((await incus<Instance[]>(server, "/1.0/instances?recursion=1", { project })) || []).map((i) => ({ name: i.name, type: i.type })).sort((a, b) => a.name.localeCompare(b.name)),
   );
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   const list = q.data || [];
@@ -650,8 +667,8 @@ function InstancePick({ server, project, value, onChange }: { server: string; pr
         <span className="fval">{label}</span>
         {ic.down}
       </button>
-      {open && (
-        <div className="fpop">
+      {mounted && (
+        <div className={"fpop" + (leaving ? " leaving" : "")}>
           <div className="fopts">
             {q.error && <div className="fopt dis">Couldn't list the instances.</div>}
             {!q.data && !q.error && <div className="fopt dis">Loading…</div>}

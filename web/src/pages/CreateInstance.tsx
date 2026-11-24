@@ -192,7 +192,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     setTried(true);
     setErr("");
     if (hasErr) {
-      requestAnimationFrame(() => shake(body.current?.querySelector<HTMLElement>(".fl .hint.bad, .field.bad") ?? null));
+      requestAnimationFrame(() => shake(body.current?.querySelector<HTMLElement>(".hint.bad, .field.bad") ?? null));
       return;
     }
     const label = name || "The instance";
@@ -208,7 +208,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
       const m = friendlyError(e);
       if (openRef.current) {
         setErr(m);
-        requestAnimationFrame(() => body.current?.querySelector(".cerr")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+        requestAnimationFrame(() => body.current?.querySelector(".cerr")?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
       } else app.fail(m, `Creating ${label.toLowerCase()} failed.`);
     } finally {
       setBusy(false);
@@ -321,12 +321,12 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
                 onChange={setIso}
                 options={[{ v: "", l: isos.data?.length ? "Choose an ISO" : "No ISOs yet. Upload one under Storage, Custom ISOs." }, ...(isos.data || []).map((v) => ({ v: `${v.pool}/${v.name}`, l: `${v.name} (${v.pool})` }))]}
               />
-              <span className="dim" style={{ fontSize: 12.5 }}>
+              <span className="note">
                 The VM starts empty and boots the installer from this ISO.
               </span>
             </>
           )}
-          {source === "none" && <span className="dim" style={{ fontSize: 12.5 }}>An empty VM with a blank disk. Attach an ISO or install over the network later.</span>}
+          {source === "none" && <span className="note">An empty VM with a blank disk. Attach an ISO or install over the network later.</span>}
         </SheetSec>
 
         <SheetSec title="Resources">
@@ -380,18 +380,20 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
               placeholder={"#cloud-config\npackages:\n  - curl"}
               style={{ minHeight: 110 }}
             />
-            <span className="dim" style={{ fontSize: 12.5 }}>
+            <span className="note">
               {variant === "cloud" || source === "local" ? "User data, run on first boot." : "Only images with cloud in the name run this. Pick a cloud variant above."}
             </span>
           </SheetSec>
         )}
 
         <SheetSec title="Options">
-          <TglRow title="Start with the server" note="Starts this instance when the host boots." on={autostart} onChange={setAutostart} />
-          {!isVM && <TglRow title="Nesting" note="Needed to run Docker or Incus inside." on={nesting} onChange={setNesting} />}
-          {isVM && <TglRow title="Secure boot" note="Turn off for installers that aren't signed." on={secureboot} onChange={setSecureboot} />}
-          <TglRow title="Ephemeral" note="Deleted when it stops." on={ephemeral} onChange={setEphemeral} />
-          <TglRow title="Start after creating" on={start} onChange={setStart} />
+          <div className="tgl-list">
+            <TglRow title="Start with the server" note="Starts this instance when the host boots." on={autostart} onChange={setAutostart} />
+            {!isVM && <TglRow title="Nesting" note="Needed to run Docker or Incus inside." on={nesting} onChange={setNesting} />}
+            {isVM && <TglRow title="Secure boot" note="Turn off for installers that aren't signed." on={secureboot} onChange={setSecureboot} />}
+            <TglRow title="Ephemeral" note="Deleted when it stops." on={ephemeral} onChange={setEphemeral} />
+            <TglRow title="Start after creating" on={start} onChange={setStart} />
+          </div>
         </SheetSec>
 
         <SheetSec title="Description">
@@ -413,7 +415,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
           {showYaml && (
             <div className="ysec">
               <textarea className="yaml" readOnly spellCheck={false} aria-label="Instance configuration as YAML" value={YAML.stringify(request())} />
-              <span className="dim" style={{ fontSize: 12.5 }}>
+              <span className="note">
                 What will be sent to the server. Read only; change it with the fields above.
               </span>
             </div>

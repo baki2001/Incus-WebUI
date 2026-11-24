@@ -3,7 +3,7 @@ import YAML from "yaml";
 import { ApiError, bytes, friendlyError, incus, incusOp, incusWithETag, memBytes, memStr, type Instance } from "../api";
 import { ic } from "../icons";
 import { invalidate, useApp, useData } from "../state";
-import { Dialog, Seg, shake } from "../ui";
+import { Dialog, Seg, shake, Toggle, usePresence } from "../ui";
 import { CONFLICT, cpuCount, cpuOK, fixedIPv4Net, lanNic, lanParents, nicIPv4Error, SizeField, subnetOf, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
 import "../cfg.css";
@@ -157,7 +157,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const own = (k: string) => (draft.config[k] ?? "") !== "";
   const val = (k: string) => (k in draft.config ? draft.config[k] : (prof.cfg[k] ?? ""));
   const eff = (k: string) => draft.config[k] || prof.cfg[k] || "";
-  const from = (k: string) => (own(k) ? (k in prof.cfg ? `Set on this instance, overrides ${prof.cfgFrom[k]}` : "Set on this instance") : k in prof.cfg ? `From profile ${prof.cfgFrom[k]}` : "Not set");
+  const from = (k: string) => (own(k) ? (k in prof.cfg ? `Set on this instance, overrides ${prof.cfgFrom[k]}` : "Set on this instance") : k in prof.cfg ? `From profile ${prof.cfgFrom[k]}` : "");
   const changed = (k: string) => (cd.config[k] ?? "") !== (original.config[k] ?? "");
   const onlyProfile = (k: string) => !own(k) && k in prof.cfg;
   const useProfile = (k: string) =>
@@ -292,13 +292,14 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const allProfiles = (profs.data || []).map((p) => p.name as string);
   const chgDev = (n: string) => JSON.stringify(cd.devices[n]) !== JSON.stringify(original.devices[n]);
 
+  const hwbar = usePresence(dirty && (nChanges > 0 || view === "yaml"));
+
   if (!base && !inst.config) return <div className="hw" />;
 
   return (
     <div className="hw" ref={root}>
       <div className="cfg-h">
-        <span className="dim">Settings for {name}. Values that come from a profile say so.</span>
-        <Seg value={view} onChange={switchView} options={[{ v: "form", l: "Form" }, { v: "yaml", l: <span className="ac">YAML</span> }]} />
+        <Seg value={view} onChange={switchView} options={[{ v: "form", l: "Form" }, { v: "yaml", l: "YAML" }]} />
       </div>
       {conflict && (
         <div className="cfl" role="alert">
@@ -323,17 +324,11 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
           <section className="hsec">
             <header>
               <h2>Compute</h2>
-              {host.data && (
-                <p>
-                  {server} · {host.data.cpu?.sockets?.[0]?.name || ""} {cores ? `· ${cores} threads` : ""} {hostMem ? `· ${bytes(hostMem)}` : ""}
-                </p>
-              )}
             </header>
             <div className={"hrow" + (errs.cpu ? " bad" : "")}>
               <div className="hl">
-                <b>CPU{changed("limits.cpu") && <span className="chg" />}</b>
-                <code>limits.cpu</code>
-                <span className="from">{from("limits.cpu")}</span>
+                <b title="limits.cpu">CPU{changed("limits.cpu") && <span className="chg" />}</b>
+                {from("limits.cpu") && <span className="from">{from("limits.cpu")}</span>}
               </div>
               <div className="hc">
                 <div className="line">
@@ -366,9 +361,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </div>
             <div className={"hrow" + (errs.mem ? " bad" : "")}>
               <div className="hl">
-                <b>Memory{(changed("limits.memory") || changed("limits.memory.enforce")) && <span className="chg" />}</b>
-                <code>limits.memory, .enforce</code>
-                <span className="from">{from("limits.memory")}</span>
+                <b title="limits.memory, limits.memory.enforce">Memory{(changed("limits.memory") || changed("limits.memory.enforce")) && <span className="chg" />}</b>
+                {from("limits.memory") && <span className="from">{from("limits.memory")}</span>}
               </div>
               <div className="hc">
                 <div className="line">
@@ -420,11 +414,19 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </header>
             <div className={"hrow" + (errs.root ? " bad" : "")}>
               <div className="hl">
-                <b>Root disk{JSON.stringify(cd.devices.root) !== JSON.stringify(original.devices.root) && <span className="chg" />}</b>
-                <code>devices.root.size</code>
-                <span className="from">
-                  {rootLocal?.size ? (prof.dev.root?.size ? `Set on this instance, overrides ${prof.devFrom.root}` : "Set on this instance") : prof.dev.root?.size ? `From profile ${prof.devFrom.root}` : rootLocal ? "Set on this instance" : "Not set"}
-                </span>
+                <b title="devices.root.size">Root disk{JSON.stringify(cd.devices.root) !== JSON.stringify(original.devices.root) && <span className="chg" />}</b>
+                {(() => {
+                  const f = rootLocal?.size
+                    ? prof.dev.root?.size
+                      ? `Set on this instance, overrides ${prof.devFrom.root}`
+                      : "Set on this instance"
+                    : prof.dev.root?.size
+                      ? `From profile ${prof.devFrom.root}`
+                      : rootLocal
+                        ? "Set on this instance"
+                        : "";
+                  return f ? <span className="from">{f}</span> : null;
+                })()}
               </div>
               <div className="hc">
                 <div className="line">
@@ -443,7 +445,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                     }
                   />
                   <span className="dim">
-                    on pool <span className="tag mono">{rootEff.pool || "–"}</span>
+                    on pool <span className="tag">{rootEff.pool || "–"}</span>
                   </span>
                 </div>
                 {errs.root && (
@@ -456,8 +458,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </div>
             <div className="hrow">
               <div className="hl">
-                <b>Extra disks{[...new Set([...Object.keys(cd.devices), ...Object.keys(original.devices)])].some((n) => n !== "root" && (cd.devices[n]?.type === "disk" || original.devices[n]?.type === "disk") && chgDev(n)) && <span className="chg" />}</b>
-                <code>devices.*.type: disk</code>
+                <b title="devices.*.type: disk">Extra disks{[...new Set([...Object.keys(cd.devices), ...Object.keys(original.devices)])].some((n) => n !== "root" && (cd.devices[n]?.type === "disk" || original.devices[n]?.type === "disk") && chgDev(n)) && <span className="chg" />}</b>
               </div>
               <DiskEditor devices={draft.devices} inherited={inh("disk")} edit={edit} server={server} project={project} errors={devErrs} />
             </div>
@@ -469,8 +470,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </header>
             <div className="hrow">
               <div className="hl">
-                <b>Network cards</b>
-                <code>devices.*.type: nic</code>
+                <b title="devices.*.type: nic">Network cards</b>
               </div>
               <div className="hc devl">
                 {nicRows.map(({ n, d, from: pf }) => {
@@ -610,8 +610,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </div>
             <div className="hrow">
               <div className="hl">
-                <b>Port forwarding</b>
-                <code>devices.*.type: proxy</code>
+                <b title="devices.*.type: proxy">Port forwarding</b>
               </div>
               <ProxyEditor devices={draft.devices} inherited={inh("proxy")} edit={edit} server={server} errors={devErrs} />
             </div>
@@ -620,12 +619,10 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
           <section className="hsec">
             <header>
               <h2>Profiles</h2>
-              <p>Applied in order. Later profiles win.</p>
             </header>
             <div className="hrow">
               <div className="hl">
-                <b>Profiles{original.profiles.join() !== draft.profiles.join() && <span className="chg" />}</b>
-                <code>profiles</code>
+                <b title="profiles">Profiles{original.profiles.join() !== draft.profiles.join() && <span className="chg" />}</b>
               </div>
               <div className="hc devl">
                 {draft.profiles.map((p, i) => (
@@ -656,6 +653,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                     </select>
                   </div>
                 )}
+                <span className="note">Applied in order. Later profiles win.</span>
               </div>
             </div>
           </section>
@@ -666,13 +664,12 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </header>
             <div className="hrow">
               <div className="hl">
-                <b>Start with server{(changed("boot.autostart") || changed("boot.autostart.priority")) && <span className="chg" />}</b>
-                <code>boot.autostart</code>
-                <span className="from">{from("boot.autostart")}</span>
+                <b title="boot.autostart">Start with server{(changed("boot.autostart") || changed("boot.autostart.priority")) && <span className="chg" />}</b>
+                {from("boot.autostart") && <span className="from">{from("boot.autostart")}</span>}
               </div>
               <div className="hc">
                 <div className="line">
-                  <button className="toggle" role="switch" aria-checked={autostart} aria-label="Start with server" onClick={() => setCfg("boot.autostart", autostart ? "false" : "true")} />
+                  <Toggle on={autostart} onChange={(v) => setCfg("boot.autostart", v ? "true" : "false")} label="Start with server" />
                   <span className="dim">Order</span>
                   <div className="step">
                     <button type="button" aria-label="Earlier" onClick={() => setCfg("boot.autostart.priority", String(Math.max(0, Number(eff("boot.autostart.priority") || 0) - 1)))}>
@@ -689,9 +686,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             </div>
             <div className="hrow">
               <div className="hl">
-                <b>Snapshots{(changed("snapshots.schedule") || changed("snapshots.expiry")) && <span className="chg" />}</b>
-                <code>snapshots.schedule, .expiry</code>
-                <span className="from">{from("snapshots.schedule")}</span>
+                <b title="snapshots.schedule, snapshots.expiry">Snapshots{(changed("snapshots.schedule") || changed("snapshots.expiry")) && <span className="chg" />}</b>
+                {from("snapshots.schedule") && <span className="from">{from("snapshots.schedule")}</span>}
               </div>
               <div className="hc">
                 <div className="line">
@@ -724,13 +720,12 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
             {!isVM && (
               <div className="hrow">
                 <div className="hl">
-                  <b>Nesting{changed("security.nesting") && <span className="chg" />}</b>
-                  <code>security.nesting</code>
-                  <span className="from">{from("security.nesting")}</span>
+                  <b title="security.nesting">Nesting{changed("security.nesting") && <span className="chg" />}</b>
+                  {from("security.nesting") && <span className="from">{from("security.nesting")}</span>}
                 </div>
                 <div className="hc">
                   <div className="line">
-                    <button className="toggle" role="switch" aria-label="Nesting" aria-checked={nesting} onClick={() => setCfg("security.nesting", nesting ? "false" : "true")} />
+                    <Toggle on={nesting} onChange={(v) => setCfg("security.nesting", v ? "true" : "false")} label="Nesting" />
                     <span className="note">Needed to run Docker or Incus inside this container.</span>
                     {useProfile("security.nesting")}
                   </div>
@@ -750,8 +745,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
           </section>
         </>
       )}
-      {dirty && (nChanges > 0 || view === "yaml") && (
-        <div className="hwbar">
+      {hwbar.mounted && (
+        <div className={"hwbar" + (hwbar.leaving ? " leaving" : "")}>
           <b>{view === "yaml" ? "Edited" : `${nChanges} change${nChanges === 1 ? "" : "s"}`}</b>
           <span className="dim">not applied yet</span>
           <button

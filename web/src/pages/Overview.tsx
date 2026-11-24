@@ -129,7 +129,7 @@ export function Overview() {
         <div className="bento">
           <div className="b-row">
             <div className="b-cell" style={{ ["--sp" as any]: 12 }}>
-              <p className="b-none">Nothing to show. Use Customize to add elements.</p>
+              <p className="none">Nothing to show. Use Customize to add elements.</p>
             </div>
           </div>
         </div>

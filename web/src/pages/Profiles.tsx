@@ -36,7 +36,6 @@ export function Profiles() {
 
   const save = async (d: PPut) => {
     if (!edit) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the profile a name.");
       const ok = await app.run(`Creating profile ${d.name}`, () => incusOp(srv, "/1.0/profiles", { method: "POST", project, body: d }).then(() => true), `Profile ${d.name} created`);
       if (ok) invalidate("profiles:");
       return ok;
@@ -46,7 +45,8 @@ export function Profiles() {
     return ok;
   };
   const del = async (p: Profile) => {
-    if (!(await confirmDialog({ title: `Delete profile ${p.name}?`, body: usedByBody(shared ? "Instances in several projects may use it. Incus refuses to delete it until they don't." : "These use it; Incus refuses to delete it until they don't.", p.used_by, p.server), confirm: "Delete", danger: true }))) return;
+    const used = !!p.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete profile ${p.name}?`, body: usedByBody(shared ? "Instances in several projects may use it. Incus refuses to delete it until they don't." : "These use it; Incus refuses to delete it until they don't.", p.used_by, p.server), confirm: "Delete", danger: true, noConfirm: used }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/profiles/${encodeURIComponent(p.name)}`, { method: "DELETE", project }).then(() => true), `Profile ${p.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -67,7 +67,7 @@ export function Profiles() {
         <span className="dim fnote">Settings and devices that instances share. Changes apply to every instance that uses the profile.</span>
       </div>
       {shared && (
-        <div className="notice sm" style={{ marginBottom: 12 }}>
+        <div className="note-box">
           Project {project} has no profiles of its own, so these are the profiles from project default. Changing them changes them for every project that shares them.
         </div>
       )}
@@ -87,6 +87,7 @@ export function Profiles() {
       />
       <EditSheet<PPut>
         validate={(d) => {
+          if (!edit && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return "Give the profile a name.";
           const m = d.config["limits.memory"];
           return m && !m.endsWith("%") && memBytes(m) == null ? "Memory must be a number with a unit, like 2 GiB." : "";
         }}
@@ -99,7 +100,7 @@ export function Profiles() {
         onDelete={edit && edit.name !== "default" ? () => del(edit) : undefined}
         info={
           <>
-            {!edit && shared && <div className="notice sm">Project {project} shares profiles with default, so this profile is created in project default and shows up in every project that shares them. To keep profiles separate, turn on "Own profiles" for the project.</div>}
+            {!edit && shared && <div className="note-box">Project {project} shares profiles with default, so this profile is created in project default and shows up in every project that shares them. To keep profiles separate, turn on "Own profiles" for the project.</div>}
             {edit && <UsedBySec list={edit.used_by} server={edit.server} />}
           </>
         }
@@ -177,7 +178,7 @@ function ProfileForm({ d, set, pools, nets }: { d: PPut; set: (fn: (x: PPut) => 
             <Input mono value={root.size || ""} onChange={(v) => set((x) => (v ? (x.devices.root.size = v) : delete x.devices.root.size))} placeholder="Size, like 20GiB" />
           </div>
         ) : (
-          <span className="dim" style={{ fontSize: 12.5 }}>
+          <span className="note">
             No root disk here. Instances need one from some profile.
           </span>
         )}
@@ -223,7 +224,7 @@ function ProfileForm({ d, set, pools, nets }: { d: PPut; set: (fn: (x: PPut) => 
           </div>
         ))}
         {others.length > 0 && (
-          <span className="dim" style={{ fontSize: 12.5 }}>
+          <span className="note">
             Also has {others.map(([n, v]) => `${n} (${v.type})`).join(", ")}. Edit those in YAML.
           </span>
         )}

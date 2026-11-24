@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { bytes, dateTime, imageLabel, incus, incusOp, incusRaw, parseBytes, since, ui, type Instance } from "../api";
 import { ic } from "../icons";
@@ -7,7 +7,7 @@ import { invalidate, mutateCache, useApp, useData } from "../state";
 import { confirmDialog, CopyBtn, Menu, Seg, Status, Tabs } from "../ui";
 import { isPinned, togglePin, usePins, type Row } from "../data";
 import { canDo, deleteInstance, stateAction, type Act } from "./Instances";
-import { CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, readable, RenameDialog, SnapRenameDialog } from "./InstanceDialogs";
+import { askStop, CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, readable, RenameDialog, SnapRenameDialog } from "./InstanceDialogs";
 import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
@@ -111,13 +111,20 @@ export function InstancePage() {
           </p>
         </div>
         <div className="r">
-          {running && !deleting && (
+          {running && !deleting && tab !== "terminal" && (
             <button className="btn btn-p press" onClick={() => go("terminal")}>
               {ic.term}Terminal
             </button>
           )}
           {running ? (
-            <button className="btn btn-s press" disabled={deleting} onClick={() => act("stop")}>
+            <button
+              className="btn btn-s press"
+              disabled={deleting}
+              onClick={async () => {
+                const ans = await askStop([row]);
+                if (ans) act("stop", ans.force);
+              }}
+            >
               {ic.stop}Stop
             </button>
           ) : frozen ? (
@@ -326,7 +333,7 @@ function OverviewTab({ inst }: { inst: Instance & { server: string } }) {
             ) : (
               <dl className="kv">
                 {nets.map(([n, d]) => (
-                  <div key={n} style={{ display: "contents" }}>
+                  <Fragment key={n}>
                     <dt>{n}</dt>
                     <dd>
                       {d.addresses
@@ -344,7 +351,7 @@ function OverviewTab({ inst }: { inst: Instance & { server: string } }) {
                         </div>
                       )}
                     </dd>
-                  </div>
+                  </Fragment>
                 ))}
               </dl>
             )}
@@ -379,10 +386,10 @@ function OverviewTab({ inst }: { inst: Instance & { server: string } }) {
             </div>
             <dl className="kv">
               {Object.entries(inst.expanded_devices || {}).map(([n, d]) => (
-                <div key={n} style={{ display: "contents" }}>
+                <Fragment key={n}>
                   <dt>{n}</dt>
                   <dd>{describeDevice(d)}</dd>
-                </div>
+                </Fragment>
               ))}
             </dl>
           </div>
@@ -465,7 +472,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
       try {
         await ui(`/backups/${encodeURIComponent(inst.server)}`, { method: "POST", body: { project: inst.project, instance: inst.name, target: dest, name: n } });
         invalidate("ui-jobs");
-        app.toast(`Saving snapshot ${n} to ${dest}. Follow it under Tasks; it shows under Backups when done.`);
+        app.toast(`Saving snapshot ${n} to ${dest}. Follow it under Tasks.`);
       } catch (e) {
         app.fail(e, "Couldn't start the snapshot.");
       }
@@ -494,7 +501,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
     <div className="col">
       <div className="toolbar snap-bar">
         <div className="field" style={{ maxWidth: 240 }}>
-          <input className="mono" placeholder="Snapshot name (optional)" aria-invalid={!!bad} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
+          <input placeholder="Snapshot name (optional)" aria-invalid={!!bad} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         </div>
         {canBackup && (
           <div className="field" style={{ maxWidth: 230 }}>
@@ -529,7 +536,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
             <input type="checkbox" checked={stateful} onChange={(e) => setStateful(e.target.checked)} /> Include memory
           </label>
         )}
-        <button className="btn btn-p press" disabled={!!bad || (!dest && exp === "custom" && !custom)} onClick={create}>
+        <button className="btn btn-s press" disabled={!!bad || (!dest && exp === "custom" && !custom)} onClick={create}>
           {ic.snap}Take snapshot
         </button>
         {bad && <span className="snap-err">{bad}</span>}
@@ -540,7 +547,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
           <thead>
             <tr>
               <th>Name</th>
-              <th>Taken</th>
+              <th className="hide-s">Taken</th>
               <th className="hide-s">Expires</th>
               {hasSize && <th className="right hide-s">Size</th>}
               <th />
@@ -553,7 +560,7 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
                   {s.name}
                   {s.stateful && <span className="tag" style={{ marginLeft: 8 }}>with memory</span>}
                 </td>
-                <td>{dateTime(s.created_at)}</td>
+                <td className="hide-s">{dateTime(s.created_at)}</td>
                 <td className="dim hide-s">{s.expires_at && !s.expires_at.startsWith("0001") ? dateTime(s.expires_at) : "Never"}</td>
                 {hasSize && <td className="right mono hide-s">{s.size > 0 ? bytes(s.size) : ""}</td>}
                 <td>
@@ -584,8 +591,8 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
               </tr>
             ))}
             {!snaps.length && (
-              <tr style={{ cursor: "default" }}>
-                <td colSpan={5} className="dim" style={{ padding: 24, textAlign: "center" }}>
+              <tr className="empty">
+                <td colSpan={5} className="emp">
                   No snapshots yet.
                 </td>
               </tr>
@@ -626,14 +633,12 @@ function LogsTab({ inst }: { inst: Instance & { server: string } }) {
         <button className="btn btn-q btn-sm" onClick={load}>
           {ic.restart}Refresh
         </button>
-        <span className="dim" style={{ fontSize: 12.5 }}>
-          Incus keeps these on the server. Logs from inside the instance live in its own files, see File Explorer.
-        </span>
       </div>
       <div className="panel">
         <pre className="code" style={{ maxHeight: "65vh" }}>
           {text ?? <span className="sk">loading log</span>}
         </pre>
+        <div className="pfoot">Incus keeps these on the server. Logs from inside the instance live in its own files, see File Explorer.</div>
       </div>
     </div>
   );

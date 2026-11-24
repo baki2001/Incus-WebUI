@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { bytes, dateTime, incus, incusOp, incusURL, memBytes, parseBytes, spaced, upload, waitOp } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
@@ -9,45 +9,13 @@ import { CopyBtn, confirmDialog, Field, Input, KVEditor, Seg, Select, Sheet, She
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { NameCell } from "./Networks";
 import { SizeField } from "./cfgutil";
-import { parseUsed } from "./usedby";
+import { usedByBody, UsedBySec } from "./usedby";
 
 type Pool = { name: string; driver: string; description: string; status: string; config: Record<string, string>; used_by: string[]; server: string };
 type PoolPut = { name?: string; driver?: string; description: string; config: Record<string, string> };
 type Vol = { name: string; pool: string; type: string; content_type: string; description: string; config: Record<string, string>; used_by: string[]; created_at: string; location: string; project: string; server: string };
 
 const serverCol = <T extends { server: string }>(multi: boolean): Col<T> => ({ k: "server", label: "Server", cell: (r) => r.server, sort: (r) => r.server, hide: !multi, cls: "hide-m" });
-
-// What an Incus "used by" URL points at, with a link to where you manage it.
-function usedRef(u: string, server: string) {
-  const it = parseUsed(u, server);
-  return { kind: it.res, label: it.kind, name: it.name, project: it.project, to: it.res === "storage-pools" ? "/storage/volumes" : it.to || "" };
-}
-
-// Everything that uses an object, as links. Shown wherever it decides whether a delete can work.
-function UsedList({ list, server, detach }: { list?: string[]; server: string; detach?: (kind: string, name: string, project: string) => void }) {
-  if (!list?.length) return <span className="dim">Nothing</span>;
-  return (
-    <span className="ulist">
-      {list.map((u) => {
-        const r = usedRef(u, server);
-        return (
-          <span key={u} className="ul-r">
-            {r.to ? <Link to={r.to}>{r.name}</Link> : <span>{r.name}</span>}
-            <small className="dim">
-              {r.label.toLowerCase()}
-              {r.project !== "default" && r.kind === "instances" ? ` in ${r.project}` : ""}
-            </small>
-            {detach && (r.kind === "instances" || r.kind === "profiles") && (
-              <button type="button" className="btn btn-q btn-sm press" onClick={() => detach(r.kind, r.name, r.project)}>
-                Detach
-              </button>
-            )}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
 
 const poolKeys = ["source", "size", "zfs.pool_name", "btrfs.mount_options", "lvm.vg_name", "lvm.thinpool_name", "volume.size", "volume.block.filesystem", "rsync.bwlimit"];
 
@@ -80,7 +48,6 @@ export function Pools() {
 
   const save = async (d: PoolPut) => {
     if (!edit) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the pool a name.");
       const body = { ...d, config: Object.fromEntries(Object.entries(d.config).filter(([k, v]) => k && v !== "")) };
       const ok = await app.run(`Creating pool ${d.name}`, (p) => incusOp(srv, "/1.0/storage-pools", { method: "POST", body }, p).then(() => true), `Pool ${d.name} created`);
       if (ok) invalidate("pools:");
@@ -91,14 +58,8 @@ export function Pools() {
     return ok;
   };
   const del = async (p: Pool) => {
-    if (!(await confirmDialog({ title: `Delete pool ${p.name}?`, body: p.used_by?.length ? (
-        <>
-          Incus refuses while these use it. Remove or move them first.
-          <UsedList list={p.used_by} server={p.server} />
-        </>
-      ) : (
-        "The pool and its data are removed."
-      ), confirm: "Delete", danger: true, typeToConfirm: p.name }))) return;
+    const used = !!p.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete pool ${p.name}?`, body: used ? usedByBody("Incus refuses while these use it. Remove or move them first.", p.used_by, p.server) : "The pool and its data are removed.", confirm: "Delete", danger: true, noConfirm: used, typeToConfirm: used ? undefined : p.name }))) return;
     const ok = await app.run(`Deleting ${p.name}`, () => incusOp(p.server, `/1.0/storage-pools/${encodeURIComponent(p.name)}`, { method: "DELETE" }).then(() => true), `Pool ${p.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -157,25 +118,29 @@ export function Pools() {
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Pool ${edit.name}` : "Create storage pool"}
         create={!edit}
+        validate={(d) => (!edit && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "") ? "Give the pool a name." : d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 30 GiB." : "")}
         value={edit ? { description: edit.description, config: edit.config } : create ? { name: "", driver: "dir", description: "", config: {} } : null}
         onSave={save}
         onDelete={edit ? () => del(edit) : undefined}
         info={
           edit && (
-            <dl className="kv tight">
-              <dt>Driver</dt>
-              <dd className="mono">{edit.driver}</dd>
-              <dt>Source</dt>
-              <dd className="mono">{edit.config.source || "–"}</dd>
-              {space.data?.[edit.server + "/" + edit.name] && (
-                <>
-                  <dt>Space</dt>
-                  <dd>
-                    {bytes(space.data[edit.server + "/" + edit.name].used)} used of {bytes(space.data[edit.server + "/" + edit.name].total)}
-                  </dd>
-                </>
-              )}
-            </dl>
+            <>
+              <dl className="kv tight">
+                <dt>Driver</dt>
+                <dd className="mono">{edit.driver}</dd>
+                <dt>Source</dt>
+                <dd className="mono">{edit.config.source || "–"}</dd>
+                {space.data?.[edit.server + "/" + edit.name] && (
+                  <>
+                    <dt>Space</dt>
+                    <dd>
+                      {bytes(space.data[edit.server + "/" + edit.name].used)} used of {bytes(space.data[edit.server + "/" + edit.name].total)}
+                    </dd>
+                  </>
+                )}
+              </dl>
+              <UsedBySec list={edit.used_by} server={edit.server} />
+            </>
           )
         }
         form={(d, set) => (
@@ -264,7 +229,6 @@ export function Volumes() {
 
   const save = async (d: VolPut) => {
     if (!edit) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return void app.toast("Give the volume a name.");
       const pool = d.pool || pools.data?.[0];
       const body = { name: d.name, content_type: d.content_type, description: d.description, config: Object.fromEntries(Object.entries(d.config).filter(([k, v]) => k && v !== "")) };
       const ok = await app.run(`Creating volume ${d.name}`, () => incusOp(srv, `/1.0/storage-pools/${encodeURIComponent(pool!)}/volumes/custom`, { method: "POST", project, body }).then(() => true), `Volume ${d.name} created`);
@@ -276,14 +240,8 @@ export function Volumes() {
     return ok;
   };
   const del = async (v: Vol) => {
-    if (!(await confirmDialog({ title: `Delete volume ${v.name}?`, body: v.used_by?.length ? (
-        <>
-          Incus refuses while it's attached. Detach it from these first.
-          <UsedList list={v.used_by} server={v.server} />
-        </>
-      ) : (
-        "Its data and snapshots are removed. This can't be undone."
-      ), confirm: "Delete", danger: true, typeToConfirm: v.name }))) return;
+    const used = !!v.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete volume ${v.name}?`, body: used ? usedByBody("Incus refuses while it's attached. Detach it from these first.", v.used_by, v.server) : "Its data and snapshots are removed. This can't be undone.", confirm: "Delete", danger: true, noConfirm: used, typeToConfirm: used ? undefined : v.name }))) return;
     const ok = await app.run(`Deleting ${v.name}`, () => incusOp(v.server, volPath(v), { method: "DELETE", project }).then(() => true), `Volume ${v.name} deleted`);
     if (ok) {
       setEdit(null);
@@ -352,7 +310,10 @@ export function Volumes() {
         ]}
       />
       <EditSheet<VolPut>
-        validate={(d) => (d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "")}
+        validate={(d) => {
+          if (!edit && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(d.name || "")) return "Give the volume a name.";
+          return d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "";
+        }}
         open={create || !!edit}
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Volume ${edit.name}` : "Create volume"}
@@ -377,26 +338,21 @@ export function Volumes() {
                     </dd>
                   </>
                 )}
-                <dt>Used by</dt>
-                <dd>
-                  <UsedList list={edit.used_by} server={edit.server} detach={(k, n, pr) => doDetach(edit, k, n, pr)} />
-                </dd>
               </dl>
+              <UsedBySec list={edit.used_by} server={edit.server} detach={(k, n, pr) => doDetach(edit, k, n, pr)} />
               <SheetSec title="Attach to an instance">
-                <div className="two">
+                <div className="kvr" style={{ gridTemplateColumns: edit.content_type === "block" ? "minmax(0,1fr) auto" : undefined }}>
                   <Select
                     value={attach.inst}
                     onChange={(v) => setAttach({ ...attach, inst: v })}
                     options={[{ v: "", l: "Choose an instance" }, ...(insts.data || []).filter((i) => i.server === edit.server && (edit.content_type !== "block" || i.type === "virtual-machine")).map((i) => ({ v: i.name, l: i.name }))]}
                   />
                   {edit.content_type !== "block" && <Input mono value={attach.path} onChange={(v) => setAttach({ ...attach, path: v })} placeholder="/mnt/data" />}
-                </div>
-                <div>
                   <button className="btn btn-s btn-sm tt press" disabled={!attach.inst} onClick={() => doAttach(edit)}>
                     {ic.link}Attach
                   </button>
                 </div>
-                {edit.content_type === "block" && <span className="dim" style={{ fontSize: 12.5 }}>Block volumes attach to virtual machines only.</span>}
+                {edit.content_type === "block" && <span className="note">Block volumes attach to virtual machines only.</span>}
               </SheetSec>
               <VolSnapshots v={edit} project={project} path={volPath(edit)} />
             </>
@@ -492,7 +448,14 @@ function VolSnapshots({ v, project, path }: { v: Vol; project: string; path: str
   };
   const expires = (s: VolSnap) => (s.expires_at && !s.expires_at.startsWith("0001") ? dateTime(s.expires_at) : "");
   return (
-    <SheetSec title="Snapshots">
+    <SheetSec
+      title="Snapshots"
+      action={
+        <button className="btn btn-s btn-sm tt press" onClick={create}>
+          {ic.snap}Take snapshot
+        </button>
+      }
+    >
       <div className="two">
         <Field label="Name">
           <Input mono value={name} onChange={setName} placeholder="Optional" onKeyDown={(e) => e.key === "Enter" && create()} />
@@ -503,29 +466,26 @@ function VolSnapshots({ v, project, path }: { v: Vol; project: string; path: str
           </div>
         </Field>
       </div>
-      <div>
-        <button className="btn btn-s btn-sm tt press" onClick={create}>
-          {ic.snap}Take snapshot
-        </button>
-      </div>
-      {q.data && !snaps.length && <span className="dim" style={{ fontSize: 12.5 }}>No snapshots yet.</span>}
+      {q.data && !snaps.length && <span className="note">No snapshots yet.</span>}
       {!!snaps.length && (
         <div className="dl">
           {snaps.map((s) => (
-            <div className="snr" key={s.name}>
+            <div className="prow" key={s.name}>
               <span>
                 <b className="mono">{s.short}</b>
-                <small className="dim">
+                <small className="dim" style={{ display: "block" }}>
                   {dateTime(s.created_at)}
                   {expires(s) && ` · expires ${expires(s)}`}
                 </small>
               </span>
-              <button className="btn btn-q btn-sm press" onClick={() => restore(s.short)}>
-                Restore
-              </button>
-              <button className="btn btn-q ib btn-sm" aria-label={"Delete " + s.short} onClick={() => del(s.short)}>
-                {ic.trash}
-              </button>
+              <span className="r">
+                <button className="btn btn-q btn-sm press" onClick={() => restore(s.short)}>
+                  Restore
+                </button>
+                <button className="btn btn-q ib btn-sm" aria-label={"Delete " + s.short} onClick={() => del(s.short)}>
+                  {ic.trash}
+                </button>
+              </span>
             </div>
           ))}
         </div>
@@ -547,7 +507,8 @@ export function Isos() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const del = async (v: Vol) => {
-    if (!(await confirmDialog({ title: `Delete ${v.name}?`, body: v.used_by?.length ? "Detach it from its VMs first." : "The ISO is removed from the pool.", confirm: "Delete", danger: true }))) return;
+    const used = !!v.used_by?.length;
+    if (!(await confirmDialog({ title: `Delete ${v.name}?`, body: used ? usedByBody("Detach it from its VMs first.", v.used_by, v.server) : "The ISO is removed from the pool.", confirm: "Delete", danger: true, noConfirm: used }))) return;
     const ok = await app.run(`Deleting ${v.name}`, () => incusOp(v.server, `/1.0/storage-pools/${encodeURIComponent(v.pool)}/volumes/custom/${encodeURIComponent(v.name)}`, { method: "DELETE", project }).then(() => true), `${v.name} deleted`);
     if (ok) invalidate("volumes:");
   };
@@ -728,8 +689,7 @@ export function Buckets() {
   type BPut = { name?: string; description: string; config: Record<string, string> };
   const save = async (d: BPut) => {
     if (!edit) {
-      if (!tp) return void app.toast("No pool here supports buckets.");
-      if (!/^[a-z0-9][a-z0-9.-]{2,62}$/.test(d.name || "")) return void app.toast("Bucket names use 3 to 63 lowercase letters, numbers, dots and dashes.");
+      if (!tp) return false;
       const ok = await app.run(`Creating bucket ${d.name}`, () => incusOp(tp.server, `/1.0/storage-pools/${encodeURIComponent(tp.name)}/buckets`, { method: "POST", project, body: d }).then(() => true), `Bucket ${d.name} created`);
       if (ok) invalidate("buckets:");
       return ok;
@@ -759,14 +719,10 @@ export function Buckets() {
         <span className="dim fnote">S3-compatible object storage.</span>
       </div>
       {noAddr && (
-        <div className="panel notice">
-          <span className="ni-ic">{ic.cloud}</span>
-          <div>
-            <b>Buckets on local pools need an address</b>
-            <p>
-              Set <span className="mono">core.storage_buckets_address</span> on the host, for example <span className="mono">:8555</span>, under Hosts, then Configuration. Ceph object pools work without it.
-            </p>
-          </div>
+        <div className="note-box">
+          <span>
+            Buckets on local pools need <span className="mono">core.storage_buckets_address</span> set on the host (for example <span className="mono">:8555</span>) under Hosts, Configuration. Ceph object pools work without it.
+          </span>
         </div>
       )}
       <Table<Bucket>
@@ -784,7 +740,13 @@ export function Buckets() {
         ]}
       />
       <EditSheet<BPut>
-        validate={(d) => (d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "")}
+        validate={(d) => {
+          if (!edit) {
+            if (!tp) return "No pool here supports buckets.";
+            if (!/^[a-z0-9][a-z0-9.-]{2,62}$/.test(d.name || "")) return "Bucket names use 3 to 63 lowercase letters, numbers, dots and dashes.";
+          }
+          return d.config.size && memBytes(d.config.size) == null ? "Size must be a number with a unit, like 10 GiB." : "";
+        }}
         open={create || !!edit}
         onClose={() => (setCreate(false), setEdit(null))}
         title={edit ? `Bucket ${edit.name}` : "Create bucket"}
@@ -846,7 +808,7 @@ function BucketKeys({ b, project }: { b: Bucket; project: string }) {
       <SheetSec
         title="Access keys"
         action={
-          <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          <span className="r" style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
             <button className="btn btn-s btn-sm press" onClick={() => add("read-only")}>
               Read-only key
             </button>
@@ -856,17 +818,15 @@ function BucketKeys({ b, project }: { b: Bucket; project: string }) {
           </span>
         }
       >
-        {(keys.data || []).length === 0 && <span className="dim" style={{ fontSize: 12.5 }}>No keys yet.</span>}
+        {(keys.data || []).length === 0 && <span className="note">No keys yet.</span>}
         <div className="dl">
           {(keys.data || []).map((k) => (
-            <div className="drow" key={k.name} style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1.4fr) auto" }}>
-              <span>
-                <b style={{ fontWeight: 500 }}>{k.name}</b>
-                <small className="dim" style={{ display: "block" }}>
-                  {k.role}
-                </small>
+            <div className="drow d3" key={k.name}>
+              <span className="nm">
+                <span className="nm2">{k.name}</span>
+                <small className="dim">{k.role}</small>
               </span>
-              <span className="mono" style={{ fontSize: 12, overflowWrap: "anywhere" }}>
+              <span className="mono" style={{ overflowWrap: "anywhere" }}>
                 {k["access-key"]}
                 <CopyBtn text={k["access-key"]} />
                 <br />
