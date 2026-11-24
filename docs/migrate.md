@@ -65,6 +65,7 @@ If any step fails, the UI deletes what it created and keeps the uploaded file so
 - UEFI VMs boot the disk's default loader (`EFI/BOOT/BOOTX64.EFI`), because the boot entries in Proxmox's EFI disk are not imported. Most Linux and Windows installs have one.
 - Legacy BIOS VMs need SeaBIOS on the Incus server. When it's missing and the disk has an EFI partition, the VM boots with UEFI instead and the task says so. Otherwise the import stops and tells you to install SeaBIOS.
 - If the last partition of the boot disk runs to the very end of the disk, the disk gets up to 1 MiB bigger. Incus moves the backup partition table to the end of every new VM disk and refuses a disk where a partition is in the way. The task says when this happened.
+- Incus also refuses a boot disk whose partitions overlap or start inside the partition table. The import checks this as soon as it reads the start of the disk and stops with the reason, so you can fix the disk in Proxmox first.
 - Windows VMs need the virtio drivers installed in Proxmox before the move if they used SATA or IDE disks.
 - Network interface names can change in VMs. Keep the MAC address to keep DHCP reservations and interface names.
 

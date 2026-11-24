@@ -41,3 +41,28 @@ func TestGPTSize(t *testing.T) {
 		t.Errorf("odd size: got %d", got)
 	}
 }
+
+func TestGPTProblem(t *testing.T) {
+	h := gptHead(1 << 20)
+	binary.LittleEndian.PutUint64(h[512+40:], 34) // first usable LBA
+	if p := GPTProblem(h); p != "" {
+		t.Errorf("good table: %s", p)
+	}
+	// A second partition that overlaps the first.
+	e := h[1024+128:]
+	e[0] = 0xaf
+	binary.LittleEndian.PutUint64(e[32:], 4096)
+	binary.LittleEndian.PutUint64(e[40:], 8191)
+	if p := GPTProblem(h); p != "partitions 1 and 2 overlap" {
+		t.Errorf("overlap: %q", p)
+	}
+	// Moved past the first, but starting inside the table.
+	binary.LittleEndian.PutUint64(e[32:], 20)
+	binary.LittleEndian.PutUint64(e[40:], 30)
+	if p := GPTProblem(h); p == "" {
+		t.Error("partition inside the table not reported")
+	}
+	if p := GPTProblem(make([]byte, 64<<10)); p != "" {
+		t.Errorf("no GPT: %s", p)
+	}
+}

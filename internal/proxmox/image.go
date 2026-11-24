@@ -362,6 +362,11 @@ func VMDisksRaw(path string, out, raw map[string]io.WriterAt, progress Progress)
 		}
 		if c.Num == 0 {
 			head[v.Devices[c.Device].Name] = append([]byte(nil), c.Data...)
+			if _, boot := writers[c.Device]; boot {
+				if p := GPTProblem(c.Data); p != "" {
+					return nil, gptError(p)
+				}
+			}
 		}
 		if w, ok := raws[c.Device]; ok {
 			off := int64(c.Num) * vma.ClusterSize
@@ -433,6 +438,60 @@ func GPTSize(head []byte, disk int64) int64 {
 		return 0
 	}
 	return (need + 1<<20 - 1) &^ (1<<20 - 1)
+}
+
+// GPTProblem reports a GPT problem in head that makes Incus refuse the
+// disk: sgdisk, which Incus runs on every new VM disk, won't write a table
+// with overlapping partitions or one that starts inside the table itself.
+// Checking it up front stops the import before the long copy. A partition
+// past the end is not a problem here, because GPTSize grows the disk.
+func GPTProblem(head []byte) string {
+	const sector = 512
+	if len(head) < 2*sector || string(head[sector:sector+8]) != "EFI PART" {
+		return ""
+	}
+	h := head[sector:]
+	first := binary.LittleEndian.Uint64(h[40:])
+	lba := binary.LittleEndian.Uint64(h[72:])
+	n := int64(binary.LittleEndian.Uint32(h[80:]))
+	size := int64(binary.LittleEndian.Uint32(h[84:]))
+	if size < 128 || n > 1024 || lba > uint64(len(head)/sector) {
+		return ""
+	}
+	type part struct {
+		num         int64
+		start, last uint64
+	}
+	var parts []part
+	for i := int64(0); i < n; i++ {
+		off := int64(lba)*sector + i*size
+		if off+size > int64(len(head)) {
+			break
+		}
+		e := head[off:]
+		if bytes.Equal(e[:16], make([]byte, 16)) {
+			continue
+		}
+		parts = append(parts, part{i + 1, binary.LittleEndian.Uint64(e[32:]), binary.LittleEndian.Uint64(e[40:])})
+	}
+	for i, a := range parts {
+		if a.start > a.last {
+			return fmt.Sprintf("partition %d ends before it begins", a.num)
+		}
+		if a.start < first {
+			return fmt.Sprintf("partition %d starts inside the partition table (sector %d, the table ends at %d)", a.num, a.start, first)
+		}
+		for _, b := range parts[i+1:] {
+			if a.start <= b.last && b.start <= a.last {
+				return fmt.Sprintf("partitions %d and %d overlap", a.num, b.num)
+			}
+		}
+	}
+	return ""
+}
+
+func gptError(problem string) error {
+	return fmt.Errorf("the boot disk's partition table has a problem that Incus refuses: %s. Fix it in Proxmox (gdisk or sgdisk -v show it), make a new backup and import that", problem)
 }
 
 // HasESP reports whether a disk's first 64 KiB hold a GPT with an EFI
