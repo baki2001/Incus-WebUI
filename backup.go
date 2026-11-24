@@ -32,6 +32,8 @@ import (
 type Backups struct {
 	Targets   []BackupTarget   `yaml:"targets,omitempty" json:"targets"`
 	Schedules []BackupSchedule `yaml:"schedules,omitempty" json:"schedules"`
+	// PBS are Proxmox Backup Servers to import from (see pbs.go).
+	PBS []PBSServer `yaml:"pbs,omitempty" json:"pbs"`
 }
 
 type BackupTarget struct {
@@ -607,8 +609,11 @@ func (a *App) handleBackupConfigGet(w http.ResponseWriter, r *http.Request) {
 	b := a.store.Get().Backups
 	for i := range b.Targets {
 		if b.Targets[i].SecretKey != "" {
-			b.Targets[i].SecretKey = "********"
+			b.Targets[i].SecretKey = secretMask
 		}
+	}
+	for i := range b.PBS {
+		b.PBS[i].Secret = secretMask
 	}
 	type sched struct {
 		BackupSchedule
@@ -617,7 +622,8 @@ func (a *App) handleBackupConfigGet(w http.ResponseWriter, r *http.Request) {
 	out := struct {
 		Targets   []BackupTarget `json:"targets"`
 		Schedules []sched        `json:"schedules"`
-	}{Targets: append([]BackupTarget{}, b.Targets...), Schedules: []sched{}}
+		PBS       []PBSServer    `json:"pbs"`
+	}{Targets: append([]BackupTarget{}, b.Targets...), Schedules: []sched{}, PBS: append([]PBSServer{}, b.PBS...)}
 	for _, s := range b.Schedules {
 		out.Schedules = append(out.Schedules, sched{s, a.sched.get(s.Name)})
 	}
@@ -650,6 +656,23 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := openTarget(*t); err != nil {
 				return fmt.Errorf("target %s: %w", t.Name, err)
+			}
+		}
+		pnames := map[string]bool{}
+		for i := range in.PBS {
+			p := &in.PBS[i]
+			if !backupPart.MatchString(p.Name) || pnames[p.Name] {
+				return fmt.Errorf("backup server name %q is empty, invalid or used twice", p.Name)
+			}
+			pnames[p.Name] = true
+			if p.Secret == secretMask {
+				p.Secret = savedPBSSecret(c.Backups.PBS, *p)
+				if p.Secret == "" {
+					return fmt.Errorf("backup server %s: type the secret again after changing the address or token", p.Name)
+				}
+			}
+			if _, err := p.client(); err != nil {
+				return fmt.Errorf("backup server %s: %w", p.Name, err)
 			}
 		}
 		snames := map[string]bool{}

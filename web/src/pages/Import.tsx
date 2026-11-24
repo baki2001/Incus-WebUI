@@ -6,6 +6,8 @@ import { Field, Input, Seg, Select, Sheet, SheetSec, TglRow } from "../ui";
 
 type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string; expires: string };
 
+type Snap = { ref: string; kind: "container" | "virtual-machine"; id: string; created: string; comment?: string; size?: number; problem?: string };
+
 type Plan = {
   type: string;
   name: string;
@@ -33,6 +35,12 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   const app = useApp();
   const servers = useScopedServers().filter((s) => app.can(s.name, "*", "manager"));
   const uploads = useData<Upload[]>(open ? "ui-imports" : null, () => ui("/imports"));
+  const pbsList = useData<{ name: string; datastore: string }[]>(open ? "ui-pbs" : null, () => ui("/pbs"));
+  const [from, setFrom] = useState<"file" | "pbs">("file");
+  const [pbsName, setPbsName] = useState("");
+  const pbs = pbsName || pbsList.data?.[0]?.name || "";
+  const snaps = useData<Snap[]>(open && from === "pbs" && pbs ? `ui-pbs-snaps:${pbs}` : null, () => ui(`/pbs/${encodeURIComponent(pbs)}/snapshots`));
+  const [snap, setSnap] = useState<Snap | null>(null);
   const [file, setFile] = useState<Upload | null>(null);
   const [sending, setSending] = useState<number | null>(null);
   const [err, setErr] = useState("");
@@ -54,8 +62,13 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   const [start, setStart] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const qs = new URLSearchParams({ network, pool: storage, name, keep_mac: String(keepMAC) });
-  const plan = useData<Plan>(file && network && storage ? `import-plan:${file.id}:${qs}` : null, () => ui(`/imports/${file!.id}/plan?${qs}`));
+  // What is being imported: an uploaded file or a backup on a PBS server.
+  const chosen =
+    from === "file"
+      ? file && { label: `${file.name}, ${bytes(file.size)}`, base: `/imports/${file.id}`, extra: {} as Record<string, string> }
+      : snap && { label: `${snap.kind === "container" ? "CT" : "VM"} ${snap.id} from ${dateTime(snap.created)}, on ${pbs}`, base: `/pbs/${encodeURIComponent(pbs)}`, extra: { snap: snap.ref } as Record<string, string> };
+  const qs = new URLSearchParams({ network, pool: storage, name, keep_mac: String(keepMAC), ...chosen?.extra });
+  const plan = useData<Plan>(chosen && network && storage ? `import-plan:${chosen.base}:${qs}` : null, () => ui(`${chosen!.base}/plan?${qs}`));
 
   // The upload is the one step that needs this page; warn before leaving it.
   useEffect(() => {
@@ -68,6 +81,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   useEffect(() => {
     if (!open) {
       setFile(null);
+      setSnap(null);
       setErr("");
       setName("");
     }
@@ -90,14 +104,14 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
 
   const nameBad = name !== "" && !nameRe.test(name);
   const p = plan.data;
-  const ok = !!file && !!p && p.blockers.length === 0 && !!project && !nameBad && !busy;
+  const ok = !!chosen && !!p && p.blockers.length === 0 && !!project && !nameBad && !busy;
 
   const submit = async () => {
     if (!ok) return;
     setBusy(true);
     setErr("");
     try {
-      await ui(`/imports/${file!.id}/run`, { method: "POST", body: { server: srv, project, name, network, pool: storage, keep_mac: keepMAC, start } });
+      await ui(`${chosen!.base}/run`, { method: "POST", body: { server: srv, project, name, network, pool: storage, keep_mac: keepMAC, start, ...chosen!.extra } });
       invalidate("ui-jobs");
       invalidate("ui-imports");
       app.toast(`Importing ${p!.name} on the server. You can close this page; follow it under Tasks.`);
@@ -126,7 +140,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
       footer={
         <>
           <span className="dim l" style={{ fontSize: 12.5 }}>
-            {file ? `${file.name}, ${bytes(file.size)}` : "Upload a vzdump backup first"}
+            {chosen ? chosen.label : from === "file" ? "Upload a vzdump backup first" : "Pick a backup first"}
           </span>
           <button className="btn btn-s press" onClick={onClose}>
             Cancel
@@ -142,49 +156,64 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
           {err}
         </div>
       )}
-      <SheetSec title="1. Upload the backup">
-        <p className="dim" style={{ margin: 0 }}>
-          A vzdump file from Proxmox: <code>vzdump-qemu-*.vma</code> for a VM or <code>vzdump-lxc-*.tar</code> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <code>/var/lib/vz/dump</code>. Backups on a Proxmox Backup Server can't be imported yet: restore them in Proxmox and make a vzdump backup.
-        </p>
-        <p className="dim" style={{ margin: "8px 0 0" }}>
-          Your browser sends the file to the UI server. Keep this page open until the upload is done. After that the browser isn't needed anymore.
-        </p>
-        <div className="imp-up">
-          <input ref={input} type="file" hidden accept=".vma,.zst,.gz,.tgz,.tar,.lzo" onChange={(e) => e.target.files?.[0] && send(e.target.files[0])} />
-          <button className="btn btn-s press" disabled={sending != null} onClick={() => input.current?.click()}>
-            {sending != null ? `Uploading ${Math.round(sending * 100)}%` : "Choose a file"}
-          </button>
-          {sending != null && (
-            <div className="jbar" role="progressbar" aria-valuenow={Math.round(sending * 100)} aria-valuemin={0} aria-valuemax={100}>
-              <i style={{ transform: `scaleX(${Math.max(0.02, sending)})` }} />
+      <SheetSec title="1. Choose the backup">
+        <Seg
+          value={from}
+          onChange={setFrom}
+          label="Backup from"
+          options={[
+            { v: "file", l: "Upload a file" },
+            { v: "pbs", l: "Proxmox Backup Server" },
+          ]}
+        />
+        {from === "pbs" ? (
+          <PBSPicker servers={pbsList.data} error={pbsList.error} admin={app.admin} pbs={pbs} setPbs={(n) => (setPbsName(n), setSnap(null))} snaps={snaps} snap={snap} setSnap={setSnap} />
+        ) : (
+          <>
+            <p className="dim" style={{ margin: "10px 0 0" }}>
+              A vzdump file from Proxmox: <code>vzdump-qemu-*.vma</code> for a VM or <code>vzdump-lxc-*.tar</code> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <code>/var/lib/vz/dump</code>.
+            </p>
+            <p className="dim" style={{ margin: "8px 0 0" }}>
+              Your browser sends the file to the UI server. Keep this page open until the upload is done. After that the browser isn't needed anymore.
+            </p>
+            <div className="imp-up">
+              <input ref={input} type="file" hidden accept=".vma,.zst,.gz,.tgz,.tar,.lzo" onChange={(e) => e.target.files?.[0] && send(e.target.files[0])} />
+              <button className="btn btn-s press" disabled={sending != null} onClick={() => input.current?.click()}>
+                {sending != null ? `Uploading ${Math.round(sending * 100)}%` : "Choose a file"}
+              </button>
+              {sending != null && (
+                <div className="jbar" role="progressbar" aria-valuenow={Math.round(sending * 100)} aria-valuemin={0} aria-valuemax={100}>
+                  <i style={{ transform: `scaleX(${Math.max(0.02, sending)})` }} />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {(uploads.data || []).length > 0 && (
-          <ul className="imp-list">
-            {uploads.data!.map((u) => (
-              <li key={u.id} className={file?.id === u.id ? "on" : undefined}>
-                <button className="lnk" onClick={() => setFile(u)} aria-pressed={file?.id === u.id}>
-                  {u.name}
-                </button>
-                <span className="dim">
-                  {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
-                </span>
-                <button className="lnk" onClick={() => drop(u)}>
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {(uploads.data || []).length > 0 && (
-          <p className="dim" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
-            These uploads take {bytes(uploads.data!.reduce((n, u) => n + u.size, 0))} on the UI server. Each one is deleted when its import is done, or a day after it was uploaded or last imported.
-          </p>
+            {(uploads.data || []).length > 0 && (
+              <ul className="imp-list">
+                {uploads.data!.map((u) => (
+                  <li key={u.id} className={file?.id === u.id ? "on" : undefined}>
+                    <button className="lnk" onClick={() => setFile(u)} aria-pressed={file?.id === u.id}>
+                      {u.name}
+                    </button>
+                    <span className="dim">
+                      {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, deleted {dateTime(u.expires)}
+                    </span>
+                    <button className="lnk" onClick={() => drop(u)}>
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {(uploads.data || []).length > 0 && (
+              <p className="dim" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+                These uploads take {bytes(uploads.data!.reduce((n, u) => n + u.size, 0))} on the UI server. Each one is deleted when its import is done, or a day after it was uploaded or last imported.
+              </p>
+            )}
+          </>
         )}
       </SheetSec>
 
-      {file && (
+      {chosen && (
         <>
           <SheetSec title="2. Choose where it goes">
             <div className="two">
@@ -212,7 +241,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
 
           <SheetSec title="3. Check what it becomes">
             <p className="dim" style={{ margin: 0 }}>
-              The import runs on the UI server. Once it has started you can close the browser: it keeps going and shows under Tasks. The uploaded file is deleted when the import is done.
+              The import runs on the UI server. Once it has started you can close the browser: it keeps going and shows under Tasks.{from === "file" && " The uploaded file is deleted when the import is done."}
             </p>
             {plan.error && <p className="bad">{friendlyError(plan.error)}</p>}
             {!p && !plan.error && <p className="dim">Reading the backup…</p>}
@@ -221,6 +250,67 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
         </>
       )}
     </Sheet>
+  );
+}
+
+function PBSPicker(props: {
+  servers?: { name: string; datastore: string }[];
+  error?: any;
+  admin: boolean;
+  pbs: string;
+  setPbs: (n: string) => void;
+  snaps: { data?: Snap[]; error?: any };
+  snap: Snap | null;
+  setSnap: (s: Snap) => void;
+}) {
+  const { servers, pbs, snaps, snap } = props;
+  if (props.error) return <p className="bad">{friendlyError(props.error)}</p>;
+  if (!servers) return <p className="dim">Loading…</p>;
+  if (!props.admin) {
+    return (
+      <p className="dim" style={{ margin: "10px 0 0" }}>
+        Only admins can import from a Proxmox Backup Server: a datastore holds the backups of every guest. Ask an admin, or upload a vzdump file instead.
+      </p>
+    );
+  }
+  if (servers.length === 0) {
+    return (
+      <p className="dim" style={{ margin: "10px 0 0" }}>
+        Add a Proxmox Backup Server under Settings, Backups first.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="dim" style={{ margin: "10px 0 0" }}>
+        The UI server downloads the backup from PBS itself, so nothing goes through your browser.
+      </p>
+      {servers.length > 1 && (
+        <Field label="Backup server">
+          <Select value={pbs} onChange={props.setPbs} options={servers.map((x) => ({ v: x.name, l: `${x.name} (${x.datastore})` }))} />
+        </Field>
+      )}
+      {snaps.error && <p className="bad">{friendlyError(snaps.error)}</p>}
+      {!snaps.data && !snaps.error && <p className="dim">Loading backups…</p>}
+      {snaps.data?.length === 0 && <p className="dim">No VM or container backups in this datastore.</p>}
+      {!!snaps.data?.length && (
+        <ul className="imp-list">
+          {snaps.data.map((x) => (
+            <li key={x.ref} className={snap?.ref === x.ref ? "on" : undefined}>
+              <button className="lnk" disabled={!!x.problem} onClick={() => props.setSnap(x)} aria-pressed={snap?.ref === x.ref}>
+                {x.kind === "container" ? "CT" : "VM"} {x.id}
+                {x.comment ? ` ${x.comment}` : ""}
+              </button>
+              <span className="dim">
+                {dateTime(x.created)}
+                {x.size ? `, ${bytes(x.size)}` : ""}
+                {x.problem ? `. ${x.problem}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 

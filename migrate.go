@@ -244,6 +244,48 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	// The day starts again, so pruning can't remove the file mid-import.
+	now := time.Now()
+	os.Chtimes(a.importPath(f.ID), now, now)
+	os.Chtimes(filepath.Join(a.importDir(), f.ID+".json"), now, now)
+	a.startImport(w, r, s, q, a.fileSource(f))
+}
+
+// fileSource reads an uploaded vzdump file.
+func (a *App) fileSource(f *importFile) importSource {
+	path := a.importPath(f.ID)
+	return importSource{
+		label: f.Name,
+		plan:  func(_ context.Context, o proxmox.Options) (*proxmox.Plan, error) { return importPlan(path, f.Kind, o) },
+		container: func(_ context.Context, w io.Writer, p *proxmox.Plan) error {
+			conf, err := proxmox.ContainerConf(path)
+			if err != nil {
+				return err
+			}
+			return proxmox.ContainerImage(w, path, p, proxmox.Arch(conf.Get("arch")))
+		},
+		vmDisks: func(_ context.Context, p *proxmox.Plan, boot io.WriterAt, raw map[string]io.WriterAt, progress proxmox.Progress) (map[string][]byte, error) {
+			return proxmox.VMDisksRaw(path, map[string]io.WriterAt{p.BootDisk: boot}, raw, progress)
+		},
+		done: func() { a.removeImport(f.ID) },
+	}
+}
+
+// importSource is where an import reads the backup: an uploaded vzdump file
+// or a snapshot on a Proxmox Backup Server.
+type importSource struct {
+	label string // shown in the task and the instance description
+	plan  func(ctx context.Context, o proxmox.Options) (*proxmox.Plan, error)
+	// container writes a unified Incus image.
+	container func(ctx context.Context, w io.Writer, p *proxmox.Plan) error
+	// vmDisks writes the boot disk as qcow2 to boot and the data disks raw,
+	// and returns the first 64 KiB of each disk.
+	vmDisks func(ctx context.Context, p *proxmox.Plan, boot io.WriterAt, raw map[string]io.WriterAt, progress proxmox.Progress) (map[string][]byte, error)
+	done    func() // after a successful import
+}
+
+// startImport checks the request and starts the import job.
+func (a *App) startImport(w http.ResponseWriter, r *http.Request, s *Session, q importReq, src importSource) {
 	if q.Project == "" {
 		q.Project = "default"
 	}
@@ -260,7 +302,9 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, err := importPlan(a.importPath(f.ID), f.Kind, q.options())
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	p, err := src.plan(ctx, q.options())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -269,8 +313,6 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, strings.Join(p.Blockers, " "))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
 	if len(p.ExtraDisks) > 0 && !a.ownVolumes(ctx, s, q.Server, q.Project) {
 		jsonError(w, http.StatusForbidden, sharedVolumesMsg(q.Project))
 		return
@@ -285,16 +327,14 @@ func (a *App) handleImportRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The day starts again, so pruning can't remove the file mid-import.
-	now := time.Now()
-	os.Chtimes(a.importPath(f.ID), now, now)
-	os.Chtimes(filepath.Join(a.importDir(), f.ID+".json"), now, now)
-	job := a.jobs.start("import", "Import "+f.Name+" as "+p.Name, s, q.Server, q.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
-		note, err := a.runImport(ctx, c, f, p, q, set)
+	job := a.jobs.start("import", "Import "+src.label+" as "+p.Name, s, q.Server, q.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
+		note, err := a.runImport(ctx, c, src, p, q, set)
 		if err != nil {
 			return jobResult{}, err
 		}
-		a.removeImport(f.ID)
+		if src.done != nil {
+			src.done()
+		}
 		link := "/instances/" + url.PathEscape(q.Server) + "/" + url.PathEscape(p.Name) + "?project=" + url.QueryEscape(q.Project)
 		return jobResult{Link: link, Note: note}, nil
 	})
@@ -310,14 +350,16 @@ func extraVolName(inst, key string) string { return inst + "-" + key }
 // runImport does the import. On failure it removes the instance and volumes
 // it created. It returns a note for the user when the import worked but
 // something needs a look.
-func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *proxmox.Plan, q importReq, set func(float64, string)) (note string, err error) {
+func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *proxmox.Plan, q importReq, set func(float64, string)) (note string, err error) {
 	lowPriority()
-	tmp, err := os.MkdirTemp(a.importDir(), f.ID+"-")
+	if err := os.MkdirAll(a.importDir(), 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp(a.importDir(), "run-")
 	if err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(tmp)
-	src := a.importPath(f.ID)
 
 	// Cleanup runs on failure, including cancel, with a context of its own.
 	var undo []func(context.Context)
@@ -336,16 +378,12 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 	var heads map[string][]byte
 	if p.Type == "container" {
 		set(0.02, "Building the image")
-		conf, err := proxmox.ContainerConf(src)
-		if err != nil {
-			return "", err
-		}
 		img := filepath.Join(tmp, "image.tar")
 		out, err := os.Create(img)
 		if err != nil {
 			return "", err
 		}
-		err = proxmox.ContainerImage(out, src, p, proxmox.Arch(conf.Get("arch")))
+		err = src.container(ctx, out, p)
 		if cerr := out.Close(); err == nil {
 			err = cerr
 		}
@@ -390,7 +428,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 			case <-done:
 			}
 		}()
-		heads, err = proxmox.VMDisksRaw(src, map[string]io.WriterAt{p.BootDisk: boot}, raw, func(d, t int64) {
+		heads, err = src.vmDisks(ctx, p, boot, raw, func(d, t int64) {
 			set(0.01+0.49*float64(d)/float64(max(t, 1)), "Reading the disks")
 		})
 		close(done)
@@ -399,6 +437,14 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 		}
 		if err != nil {
 			return "", err
+		}
+		// The image grew if the partition table needed it, and the root
+		// disk can't be smaller than the image.
+		if need := proxmox.GPTSize(heads[p.BootDisk], p.DiskSize); need > 0 {
+			if root := p.Devices["root"]; root != nil {
+				root["size"] = fmt.Sprintf("%dB", need)
+			}
+			note = "The boot disk's last partition ran to the very end of the disk, so the disk is slightly bigger now, which Incus needs for its partition table. "
 		}
 		meta, err := proxmox.VMMetadata(p)
 		if err != nil {
@@ -434,10 +480,13 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 	set(0.85, "Creating the instance: Incus copies the disk into the storage pool")
 	body := map[string]any{
 		"name": p.Name, "type": p.Type, "config": p.Config, "devices": p.Devices,
-		"description": "Imported from Proxmox (" + f.Name + ")",
+		"description": "Imported from Proxmox (" + src.label + ")",
 		"source":      map[string]string{"type": "image", "fingerprint": fp},
 	}
 	if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {
+		if strings.Contains(err.Error(), "sgdisk") {
+			return "", fmt.Errorf("create the instance: Incus could not fix the partition table of the boot disk. Run sgdisk -v on that disk inside the VM in Proxmox to see what is wrong with it. Incus said: %w", err)
+		}
 		return "", fmt.Errorf("create the instance: %w", err)
 	}
 	inst := "/1.0/instances/" + url.PathEscape(p.Name)
@@ -446,7 +495,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 		_, _ = c.call(ctx, "DELETE", inst, q.Project, nil)
 	})
 	if !q.Start {
-		return "", nil
+		return strings.TrimSpace(note), nil
 	}
 
 	set(0.9, "Starting")
@@ -464,7 +513,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 		if _, perr := c.call(ctx, "PATCH", inst, q.Project, map[string]any{"config": map[string]string{"security.csm": "false"}}); perr != nil {
 			return "", perr
 		}
-		note = "The Incus server has no SeaBIOS, so the VM boots with UEFI. "
+		note += "The Incus server has no SeaBIOS, so the VM boots with UEFI. "
 		err = start()
 	}
 	if err != nil {
