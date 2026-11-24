@@ -142,12 +142,14 @@ function Fresh() {
   );
 }
 
-export type Job = { id: string; kind: string; title: string; user?: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; note?: string; started: string; ended?: string };
+export type Job = { id: string; kind: string; title: string; user?: string; mine?: boolean; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; note?: string; started: string; ended?: string };
 
 // Jobs run in the backend (backups, imports) and outlive the browser tab.
-export function useJobs() {
+// The top bar needs only what runs now and the latest few (recent); the
+// Tasks page loads the whole history.
+export function useJobs(all = false) {
   const [fast, setFast] = useState(false);
-  const q = useData<Job[]>("ui-jobs", () => ui("/jobs"), fast ? 2000 : 15000);
+  const q = useData<Job[]>(all ? "ui-jobs-all" : "ui-jobs", () => ui(all ? "/jobs" : "/jobs?recent=8"), fast ? 2000 : 15000);
   const running = (q.data || []).some((j) => j.state === "running");
   useEffect(() => setFast(running), [running]);
   return q;
@@ -163,7 +165,7 @@ function Tasks() {
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
   const running = jobs.filter((j) => j.state === "running");
-  const recent = jobs.filter((j) => j.state !== "running").slice(0, 8);
+  const recent = jobs.filter((j) => j.state !== "running");
   const busy = tasks.length + running.length;
   const close = () => setOpen(false);
   return (

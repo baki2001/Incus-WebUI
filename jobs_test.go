@@ -38,8 +38,21 @@ func TestJobsSurviveRestart(t *testing.T) {
 	waitJobs(&a, 0)
 }
 
-// waitJobs waits until n jobs are still running.
+// waitJobs waits until n jobs are still running and the file is up to date.
 func waitJobs(j *jobs, n int) {
+	defer func() {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			j.mu.Lock()
+			seq := j.seq
+			j.mu.Unlock()
+			j.wmu.Lock()
+			w := j.written
+			j.wmu.Unlock()
+			if w >= seq {
+				return
+			}
+		}
+	}()
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		running := 0
 		for _, x := range j.snapshot() {
@@ -78,6 +91,35 @@ func TestJobsTrim(t *testing.T) {
 	j.trimLocked()
 	if len(j.list) != keepFinishedJobs {
 		t.Errorf("kept %d, want %d", len(j.list), keepFinishedJobs)
+	}
+}
+
+func TestJobsCapPerUser(t *testing.T) {
+	var j jobs
+	now := time.Now()
+	for i := 0; i < keepFinishedJobs+10; i++ {
+		ts := now.Add(time.Duration(i) * time.Millisecond)
+		j.list = append(j.list, &Job{Owner: "password:busy", State: "done", Started: ts, Ended: ts})
+	}
+	j.list = append(j.list, &Job{Owner: "password:calm", State: "done", Started: now.Add(-time.Hour), Ended: now.Add(-time.Hour)})
+	j.trimLocked()
+	if len(j.list) != keepFinishedJobs+1 || j.list[0].Owner != "password:calm" {
+		t.Errorf("a busy user pushed out someone else's history: %d left, first %q", len(j.list), j.list[0].Owner)
+	}
+}
+
+func TestJobsRecordRateLimit(t *testing.T) {
+	var j jobs
+	for i := 0; i < recordsPerMinute; i++ {
+		if !j.record(&Job{Kind: "action", Owner: "password:a", State: "done", Started: time.Now(), Ended: time.Now()}) {
+			t.Fatalf("record %d refused", i)
+		}
+	}
+	if j.record(&Job{Kind: "action", Owner: "password:a", State: "done", Started: time.Now(), Ended: time.Now()}) {
+		t.Error("record past the limit was accepted")
+	}
+	if !j.record(&Job{Kind: "action", Owner: "password:b", State: "done", Started: time.Now(), Ended: time.Now()}) {
+		t.Error("another user was limited too")
 	}
 }
 

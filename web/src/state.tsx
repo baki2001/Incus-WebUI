@@ -253,12 +253,12 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const run = useCallback(
     async <T,>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => {
       const id = seq.current++;
-      const started = new Date().toISOString();
+      const started = Date.now();
       setTasks((t) => [...t, { id, label }]);
       const progress = (detail: string) => setTasks((t) => t.map((x) => (x.id === id ? { ...x, detail } : x)));
       // Every action lands in the task history, so people can look back at what they did.
       const record = (body: { state: "done" | "failed"; note?: string; error?: string }) =>
-        ui("/jobs", { method: "POST", body: { title: label, started, ...body } })
+        ui("/jobs", { method: "POST", body: { title: label, took: Date.now() - started, ...body } })
           .catch(() => {})
           .then(() => invalidate("ui-jobs"));
       try {

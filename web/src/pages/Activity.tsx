@@ -14,7 +14,7 @@ type Op = { id: string; class: string; description: string; created_at: string; 
 export function Tasks() {
   useCrumbs([{ label: "Tasks" }]);
   const app = useApp();
-  const q = useJobs();
+  const q = useJobs(true);
   const [show, setShow] = useState<"all" | "running" | "failed">("all");
   const [search, setSearch] = useState("");
   const all = q.data;
@@ -80,7 +80,7 @@ export function Tasks() {
               ),
           },
           { k: "user", label: "User", sort: (j) => j.user || "", cell: (j) => j.user || "Scheduler", hide: !app.admin || users.size < 2, cls: "hide-m" },
-          { k: "when", label: "Started", sort: (j) => j.started, cell: (j) => <span className="dim" title={dateTime(j.started)}>{ago(j.started)}</span>, cls: "hide-s" },
+          { k: "when", label: "Started", sort: (j) => Date.parse(j.started), cell: (j) => <span className="dim" title={dateTime(j.started)}>{ago(j.started)}</span>, cls: "hide-s" },
           { k: "took", label: "Took", sort: (j) => took(j, true), cell: (j) => <span className="dim tnum">{took(j)}</span>, cls: "hide-m" },
           {
             k: "act",
