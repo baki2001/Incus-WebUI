@@ -382,7 +382,8 @@ func VMDisksRaw(path string, out, raw map[string]io.WriterAt, progress Progress)
 			return nil, err
 		}
 	}
-	for _, q := range writers {
+	for id, q := range writers {
+		q.Grow(GPTSize(head[v.Devices[id].Name], sizes[id]))
 		if err := q.Close(); err != nil {
 			return nil, err
 		}
@@ -391,6 +392,47 @@ func VMDisksRaw(path string, out, raw map[string]io.WriterAt, progress Progress)
 		progress(total, total)
 	}
 	return head, nil
+}
+
+// GPTSize returns a new size, rounded up to 1 MiB, when a disk of the given
+// size is too small for the GPT in head: every partition plus the backup
+// table after it. It is 0 when the disk is big enough or has no GPT.
+// Incus runs sgdisk on a new VM disk, and sgdisk refuses a disk whose last
+// partition reaches into the space of the backup table, though the guest
+// ran fine on it in Proxmox. Growing the disk a little leaves that space.
+func GPTSize(head []byte, disk int64) int64 {
+	const sector = 512
+	if len(head) < 2*sector || string(head[sector:sector+8]) != "EFI PART" {
+		return 0
+	}
+	h := head[sector:]
+	lba := binary.LittleEndian.Uint64(h[72:])
+	n := int64(binary.LittleEndian.Uint32(h[80:]))
+	size := int64(binary.LittleEndian.Uint32(h[84:]))
+	if size < 128 || n > 1024 || lba > uint64(len(head)/sector) {
+		return 0
+	}
+	var last uint64
+	for i := int64(0); i < n; i++ {
+		off := int64(lba)*sector + i*size
+		if off+size > int64(len(head)) {
+			break
+		}
+		e := head[off:]
+		if bytes.Equal(e[:16], make([]byte, 16)) {
+			continue
+		}
+		last = max(last, binary.LittleEndian.Uint64(e[40:]))
+	}
+	if last == 0 || last > 1<<41 {
+		return 0
+	}
+	table := (n*size + sector - 1) / sector
+	need := (int64(last) + 1 + table + 1) * sector
+	if need <= disk {
+		return 0
+	}
+	return (need + 1<<20 - 1) &^ (1<<20 - 1)
 }
 
 // HasESP reports whether a disk's first 64 KiB hold a GPT with an EFI

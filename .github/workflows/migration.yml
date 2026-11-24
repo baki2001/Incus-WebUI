@@ -23,7 +23,7 @@ jobs:
       - name: Install Incus and tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq incus qemu-system-x86 qemu-utils ovmf seabios zstd
+          sudo apt-get install -y -qq incus qemu-system-x86 qemu-utils ovmf seabios zstd gdisk
           sudo chmod 666 /dev/kvm
           # Legacy BIOS VMs boot with SeaBIOS. Ubuntu's Incus package looks for it
           # next to OVMF but the seabios package puts it elsewhere.
@@ -46,6 +46,21 @@ jobs:
             extra=""; [ $fw = ovmf ] && extra="bios: ovmf\nefidisk0: local-lvm:vm-100-disk-1,efitype=4m,size=4M\nscsi1: local-lvm:vm-100-disk-2,size=64M\n"
             printf "boot: order=scsi0;net0\ncores: 2\nmemory: 2048\nname: ubuntu-$fw\nnet0: virtio=BC:24:11:12:34:5$([ $fw = ovmf ] && echo 7 || echo 6),bridge=vmbr0\nostype: l26\nscsi0: local-lvm:vm-100-disk-0,size=4G\nscsihw: virtio-scsi-single\n$extra" > qemu-server-$fw.conf
           done
+          # A 12 GiB disk whose last partition runs to the last sector, into the
+          # space of the backup GPT. Proxmox boots it, but Incus runs sgdisk on
+          # a new VM disk, which refuses it unless the disk grows a little.
+          cp disk.raw full.raw
+          G12=$((12 << 30))
+          truncate -s $((G12 + (1 << 20))) full.raw
+          sgdisk -e full.raw >/dev/null
+          set -- $(sgdisk -p full.raw | awk '/^ +[0-9]+ +[0-9]+ +[0-9]+ /{print $1, $2, $3}' | sort -k3 -n | tail -n1)
+          num=$1 start=$2
+          type=$(sgdisk -i $num full.raw | sed -n 's/^Partition GUID code: \([^ ]*\).*/\1/p')
+          guid=$(sgdisk -i $num full.raw | sed -n 's/^Partition unique GUID: //p')
+          sgdisk -d $num -n $num:$start:$((G12 / 512 - 1)) -t $num:$type -u $num:$guid full.raw >/dev/null
+          truncate -s $G12 full.raw
+          sgdisk -v full.raw | grep -q "too big\|overlaps" && echo "full.raw has the broken layout"
+          printf "boot: order=scsi0;net0\ncores: 2\nmemory: 2048\nname: ubuntu-full\nnet0: virtio=BC:24:11:12:34:58,bridge=vmbr0\nostype: l26\nscsi0: local-lvm:vm-100-disk-0,size=12G\nscsihw: virtio-scsi-single\n" > qemu-server-full.conf
           docker run --rm -v /tmp/fx:/fx debian:bookworm bash -ec '
             apt-get update -qq && apt-get install -y -qq wget ca-certificates >/dev/null
             wget -qO /etc/apt/trusted.gpg.d/proxmox.gpg https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
@@ -61,6 +76,9 @@ jobs:
             cp qemu-server-ovmf.conf ovmf/qemu-server.conf
             vma create vzdump-qemu-seabios.vma -c seabios/qemu-server.conf drive-scsi0=disk.raw
             vma create vzdump-qemu-ovmf.vma -c ovmf/qemu-server.conf drive-efidisk0=efi.raw drive-scsi0=disk.raw drive-scsi1=data.raw
+            mkdir -p full && cp qemu-server-full.conf full/qemu-server.conf
+            vma create vzdump-qemu-full.vma -c full/qemu-server.conf drive-scsi0=full.raw
+            rm full.raw
             vma config vzdump-qemu-seabios.vma
             zstd -q -T0 vzdump-qemu-ovmf.vma
             vma verify vzdump-qemu-seabios.vma
@@ -89,6 +107,8 @@ jobs:
           for f in vzdump-qemu-seabios.vma vzdump-qemu-ovmf.vma.zst vzdump-lxc.tar.zst; do
             INCUS_WEBUI_IMPORT=/tmp/fx/$f go test . -run TestImportIncus -v -timeout 15m
           done
+      - name: A disk whose last partition fills it gets a little bigger
+        run: INCUS_WEBUI_IMPORT=/tmp/fx/vzdump-qemu-full.vma INCUS_WEBUI_IMPORT_NOTE="slightly bigger" go test . -run TestImportIncus -v -timeout 15m
       - name: A BIOS VM on an Incus without SeaBIOS boots with UEFI
         run: |
           sudo rm /usr/share/OVMF/seabios.bin

@@ -438,6 +438,14 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		if err != nil {
 			return "", err
 		}
+		// The image grew if the partition table needed it, and the root
+		// disk can't be smaller than the image.
+		if need := proxmox.GPTSize(heads[p.BootDisk], p.DiskSize); need > 0 {
+			if root := p.Devices["root"]; root != nil {
+				root["size"] = fmt.Sprintf("%dB", need)
+			}
+			note = "The boot disk's last partition ran to the very end of the disk, so the disk is slightly bigger now, which Incus needs for its partition table. "
+		}
 		meta, err := proxmox.VMMetadata(p)
 		if err != nil {
 			return "", err
@@ -476,6 +484,9 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		"source":      map[string]string{"type": "image", "fingerprint": fp},
 	}
 	if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {
+		if strings.Contains(err.Error(), "sgdisk") {
+			return "", fmt.Errorf("create the instance: Incus could not fix the partition table of the boot disk. Run sgdisk -v on that disk inside the VM in Proxmox to see what is wrong with it. Incus said: %w", err)
+		}
 		return "", fmt.Errorf("create the instance: %w", err)
 	}
 	inst := "/1.0/instances/" + url.PathEscape(p.Name)
@@ -484,7 +495,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		_, _ = c.call(ctx, "DELETE", inst, q.Project, nil)
 	})
 	if !q.Start {
-		return "", nil
+		return strings.TrimSpace(note), nil
 	}
 
 	set(0.9, "Starting")
@@ -502,7 +513,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		if _, perr := c.call(ctx, "PATCH", inst, q.Project, map[string]any{"config": map[string]string{"security.csm": "false"}}); perr != nil {
 			return "", perr
 		}
-		note = "The Incus server has no SeaBIOS, so the VM boots with UEFI. "
+		note += "The Incus server has no SeaBIOS, so the VM boots with UEFI. "
 		err = start()
 	}
 	if err != nil {

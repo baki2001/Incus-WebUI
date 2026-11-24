@@ -46,6 +46,13 @@ func NewWriter(w io.WriterAt, size int64) (*Writer, error) {
 // Clusters is the number of guest clusters in the image.
 func (q *Writer) Clusters() int64 { return (q.size + ClusterSize - 1) / ClusterSize }
 
+// Grow raises the virtual size before Close. A smaller size is ignored.
+func (q *Writer) Grow(size int64) {
+	if !q.done && size > q.size && size <= 1<<50 {
+		q.size = size
+	}
+}
+
 // WriteCluster stores guest cluster n. data must be ClusterSize bytes. A
 // cluster that is all zeros is skipped. Writing the same cluster twice is an
 // error, since the VMA reader already rejects duplicates.

@@ -134,6 +134,7 @@ func RawDisk(r io.Reader, size int64, w io.WriterAt, q bool, progress func(int64
 		return nil, errors.New("the disk image is larger than its index says")
 	}
 	if qw != nil {
+		qw.Grow(GPTSize(head, size))
 		if err := qw.Close(); err != nil {
 			return nil, err
 		}

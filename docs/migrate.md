@@ -64,12 +64,13 @@ If any step fails, the UI deletes what it created and keeps the uploaded file so
 - Unpacking and converting a backup keeps about one CPU core busy on the UI server for the length of the import. It runs at a lower priority, so the rest of the UI stays responsive. To cap it, set `limits.cpu` on the UI's instance.
 - UEFI VMs boot the disk's default loader (`EFI/BOOT/BOOTX64.EFI`), because the boot entries in Proxmox's EFI disk are not imported. Most Linux and Windows installs have one.
 - Legacy BIOS VMs need SeaBIOS on the Incus server. When it's missing and the disk has an EFI partition, the VM boots with UEFI instead and the task says so. Otherwise the import stops and tells you to install SeaBIOS.
+- If the last partition of the boot disk runs to the very end of the disk, the disk gets up to 1 MiB bigger. Incus moves the backup partition table to the end of every new VM disk and refuses a disk where a partition is in the way. The task says when this happened.
 - Windows VMs need the virtio drivers installed in Proxmox before the move if they used SATA or IDE disks.
 - Network interface names can change in VMs. Keep the MAC address to keep DHCP reservations and interface names.
 
 ### How it's tested
 
-Every change runs CI that makes backups with Proxmox's own `vma` tool and imports them into a real Incus: a BIOS VM, a UEFI VM with a data disk, a BIOS VM on an Incus without SeaBIOS, and a container. A second job runs a real Proxmox Backup Server, backs up two VMs and two containers (one in each archive format) with `proxmox-backup-client`, and imports them. Each one has to boot and get an address.
+Every change runs CI that makes backups with Proxmox's own `vma` tool and imports them into a real Incus: a BIOS VM, a UEFI VM with a data disk, a BIOS VM on an Incus without SeaBIOS, a 12 GiB VM whose last partition fills the disk, and a container. A second job runs a real Proxmox Backup Server, backs up two VMs and two containers (one in each archive format) with `proxmox-backup-client`, and imports them. Each one has to boot and get an address.
 
 ## Docker Compose
 
