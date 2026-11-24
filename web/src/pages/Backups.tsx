@@ -148,7 +148,8 @@ function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => void }) 
 type Target = { name: string; type: "dir" | "s3"; path?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key?: string; secret_key?: string; virtual_host?: boolean };
 type SchedState = { last_run?: string; last_ok: boolean; last_error?: string; running: boolean };
 type Schedule = { name: string; server: string; project: string; instances: string[] | null; target: string; at: string; keep_daily: number; keep_weekly: number; test_restore: boolean; paused: boolean; state?: SchedState };
-type Conf = { targets: Target[]; schedules: Schedule[] };
+type PBS = { name: string; url: string; datastore: string; namespace?: string; token_id: string; secret: string; fingerprint?: string };
+type Conf = { targets: Target[]; schedules: Schedule[]; pbs: PBS[] };
 
 export function BackupSettings() {
   const app = useApp();
@@ -158,7 +159,7 @@ export function BackupSettings() {
   const [testing, setTesting] = useState("");
   const conf = draft || q.data;
   if (!conf) return null;
-  const strip = (c: Conf) => JSON.stringify({ targets: c.targets, schedules: c.schedules.map(({ state: _s, ...s }) => s) });
+  const strip = (c: Conf) => JSON.stringify({ targets: c.targets, schedules: c.schedules.map(({ state: _s, ...s }) => s), pbs: c.pbs });
   const dirty = !!draft && !!q.data && strip(draft) !== strip(q.data);
   const edit = (f: (c: Conf) => Conf) => {
     setErr("");
@@ -166,9 +167,10 @@ export function BackupSettings() {
   };
   const setT = (i: number, p: Partial<Target>) => edit((c) => ((c.targets[i] = { ...c.targets[i], ...p }), c));
   const setS = (i: number, p: Partial<Schedule>) => edit((c) => ((c.schedules[i] = { ...c.schedules[i], ...p }), c));
+  const setP = (i: number, p: Partial<PBS>) => edit((c) => ((c.pbs[i] = { ...c.pbs[i], ...p }), c));
   const save = async () => {
     try {
-      await ui("/backup-config", { method: "PUT", body: { targets: conf.targets, schedules: conf.schedules.map(({ state: _s, ...s }) => s) } });
+      await ui("/backup-config", { method: "PUT", body: { targets: conf.targets, schedules: conf.schedules.map(({ state: _s, ...s }) => s), pbs: conf.pbs } });
       app.toast("Backup settings saved");
       setDraft(null);
       invalidate("ui-backup");
@@ -183,6 +185,17 @@ export function BackupSettings() {
       app.toast(`${t.name} works: the UI wrote, read and deleted a test file.`);
     } catch (e) {
       app.fail(e, `${t.name} doesn't work.`);
+    } finally {
+      setTesting("");
+    }
+  };
+  const testPBS = async (p: PBS) => {
+    setTesting("pbs:" + p.name);
+    try {
+      const r = await ui<{ snapshots: number }>("/pbs/test", { method: "POST", body: p });
+      app.toast(`${p.name} works: ${r.snapshots} VM and container backup${r.snapshots === 1 ? "" : "s"} found.`);
+    } catch (e) {
+      app.fail(e, `${p.name} doesn't work.`);
     } finally {
       setTesting("");
     }
@@ -320,6 +333,52 @@ export function BackupSettings() {
           onClick={() => edit((c) => (c.schedules.push({ name: `daily${c.schedules.length || ""}`, server: servers[0] || "", project: "default", instances: [], target: c.targets[0].name, at: "03:00", keep_daily: 7, keep_weekly: 4, test_restore: false, paused: false }), c))}
         >
           Add schedule
+        </button>
+      </section>
+      <section className="set-sec">
+        <h2>Proxmox Backup Servers</h2>
+        <p>
+          Import VMs and containers straight from a Proxmox Backup Server: the UI downloads the backup itself. Make an API token in PBS (Configuration, Access Control, API Token) and give it the DatastoreReader role on the datastore. Encrypted backups can't be imported.
+        </p>
+        {(conf.pbs || []).map((p, i) => (
+          <div className="panel bk-card" key={i}>
+            <div className="two">
+              <F label="Name">
+                <Input mono value={p.name} onChange={(v) => setP(i, { name: v })} placeholder="pbs" />
+              </F>
+              <F label="Address">
+                <Input mono value={p.url} onChange={(v) => setP(i, { url: v })} placeholder="https://pbs.lan:8007" />
+              </F>
+              <F label="Datastore">
+                <Input mono value={p.datastore} onChange={(v) => setP(i, { datastore: v })} />
+              </F>
+              <F label="Namespace" hint="Leave empty for the root namespace.">
+                <Input mono value={p.namespace || ""} onChange={(v) => setP(i, { namespace: v })} />
+              </F>
+              <F label="API token ID">
+                <Input mono value={p.token_id} onChange={(v) => setP(i, { token_id: v })} placeholder="root@pam!incus" />
+              </F>
+              <F label="Secret">
+                <Input mono type="password" value={p.secret} onChange={(v) => setP(i, { secret: v })} />
+              </F>
+              <F label="Fingerprint" hint="From the PBS dashboard (Show Fingerprint). Needed when PBS uses its own self-signed certificate.">
+                <Input mono value={p.fingerprint || ""} onChange={(v) => setP(i, { fingerprint: v })} />
+              </F>
+            </div>
+            <div className="roles-f">
+              <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = c.pbs.filter((_, j) => j !== i)), c))}>
+                Remove
+              </button>
+              <span className="r">
+                <button className="btn btn-s btn-sm press" disabled={!!testing} onClick={() => testPBS(p)}>
+                  {testing === "pbs:" + p.name ? "Testing…" : "Test"}
+                </button>
+              </span>
+            </div>
+          </div>
+        ))}
+        <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.pbs = [...(c.pbs || []), { name: c.pbs?.length ? `pbs${c.pbs.length + 1}` : "pbs", url: "", datastore: "", token_id: "", secret: "" }]), c))}>
+          Add backup server
         </button>
       </section>
       {(dirty || err) && (

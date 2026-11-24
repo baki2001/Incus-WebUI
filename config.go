@@ -163,6 +163,7 @@ func (s *Store) Get() Config {
 	c.Access = append([]Access(nil), s.cfg.Access...)
 	c.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
 	c.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
+	c.Backups.PBS = append([]PBSServer(nil), s.cfg.Backups.PBS...)
 	return c
 }
 
@@ -177,6 +178,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next.Access = append([]Access(nil), s.cfg.Access...)
 	next.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
 	next.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
+	next.Backups.PBS = append([]PBSServer(nil), s.cfg.Backups.PBS...)
 	if err := fn(&next); err != nil {
 		return err
 	}

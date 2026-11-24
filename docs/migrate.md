@@ -13,7 +13,16 @@ Make a backup in Proxmox (Backup now, or `vzdump <id>`), copy the file from `/va
 
 LZO files are refused. Make the backup again with zstd, which is the Proxmox default.
 
-Backups on a Proxmox Backup Server (PBS) can't be imported yet. Restore the backup in Proxmox first, then make a vzdump backup of it.
+### From a Proxmox Backup Server
+
+The UI can also import straight from a Proxmox Backup Server (PBS). It downloads the backup itself, so nothing goes through your browser.
+
+1. In PBS, go to Configuration, Access Control, API Token and add a token, for example `root@pam!incus`.
+2. Under Permissions, give that token the `DatastoreReader` role on `/datastore/<name>`. With Privilege Separation on (the default) the role must be on the token, not only on its user.
+3. In the UI, an admin adds the server under Settings, Backups, Proxmox Backup Servers: the address (`https://pbs.lan:8007`), the datastore, the token ID and its secret. PBS uses a self-signed certificate, so also paste the fingerprint from the PBS dashboard (Show Fingerprint). Click Test.
+4. In the import sheet, pick Proxmox Backup Server and then the backup.
+
+VM and container backups made by Proxmox VE work, in both archive formats PBS uses for containers. Encrypted backups don't: PBS can't decrypt them for the UI. Restore those in Proxmox and make a vzdump backup instead.
 
 ### What carries over
 
@@ -34,7 +43,7 @@ The preview lists everything else as a warning, such as PCI or USB passthrough, 
 
 The import has two parts:
 
-- **Upload.** Your browser sends the backup to the UI server. This is the only part that needs the browser, so keep the page open until the upload reaches 100%. The file then waits on the UI server until you import or remove it, for a week at most.
+- **Upload** (not for PBS). Your browser sends the backup to the UI server. This is the only part that needs the browser, so keep the page open until the upload reaches 100%. The file then waits on the UI server until you import or remove it, for a week at most.
 - **Import.** This runs on the UI server. Once you click Import you can close the browser; the import keeps going and shows under Tasks.
 
 The import itself:
@@ -56,7 +65,7 @@ If any step fails, the UI deletes what it created and keeps the uploaded file so
 
 ### How it's tested
 
-Every change runs CI that makes backups with Proxmox's own `vma` tool and imports them into a real Incus: a BIOS VM, a UEFI VM with a data disk, a BIOS VM on an Incus without SeaBIOS, and a container. Each one has to boot and get an address.
+Every change runs CI that makes backups with Proxmox's own `vma` tool and imports them into a real Incus: a BIOS VM, a UEFI VM with a data disk, a BIOS VM on an Incus without SeaBIOS, and a container. A second job runs a real Proxmox Backup Server, backs up two VMs and two containers (one in each archive format) with `proxmox-backup-client`, and imports them. Each one has to boot and get an address.
 
 ## Docker Compose
 
