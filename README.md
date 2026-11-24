@@ -65,7 +65,7 @@ Nothing changes for existing users: everyone keeps full access until an admin se
 
 The binary serves the interface and forwards API calls to each Incus server over HTTPS, using its own client certificate. Your browser never talks to Incus directly and never holds an Incus certificate. Settings, users and the list of servers live in one `config.yaml` file.
 
-Long tasks such as backups and imports run in the binary, not in the browser, so they keep going when you close the tab. Metric history and the audit log are files in the data folder next to `config.yaml`.
+Long tasks such as backups and imports run in the binary, not in the browser, so they keep going when you close the tab. Everything you do through the UI shows under Tasks, top right, and stays there for 30 days. Task history, metric history and the audit log are files in the data folder next to `config.yaml`.
 
 ## Development
 

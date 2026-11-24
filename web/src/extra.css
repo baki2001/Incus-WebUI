@@ -363,6 +363,17 @@ tr.empty{display:table-row;padding:0}
 /* backend jobs in the task tray */
 .tray .op small{display:flex;gap:10px;align-items:baseline}
 .tray .lnk{margin-left:auto}
+/* the Tasks button stays in the top bar; the tray keeps the latest history */
+.ops-ic{display:flex;color:var(--ink-3)}
+.tray{max-height:min(520px,calc(100vh - 80px));overflow-y:auto}
+.tray .op-res{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tray .op-when{margin-left:auto;flex:none;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tray-empty{margin:0;padding:12px 14px;color:var(--ink-3);font-size:13px;line-height:1.45}
+.tray-all{display:block;margin-top:4px;padding:10px 14px 8px;border-top:1px solid var(--line);color:var(--ink-2);font-size:13px;text-decoration:none}
+.tray-all:hover{color:var(--ink)}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;max-width:360px}
+.tnum{font-variant-numeric:tabular-nums}
+@media (max-width:720px){.opsbtn .lbl2{display:none}.opsbtn{padding:0 8px}}
 .lnk{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:none}
 .jbar{height:4px;border-radius:2px;background:var(--s3);overflow:hidden;margin:6px 0 4px}
 .jbar i{display:block;height:100%;background:var(--accent);transform-origin:left;transition:transform var(--t3) var(--ease)}

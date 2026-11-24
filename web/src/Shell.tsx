@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { incus, incusOp, ui } from "./api";
+import { incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
 import { ConfirmHost, Dialog, useOutside, useThumb } from "./ui";
@@ -142,7 +142,7 @@ function Fresh() {
   );
 }
 
-export type Job = { id: string; kind: string; title: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; note?: string; started: string; ended?: string };
+export type Job = { id: string; kind: string; title: string; user?: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; detail?: string; error?: string; link?: string; note?: string; started: string; ended?: string };
 
 // Jobs run in the backend (backups, imports) and outlive the browser tab.
 export function useJobs() {
@@ -153,29 +153,31 @@ export function useJobs() {
   return q;
 }
 
+// The Tasks button always sits in the top bar, so people know where to look,
+// even when nothing ran yet. The tray shows what runs now and the latest
+// finished tasks; the Tasks page has the full 30-day history.
 function Tasks() {
   const { tasks } = useApp();
   const jobs = useJobs().data || [];
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
-  const recent = jobs.filter((j) => j.state === "running" || (j.ended && Date.now() - Date.parse(j.ended) < 10 * 60e3));
-  const busy = tasks.length + recent.filter((j) => j.state === "running").length;
-  if (!tasks.length && !recent.length) return null;
-  const cancel = async (j: Job) => {
-    await ui(`/jobs/${j.id}`, { method: "DELETE" }).catch(() => {});
-    invalidate("ui-jobs");
-  };
+  const running = jobs.filter((j) => j.state === "running");
+  const recent = jobs.filter((j) => j.state !== "running").slice(0, 8);
+  const busy = tasks.length + running.length;
+  const close = () => setOpen(false);
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="opsbtn press" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {busy > 0 && (
-          <svg className="ring spin" viewBox="0 0 16 16">
+      <button className="opsbtn press" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={busy > 0 ? `Tasks, ${busy} running` : "Tasks"}>
+        {busy > 0 ? (
+          <svg className="ring spin" viewBox="0 0 16 16" aria-hidden="true">
             <circle className="t" cx="8" cy="8" r="6" />
             <circle className="v" cx="8" cy="8" r="6" strokeDasharray="37.7" strokeDashoffset="26" />
           </svg>
+        ) : (
+          <span className="ops-ic" aria-hidden="true">{ic.tasks}</span>
         )}
-        {busy > 0 ? `${busy} task${busy > 1 ? "s" : ""}` : "Tasks"}
+        <span className="lbl2">{busy > 0 ? `${busy} running` : "Tasks"}</span>
       </button>
       {open && (
         <div className="tray">
@@ -186,37 +188,63 @@ function Tasks() {
               <small>{t.detail || "working"}</small>
             </div>
           ))}
-          {recent.map((j) => (
-            <div className="op" key={j.id}>
-              <span>{j.title}</span>
-              {j.state === "running" ? (
-                <>
-                  <div className="jbar" role="progressbar" aria-valuenow={Math.round(j.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
-                    <i style={{ transform: `scaleX(${Math.max(0.02, j.progress)})` }} />
-                  </div>
-                  <small>
-                    {j.detail || "working"}
-                    <button className="lnk" onClick={() => cancel(j)}>
-                      Cancel
-                    </button>
-                  </small>
-                </>
-              ) : (
-                <small className={j.state === "failed" ? "bad" : undefined}>
-                  {j.state === "done" ? j.note || "Done" : j.state === "cancelled" ? "Cancelled" : j.error}
-                  {j.link && j.state === "done" && (
-                    <Link className="lnk" to={j.link} onClick={() => setOpen(false)}>
-                      Open
-                    </Link>
-                  )}
-                </small>
-              )}
-            </div>
+          {running.map((j) => (
+            <JobRow key={j.id} j={j} onOpen={close} />
           ))}
+          {recent.length > 0 && <h3>Recent</h3>}
+          {recent.map((j) => (
+            <JobRow key={j.id} j={j} onOpen={close} />
+          ))}
+          {!busy && !recent.length && <p className="tray-empty">No tasks yet. Backups, imports and actions like starting an instance show up here, and stay for 30 days.</p>}
+          <Link className="tray-all" to="/tasks" onClick={close}>
+            All tasks
+          </Link>
         </div>
       )}
     </div>
   );
+}
+
+export async function cancelJob(j: Job) {
+  await ui(`/jobs/${j.id}`, { method: "DELETE" }).catch(() => {});
+  invalidate("ui-jobs");
+}
+
+function JobRow({ j, onOpen }: { j: Job; onOpen: () => void }) {
+  if (j.state === "running")
+    return (
+      <div className="op">
+        <span>{j.title}</span>
+        <div className="jbar" role="progressbar" aria-valuenow={Math.round(j.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+          <i style={{ transform: `scaleX(${Math.max(0.02, j.progress)})` }} />
+        </div>
+        <small>
+          {j.detail || "working"}
+          <button className="lnk" onClick={() => cancelJob(j)}>
+            Cancel
+          </button>
+        </small>
+      </div>
+    );
+  return (
+    <div className="op">
+      <span>{j.title}</span>
+      <small className={j.state === "failed" ? "bad" : undefined}>
+        <span className="op-res">{jobResult(j)}</span>
+        {j.link && j.state === "done" ? (
+          <Link className="lnk" to={j.link} onClick={onOpen}>
+            Open
+          </Link>
+        ) : (
+          <span className="op-when">{j.ended ? since(j.ended).replace(/^(\d.*)$/, "$1 ago") : ""}</span>
+        )}
+      </small>
+    </div>
+  );
+}
+
+export function jobResult(j: Job) {
+  return j.state === "done" ? j.note || "Done" : j.state === "cancelled" ? "Cancelled" : j.state === "failed" ? j.error || "Failed" : j.detail || "working";
 }
 
 type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; admin?: boolean };
@@ -306,6 +334,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const online = app.servers.filter((s) => s.online && s.trusted).length;
   const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"));
   const warnings = useWarningCount();
+  const busy = app.tasks.length + (useJobs().data || []).filter((j) => j.state === "running").length;
   // Hide pins of instances that are gone; pins in other projects stay.
   const inScope = (p: { project: string }) => app.project === "*" || app.project === p.project;
   const pinned = usePins().filter((p) => app.servers.some((s) => s.name === p.server) && (!rows || !inScope(p) || rows.some((r) => r.server === p.server && r.name === p.name)));
@@ -384,10 +413,14 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           </NavLink>
         ))}
         <div className="grp">Activity</div>
-        <NavLink to="/operations" className="ni" title="Operations">
+        <NavLink to="/tasks" className="ni" title="Tasks">
+          {ic.tasks}
+          {lbl("Tasks")}
+          {busy > 0 && <span className="count">{busy}</span>}
+        </NavLink>
+        <NavLink to="/operations" className="ni" title="Incus operations">
           {ic.pulse}
           {lbl("Operations")}
-          {app.tasks.length > 0 && <span className="count">{app.tasks.length}</span>}
         </NavLink>
         <NavLink to="/warnings" className="ni" title="Warnings">
           {ic.warn}
@@ -586,6 +619,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
       { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
       { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
+      { group: "Go to", label: "Tasks", icon: ic.tasks, run: go("/tasks") },
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
       { group: "Go to", label: "Settings", icon: ic.gear, run: go("/settings") },
