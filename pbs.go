@@ -1,8 +1,10 @@
 package main
 
 // Imports from a Proxmox Backup Server. An admin adds the server under
-// Settings, Backups; managers then pick a snapshot in the import sheet. The
-// UI downloads the backup itself, so nothing goes through the browser.
+// Settings, Backups and picks a snapshot in the import sheet. The UI
+// downloads the backup itself, so nothing goes through the browser. Only
+// admins import from PBS: a datastore holds the backups of every guest, and
+// nothing ties a snapshot to an Incus project.
 
 import (
 	"context"
@@ -89,7 +91,7 @@ func pbsProblem(s pbs.Snapshot) string {
 func (a *App) handlePBSList(w http.ResponseWriter, r *http.Request) {
 	s, _ := a.currentSession(r)
 	out := []map[string]string{}
-	if a.canImport(s) {
+	if a.isAdmin(s) {
 		for _, p := range a.store.Get().Backups.PBS {
 			out = append(out, map[string]string{"name": p.Name, "datastore": p.Datastore})
 		}
@@ -99,8 +101,8 @@ func (a *App) handlePBSList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handlePBSSnapshots(w http.ResponseWriter, r *http.Request) {
 	s, _ := a.currentSession(r)
-	if !a.canImport(s) {
-		jsonError(w, http.StatusForbidden, "Importing needs the manager role. Ask an admin.")
+	if !a.isAdmin(s) {
+		jsonError(w, http.StatusForbidden, pbsAdminMsg)
 		return
 	}
 	c, err := a.pbsClient(r.PathValue("name"))
@@ -224,8 +226,8 @@ func pbsSource(server string, c *pbs.Client, snap pbs.Snapshot) importSource {
 // pbsSnapshotFor checks access and finds the snapshot a request names.
 func (a *App) pbsSnapshotFor(w http.ResponseWriter, r *http.Request, ref string) (*pbs.Client, pbs.Snapshot, bool) {
 	s, _ := a.currentSession(r)
-	if !a.canImport(s) {
-		jsonError(w, http.StatusForbidden, "Importing needs the manager role. Ask an admin.")
+	if !a.isAdmin(s) {
+		jsonError(w, http.StatusForbidden, pbsAdminMsg)
 		return nil, pbs.Snapshot{}, false
 	}
 	c, err := a.pbsClient(r.PathValue("name"))
@@ -285,11 +287,7 @@ func (a *App) handlePBSTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Secret == secretMask {
-		for _, o := range a.store.Get().Backups.PBS {
-			if o.Name == p.Name {
-				p.Secret = o.Secret
-			}
-		}
+		p.Secret = savedPBSSecret(a.store.Get().Backups.PBS, p)
 	}
 	c, err := p.client()
 	if err != nil {
@@ -313,3 +311,18 @@ func (a *App) handlePBSTest(w http.ResponseWriter, r *http.Request) {
 }
 
 const secretMask = "********"
+
+const pbsAdminMsg = "Only admins can import from a Proxmox Backup Server."
+
+// savedPBSSecret is the stored secret for a server sent back with its
+// secret masked. It only goes to the same server and token: after a change
+// of address or token the secret has to be typed again, so a saved secret
+// can't be sent somewhere new.
+func savedPBSSecret(saved []PBSServer, p PBSServer) string {
+	for _, o := range saved {
+		if o.Name == p.Name && o.URL == p.URL && o.Datastore == p.Datastore && o.TokenID == p.TokenID {
+			return o.Secret
+		}
+	}
+	return ""
+}

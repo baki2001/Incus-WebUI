@@ -167,7 +167,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
           ]}
         />
         {from === "pbs" ? (
-          <PBSPicker servers={pbsList.data} admin={app.admin} pbs={pbs} setPbs={(n) => (setPbsName(n), setSnap(null))} snaps={snaps} snap={snap} setSnap={setSnap} />
+          <PBSPicker servers={pbsList.data} error={pbsList.error} admin={app.admin} pbs={pbs} setPbs={(n) => (setPbsName(n), setSnap(null))} snaps={snaps} snap={snap} setSnap={setSnap} />
         ) : (
           <>
             <p className="dim" style={{ margin: "10px 0 0" }}>
@@ -255,6 +255,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
 
 function PBSPicker(props: {
   servers?: { name: string; datastore: string }[];
+  error?: any;
   admin: boolean;
   pbs: string;
   setPbs: (n: string) => void;
@@ -263,11 +264,19 @@ function PBSPicker(props: {
   setSnap: (s: Snap) => void;
 }) {
   const { servers, pbs, snaps, snap } = props;
-  if (!servers) return null;
+  if (props.error) return <p className="bad">{friendlyError(props.error)}</p>;
+  if (!servers) return <p className="dim">Loading…</p>;
+  if (!props.admin) {
+    return (
+      <p className="dim" style={{ margin: "10px 0 0" }}>
+        Only admins can import from a Proxmox Backup Server: a datastore holds the backups of every guest. Ask an admin, or upload a vzdump file instead.
+      </p>
+    );
+  }
   if (servers.length === 0) {
     return (
       <p className="dim" style={{ margin: "10px 0 0" }}>
-        {props.admin ? "Add a Proxmox Backup Server under Settings, Backups first." : "No Proxmox Backup Server is set up. Ask an admin to add one."}
+        Add a Proxmox Backup Server under Settings, Backups first.
       </p>
     );
   }

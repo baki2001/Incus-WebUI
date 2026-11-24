@@ -22,6 +22,8 @@ The UI can also import straight from a Proxmox Backup Server (PBS). It downloads
 3. In the UI, an admin adds the server under Settings, Backups, Proxmox Backup Servers: the address (`https://pbs.lan:8007`), the datastore, the token ID and its secret. PBS uses a self-signed certificate, so also paste the fingerprint from the PBS dashboard (Show Fingerprint). Click Test.
 4. In the import sheet, pick Proxmox Backup Server and then the backup.
 
+Only admins can import from PBS. A datastore holds the backups of every guest, and nothing ties a backup to an Incus project, so a project manager could otherwise pull in someone else's VM.
+
 VM and container backups made by Proxmox VE work, in both archive formats PBS uses for containers. Encrypted backups don't: PBS can't decrypt them for the UI. Restore those in Proxmox and make a vzdump backup instead.
 
 ### What carries over

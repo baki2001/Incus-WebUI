@@ -658,10 +658,6 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("target %s: %w", t.Name, err)
 			}
 		}
-		oldPBS := map[string]PBSServer{}
-		for _, p := range c.Backups.PBS {
-			oldPBS[p.Name] = p
-		}
 		pnames := map[string]bool{}
 		for i := range in.PBS {
 			p := &in.PBS[i]
@@ -670,7 +666,10 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 			}
 			pnames[p.Name] = true
 			if p.Secret == secretMask {
-				p.Secret = oldPBS[p.Name].Secret
+				p.Secret = savedPBSSecret(c.Backups.PBS, *p)
+				if p.Secret == "" {
+					return fmt.Errorf("backup server %s: type the secret again after changing the address or token", p.Name)
+				}
 			}
 			if _, err := p.client(); err != nil {
 				return fmt.Errorf("backup server %s: %w", p.Name, err)

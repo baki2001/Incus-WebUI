@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/baki2001/incus-webui/internal/pxar"
@@ -50,6 +51,9 @@ func PxarImage(w io.Writer, meta, payload io.Reader, p *Plan, arch string) error
 		case pxar.Symlink:
 			h.Typeflag, h.Linkname = tar.TypeSymlink, e.Link
 		case pxar.Hardlink:
+			if e.Link == "" || strings.Contains("/"+e.Link+"/", "/../") {
+				return fmt.Errorf("the backup contains an unsafe link %q", e.Link)
+			}
 			h.Typeflag, h.Linkname = tar.TypeLink, "rootfs/"+e.Link
 			h.Mode, h.Uid, h.Gid = 0, 0, 0
 		case pxar.CharDev, pxar.BlockDev:

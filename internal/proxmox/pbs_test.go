@@ -69,6 +69,17 @@ func TestPxarImage(t *testing.T) {
 	}
 }
 
+func TestPxarImageRejectsEscapingLinks(t *testing.T) {
+	for _, link := range []string{"../../etc/shadow", "etc/../../x", ""} {
+		root := &pxar.Node{Mode: pxar.ModeDir | 0o755, Kids: map[string]*pxar.Node{"x": {Hardlink: true, Data: link}}}
+		meta, _ := pxar.Encode(root, false)
+		err := PxarImage(io.Discard, bytes.NewReader(meta), nil, &Plan{Name: "ct"}, "x86_64")
+		if err == nil || !strings.Contains(err.Error(), "unsafe link") {
+			t.Errorf("%q: %v", link, err)
+		}
+	}
+}
+
 func TestRawDisk(t *testing.T) {
 	size := int64(5*qcow2.ClusterSize + 100)
 	disk := make([]byte, size)
