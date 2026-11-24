@@ -164,7 +164,7 @@ jobs:
       - name: Make backups with proxmox-backup-client
         run: |
           docker exec pbs bash -ec '
-            tok() { proxmox-backup-manager user generate-token root@pam $1 --output-format json | sed -E "s/.*\"value\":\"([^\"]+)\".*/\1/"; }
+            tok() { proxmox-backup-manager user generate-token root@pam $1 | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" | head -n1; }
             W=$(tok writer); R=$(tok incus)
             proxmox-backup-manager acl update /datastore/store1 DatastoreAdmin --auth-id "root@pam!writer"
             proxmox-backup-manager acl update /datastore/store1 DatastoreReader --auth-id "root@pam!incus"
