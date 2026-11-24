@@ -59,6 +59,26 @@ type User struct {
 	// SessionGen must match the generation in a session cookie. It changes on
 	// password change and is a creation timestamp for new users.
 	SessionGen int64 `yaml:"session_gen,omitempty"`
+
+	// TOTPSecret turns on two-factor sign-in with an authenticator app (base32, see mfa.go).
+	TOTPSecret string `yaml:"totp_secret,omitempty"`
+	// TOTPLast is the last time step a code was accepted for, so each code works once.
+	TOTPLast int64 `yaml:"totp_last,omitempty"`
+	// RecoveryCodes are SHA-256 hashes of the unused one-time recovery codes.
+	RecoveryCodes []string `yaml:"recovery_codes,omitempty"`
+	// WebAuthnID is the random user handle passkeys are registered under (base64url).
+	WebAuthnID string    `yaml:"webauthn_id,omitempty"`
+	Passkeys   []Passkey `yaml:"passkeys,omitempty"`
+}
+
+// Passkey is one registered WebAuthn credential (see passkey.go).
+type Passkey struct {
+	ID       string `yaml:"id"` // credential id, base64url
+	Name     string `yaml:"name"`
+	Created  int64  `yaml:"created"`
+	LastUsed int64  `yaml:"last_used,omitempty"`
+	// Credential is the webauthn library's credential record as JSON.
+	Credential string `yaml:"credential"`
 }
 
 type RevokedSession struct {

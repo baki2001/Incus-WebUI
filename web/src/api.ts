@@ -20,7 +20,7 @@ export async function ui<T = any>(path: string, opts: { method?: string; body?: 
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     credentials: "same-origin",
   });
-  if (res.status === 401 && path !== "/login" && path !== "/auth") onUnauthorized();
+  if (res.status === 401 && path !== "/login" && path !== "/auth" && !path.startsWith("/passkey/")) onUnauthorized();
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, data.error || res.statusText);
