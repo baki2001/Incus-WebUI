@@ -444,7 +444,7 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   --line:rgba(20,41,80,.10); --line-2:rgba(20,41,80,.18);
   --ink:#101a30; --ink-2:#424c64; --ink-3:#59627a;
   --accent:#142950; --accent-ink:#ffffff; --accent-soft:rgba(20,41,80,.08);
-  --cta:#e93d0d; --cta-ink:#ffffff;
+  --cta:#db390c; --cta-ink:#ffffff;
   --ok:#142950; --info:#3b5180; --idle:#9599aa; --warn:#9c5a05; --err:#b3261e;
   --side:#142950; --side-ink:rgba(255,255,255,.92); --side-ink-2:#bbbecb; --side-s:rgba(187,190,203,.12); --side-line:rgba(187,190,203,.16);
 }
@@ -453,7 +453,7 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
   --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
   --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
-  --cta:#e93d0d; --cta-ink:#ffffff;
+  --cta:#db390c; --cta-ink:#ffffff;
   --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
   --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}}
 :root[data-brand="kyoto"][data-theme="dark"]{
@@ -461,7 +461,7 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   --line:rgba(187,190,203,.09); --line-2:rgba(187,190,203,.16);
   --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
   --accent:#bbbecb; --accent-ink:#142950; --accent-soft:rgba(187,190,203,.12);
-  --cta:#e93d0d; --cta-ink:#ffffff;
+  --cta:#db390c; --cta-ink:#ffffff;
   --ok:#bbbecb; --info:#a9adbd; --idle:#6e7079; --warn:#dfa54b; --err:#f07a70;
   --side:#0c0d0f; --side-ink:rgba(255,255,255,.92); --side-ink-2:#a9adbd; --side-s:rgba(187,190,203,.08); --side-line:rgba(187,190,203,.10)}
 /* Kyoto carries the indigo into the sidebar */
@@ -480,7 +480,9 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
 :root[data-brand="kyoto"] .side .side-foot{border-top-color:var(--side-line)}
 :root[data-brand="kyoto"] .side .badge-dot.upd{background:#fff}
 :root[data-brand="kyoto"] .side :focus-visible{outline-color:#fff}
-:root[data-brand="kyoto"] .side .st-dot[data-s="Running"],:root[data-brand="kyoto"] .side .health i:not(.off){background:var(--side-ink-2)}
+:root[data-brand="kyoto"] .side .st-dot,:root[data-brand="kyoto"] .side .st-dot[data-s="Frozen"]{background:rgba(187,190,203,.32)}
+:root[data-brand="kyoto"] .side .st-dot[data-s="Running"],:root[data-brand="kyoto"] .side .health i:not(.off){background:#fff}
+:root[data-brand="kyoto"] .side .st-dot[data-s="Error"],:root[data-brand="kyoto"] .side .health i.off,:root[data-brand="kyoto"] .side .badge-dot:not(.upd){background:#ff8f80}
 /* custom: only the accent changes; JS sets --cl/--cd and their text colours */
 :root[data-brand="custom"]{--accent:var(--cl);--accent-ink:var(--cli);--accent-soft:color-mix(in srgb,var(--cl) 11%,transparent)}
 @media (prefers-color-scheme: dark){:root[data-brand="custom"]:not([data-theme="light"]){--accent:var(--cd);--accent-ink:var(--cdi);--accent-soft:color-mix(in srgb,var(--cd) 13%,transparent)}}

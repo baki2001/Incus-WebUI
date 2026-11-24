@@ -255,6 +255,9 @@ func (a *App) handleTheme(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	if t.Name == "harbor" { // replaced by Kyoto; old browser tabs may still send it
+		t.Name = "kyoto"
+	}
 	switch t.Name {
 	case "graphite", "kyoto":
 		t.Accent = ""

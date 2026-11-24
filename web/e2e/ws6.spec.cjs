@@ -118,6 +118,8 @@ const sh = (c) => execSync(c, { encoding: "utf8" }).trim();
   await p.screenshot({ path: OUT + "/phone-drawer.png" });
   const small = await p.evaluate(() => [...document.querySelectorAll(".side .ni")].filter((e) => e.getBoundingClientRect().height && e.getBoundingClientRect().height < 36).length);
   ok(small === 0, "drawer targets are tall enough");
+  const modeH = await p.evaluate(() => document.querySelector('button[aria-label^="Colour mode"]')?.getBoundingClientRect().height || 0);
+  ok(modeH >= 40, "colour mode button is tall enough");
   await p.evaluate(() => { const n = document.querySelector(".side .nav"); n.scrollTop = n.scrollHeight; });
   await p.waitForTimeout(300);
   const warnLink = p.locator('.side a[href="/warnings"]');
