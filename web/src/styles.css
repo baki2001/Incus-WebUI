@@ -391,7 +391,7 @@ pre.code .k{color:var(--ink)}
 .menu button.danger{color:var(--err)}
 .menu .kbd{margin-left:auto}
 .menu hr{border:0;border-top:1px solid var(--line);margin:5px 0}
-.tray{position:absolute;right:0;top:40px;width:320px;padding:6px 0;background:var(--s1);border-radius:var(--r-sm);box-shadow:var(--pop);z-index:20;animation:mIn var(--t2) var(--spring)}
+.tray{position:absolute;right:0;top:40px;width:340px;padding:6px 0;background:var(--s1);border-radius:var(--r-sm);box-shadow:var(--pop);z-index:20;animation:mIn var(--t2) var(--spring)}
 .tray .op{padding:10px 14px}
 .tray h3{font-size:12.5px;font-weight:500;color:var(--ink-3);padding:6px 14px 2px}
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { dateTime, incus, opProgress, since, ui } from "../api";
 import { ic } from "../icons";
-import { cancelJob, jobResult, useCrumbs, useJobs, type Job } from "../Shell";
+import { cancelJob, taskText, useCrumbs, useJobs, type Job } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { confirmDialog, Seg, Select, Table } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
@@ -52,7 +52,7 @@ export function Tasks() {
             sort: (j) => j.title,
             cell: (j) => (
               <span className="nm">
-                <span className="nm2">{j.title}</span>
+                <span className="nm2">{taskText(j).line}</span>
                 {j.link && j.state === "done" && (
                   <small>
                     <Link to={j.link} className="rlink">
@@ -74,8 +74,8 @@ export function Tasks() {
                   <small className="dim" style={{ display: "block" }}>{j.detail || "working"}</small>
                 </span>
               ) : (
-                <span className={"st" + (j.state === "failed" ? " error" : " unknown")} title={jobResult(j)}>
-                  <span className="clamp2">{jobResult(j)}</span>
+                <span className={"st" + (j.state === "failed" ? " error" : " unknown")}>
+                  <span className="task-res">{j.state === "done" ? taskText(j).detail || "Done" : taskText(j).detail}</span>
                 </span>
               ),
           },
