@@ -207,7 +207,8 @@ th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50
 }
 /* Sideways-scrolling tables keep their first column in view. */
 .tw th:first-child,.tw td:first-child{position:sticky;left:0;z-index:1;background:var(--s1)}
-.tw tbody tr:hover td:first-child{background:var(--s2)}
+.tw tbody tr:not(.empty):hover td:first-child,.tw tbody tr:not(.empty):active td:first-child{background-color:var(--s2)}
+/* The sticky cell must stay opaque, so the translucent selection tint is layered over the surface. */
 .tw tbody tr.sel td:first-child{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
 /* Long text never forces sideways scroll. */
 pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
@@ -348,9 +349,6 @@ tr.empty{display:table-row;padding:0}
   /* File explorer: the path gets its own full-width row. */
   .toolbar .pathbar{order:-1;flex:1 1 100%}
   .toolbar .pathbar .pathedit{white-space:nowrap}
-  /* Highlight the whole row, not just the sticky first cell. */
-  .tw tbody tr:hover td,.tw tbody tr:active td{background:var(--s2)}
-  .tw tbody tr.sel td{background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--s1)}
 }
 /* roles editor */
 .roles{padding:8px 16px}
