@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { bytes, dateTime, friendlyError, memBytes, ui, upload } from "../api";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useManagedNetworks, useNames } from "../data";
@@ -293,24 +293,71 @@ function PBSPicker(props: {
       {snaps.error && <p className="bad">{friendlyError(snaps.error)}</p>}
       {!snaps.data && !snaps.error && <p className="dim">Loading backups…</p>}
       {snaps.data?.length === 0 && <p className="dim">No VM or container backups in this datastore.</p>}
-      {!!snaps.data?.length && (
-        <ul className="imp-list">
-          {snaps.data.map((x) => (
-            <li key={x.ref} className={snap?.ref === x.ref ? "on" : undefined}>
-              <button className="lnk" disabled={!!x.problem} onClick={() => props.setSnap(x)} aria-pressed={snap?.ref === x.ref}>
-                {x.kind === "container" ? "CT" : "VM"} {x.id}
-                {x.comment ? ` ${x.comment}` : ""}
-              </button>
-              <span className="dim">
-                {dateTime(x.created)}
-                {x.size ? `, ${bytes(x.size)}` : ""}
-                {x.problem ? `. ${x.problem}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {!!snaps.data?.length && <PBSGuests snaps={snaps.data} snap={snap} setSnap={props.setSnap} />}
     </>
+  );
+}
+
+// PBSGuests lists the backups per guest, in Proxmox's order (by ID). A
+// guest opens to show its backups, newest first; opening it picks the
+// newest one that can be imported.
+function PBSGuests({ snaps, snap, setSnap }: { snaps: Snap[]; snap: Snap | null; setSnap: (s: Snap) => void }) {
+  const guests = useMemo(() => {
+    const m = new Map<string, Snap[]>();
+    for (const s of snaps) {
+      const k = `${s.kind}/${s.id}`;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(s);
+    }
+    const time = (s: Snap) => Date.parse(s.created) || 0;
+    for (const l of m.values()) l.sort((a, b) => time(b) - time(a));
+    const num = (id: string) => (/^\d+$/.test(id) ? Number(id) : Infinity);
+    return [...m.entries()].sort(([, a], [, b]) => num(a[0].id) - num(b[0].id) || a[0].id.localeCompare(b[0].id) || a[0].kind.localeCompare(b[0].kind));
+  }, [snaps]);
+  const [open, setOpen] = useState(() => (snap ? `${snap.kind}/${snap.id}` : ""));
+  return (
+    <ul className="pbs-guests">
+      {guests.map(([key, list]) => {
+        const head = list[0];
+        const name = list.find((x) => x.comment)?.comment;
+        const isOpen = open === key;
+        const usable = list.filter((x) => !x.problem);
+        return (
+          <li key={key} className={isOpen ? "open" : undefined}>
+            <button
+              className="pbs-g"
+              aria-expanded={isOpen}
+              onClick={() => {
+                setOpen(isOpen ? "" : key);
+                if (!isOpen && usable[0] && !list.some((x) => x.ref === snap?.ref)) setSnap(usable[0]);
+              }}
+            >
+              <span className="k">{head.kind === "container" ? "CT" : "VM"}</span>
+              <span className="id">{head.id}</span>
+              <span className="n">{name || "–"}</span>
+              <span className="m">
+                {list.length === 1 ? "1 backup" : `${list.length} backups`}, newest {dateTime(head.created)}
+              </span>
+            </button>
+            {isOpen && (
+              <ul className="pbs-snaps">
+                {list.map((x) => (
+                  <li key={x.ref} className={snap?.ref === x.ref ? "on" : undefined}>
+                    <button className="lnk" disabled={!!x.problem} onClick={() => setSnap(x)} aria-pressed={snap?.ref === x.ref}>
+                      {dateTime(x.created)}
+                    </button>
+                    <span className="dim">
+                      {x.size ? bytes(x.size) : ""}
+                      {x.problem ? `${x.size ? ". " : ""}${x.problem}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
