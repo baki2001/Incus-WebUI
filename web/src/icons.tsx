@@ -59,6 +59,7 @@ export const ic = {
   screen: sv(<><rect x="1.5" y="2.5" width="13" height="9" rx="1.5" /><path d="M5.5 14h5" /></>, 14),
   kbd: sv(<><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.5h6" /></>, 14),
   pulse: sv(<path d="M1.5 8.5h3l2-5 3 9 2-4h3" />),
+  tasks: sv(<path d="m2 4 1.2 1.2L5.5 3M2 10l1.2 1.2L5.5 9M8 4.2h6M8 10.2h6" />),
   warn: sv(<><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3M8 11.2h.01" /></>),
   star: sv(<path d="m8 2 1.8 3.8 4.1.5-3 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1-3-2.9 4.1-.5z" />, 14),
   starOn: (
