@@ -4,7 +4,7 @@ import { ApiError, bytes, friendlyError, incus, incusOp, incusWithETag, memBytes
 import { ic } from "../icons";
 import { invalidate, useApp, useData } from "../state";
 import { Dialog, Seg, shake } from "../ui";
-import { CONFLICT, cpuCount, cpuOK, SizeField, useNetworkList } from "./cfgutil";
+import { CONFLICT, cpuCount, cpuOK, fixedIPv4Net, lanNic, lanParents, nicIPv4Error, SizeField, subnetOf, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
 import "../cfg.css";
 
@@ -52,7 +52,7 @@ const sched = [
 const expiry = ["", "1d", "3d", "7d", "14d", "4w", "3M"];
 
 
-function validate(d: Put, cores?: number, hostMem?: number) {
+function validate(d: Put, cores?: number, hostMem?: number, nets?: any[]) {
   const err: Record<string, string> = {},
     warn: Record<string, string> = {};
   const cpu = d.config["limits.cpu"];
@@ -69,6 +69,10 @@ function validate(d: Put, cores?: number, hostMem?: number) {
   size(d.config["limits.memory"], "Memory", "mem", hostMem);
   size(d.devices.root?.size, "Disk size", "root");
   Object.assign(err, checkDevices(d.devices));
+  for (const [n, dev] of Object.entries(d.devices)) {
+    const e = dev.type === "nic" && nicIPv4Error(dev, nets);
+    if (e) err["dev." + n] = e;
+  }
   return { err, warn };
 }
 
@@ -171,7 +175,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
 
   const cores = host.data?.cpu?.total;
   const hostMem = host.data?.memory?.total;
-  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem), [cd, cores, hostMem]);
+  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem, nets.data), [cd, cores, hostMem, nets.data]);
   const devErrs = tried ? errs : {};
 
   const parseYaml = (): Put | null => {
@@ -204,7 +208,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
       setYamlErr("");
       d = clean(p);
     }
-    const v = validate(d, cores, hostMem);
+    const v = validate(d, cores, hostMem, nets.data);
     if (Object.keys(v.err).length) {
       setTried(true);
       if (view === "yaml") setYamlErr(Object.values(v.err)[0]);
@@ -278,8 +282,10 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const nicRows: NetDev[] = Object.entries(effDev)
     .filter(([, d]) => d.type === "nic")
     .map(([n, d]) => ({ n, d, from: draft.devices[n] ? null : prof.devFrom[n] }));
-  const managed = (nets.data || []).filter((n) => n.managed).map((n) => n.name as string);
-  const hostNics = (nets.data || []).filter((n) => !n.managed).map((n) => n.name as string);
+  const managedNets = (nets.data || []).filter((n) => n.managed);
+  const managed = managedNets.map((n) => n.name as string);
+  const hostNics = (nets.data || []).filter((n) => !n.managed && n.type !== "loopback").map((n) => n.name as string);
+  const lans = lanParents(nets.data);
   const autostart = (eff("boot.autostart") || "false") === "true";
   const nesting = (eff("security.nesting") || "false") === "true";
   const schedV = eff("snapshots.schedule");
@@ -470,6 +476,13 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                 {nicRows.map(({ n, d, from: pf }) => {
                   const hostMode = !d.network;
                   const dis = pf != null;
+                  const lan = lans.find((l) => l.name === d.parent && lanNic(l, n).nictype === d.nictype);
+                  const pick = !hostMode ? d.network : lan ? "host:" + lan.name : "__host";
+                  const fixedNet = fixedIPv4Net(d, nets.data);
+                  const netRow = (nets.data || []).find((x) => x.name === d.network);
+                  const onLan = hostMode || (netRow && !fixedNet);
+                  const mac = d.hwaddr || inst.config?.["volatile." + n + ".hwaddr"];
+                  const macvlan = hostMode ? d.nictype === "macvlan" || !d.nictype : netRow?.type === "macvlan";
                   return (
                     <div key={n} className="devgrp">
                       <div className="dev n">
@@ -479,26 +492,35 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                         <div className="field">
                           <select
                             aria-label={`Network of ${n}`}
-                            value={hostMode ? "__host" : d.network}
+                            value={pick}
                             disabled={dis}
                             onChange={(e) =>
                               upd((x) => {
-                                x.devices[n] = e.target.value === "__host" ? { type: "nic", nictype: "macvlan", parent: hostNics[0] || "", name: d.name || n } : { type: "nic", network: e.target.value, name: d.name || n };
+                                const v = e.target.value;
+                                const l = lans.find((h) => "host:" + h.name === v);
+                                x.devices[n] = l ? lanNic(l, d.name || n) : v === "__host" ? { type: "nic", nictype: "macvlan", parent: hostNics[0] || "", name: d.name || n } : { type: "nic", network: v, name: d.name || n };
                               })
                             }
                           >
-                            {managed.map((nn) => (
-                              <option key={nn}>{nn}</option>
-                            ))}
-                            {d.network && !managed.includes(d.network) && <option>{d.network}</option>}
-                            <option value="__host">Host interface (macvlan/physical)…</option>
+                            <optgroup label="Incus networks">
+                              {managedNets.map((m) => (
+                                <option key={m.name} value={m.name}>
+                                  {m.type === "bridge" || m.type === "ovn" ? m.name : `${m.name} (${m.type}${m.config?.parent ? " on " + m.config.parent : ""})`}
+                                </option>
+                              ))}
+                              {d.network && !managed.includes(d.network) && <option>{d.network}</option>}
+                            </optgroup>
+                            <optgroup label="Your LAN, through the host">
+                              {lans.map((l) => (
+                                <option key={l.name} value={"host:" + l.name}>
+                                  {l.name} ({l.type === "bridge" ? "host bridge" : "macvlan"})
+                                </option>
+                              ))}
+                              <option value="__host">Other host interface…</option>
+                            </optgroup>
                           </select>
                         </div>
-                        {hostMode ? (
-                          <span className="note">
-                            {d.nictype || "nic"} on {d.parent || "–"}
-                          </span>
-                        ) : (
+                        {fixedNet ? (
                           <div className="field mono-in">
                             <input
                               aria-label={`IPv4 address of ${n}`}
@@ -513,6 +535,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                               }
                             />
                           </div>
+                        ) : (
+                          <span className="note">{onLan ? "Address from your LAN" : "–"}</span>
                         )}
                         {dis ? (
                           <button className="btn btn-q btn-sm" title={`From profile ${pf}. Copy to this instance to edit.`} onClick={() => upd((x) => void (x.devices[n] = { ...d }))}>
@@ -524,7 +548,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                           </button>
                         )}
                       </div>
-                      {hostMode && (
+                      {pick === "__host" && (
                         <div className="line" style={{ marginTop: 6 }}>
                           <div className="field" style={{ width: 150, height: 30 }}>
                             <select aria-label={`Type of ${n}`} disabled={dis} value={d.nictype || "macvlan"} onChange={(e) => upd((x) => void (x.devices[n].nictype = e.target.value))}>
@@ -544,6 +568,25 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                           </div>
                         </div>
                       )}
+                      {devErrs["dev." + n] ? (
+                        <span className="note bad" data-bad>
+                          {devErrs["dev." + n]}
+                        </span>
+                      ) : fixedNet && subnetOf(fixedNet) ? (
+                        <span className="note">Fixed addresses go in {subnetOf(fixedNet)}.</span>
+                      ) : onLan ? (
+                        <span className="note">
+                          Your router's DHCP gives this card its address.{" "}
+                          {mac ? (
+                            <>
+                              For a fixed one, reserve <span className="mono">{mac}</span> in your router
+                            </>
+                          ) : (
+                            "For a fixed one, reserve its MAC address in your router after the first start"
+                          )}
+                          , or set it inside the instance.{macvlan && " The host itself can't reach the instance over macvlan; a host bridge can."}
+                        </span>
+                      ) : null}
                       {dis && <span className="note">From profile {pf}</span>}
                     </div>
                   );
@@ -562,7 +605,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                     {ic.plus}Add network card
                   </button>
                 </div>
-                <span className="note">Only managed networks are listed. A fixed IPv4 needs a managed bridge network.</span>
+                <span className="note">A fixed IPv4 works on Incus bridge networks. To put an instance on your own LAN, pick a host interface.</span>
               </div>
             </div>
             <div className="hrow">
