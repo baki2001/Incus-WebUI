@@ -81,6 +81,42 @@ func TestDue(t *testing.T) {
 	}
 }
 
+func TestDueDays(t *testing.T) {
+	sun := time.Date(2026, 11, 22, 9, 0, 0, 0, time.Local) // a Sunday
+	st := scheduleState{Since: sun.Add(-72 * time.Hour)}
+	weekdays := BackupSchedule{At: "03:00", Days: []int{1, 2, 3, 4, 5}}
+	if due(weekdays, st, sun) {
+		t.Error("a weekday schedule ran on Sunday")
+	}
+	if !due(weekdays, st, sun.AddDate(0, 0, 1)) {
+		t.Error("a weekday schedule didn't run on Monday")
+	}
+	if !due(BackupSchedule{At: "03:00", Days: []int{}}, st, sun) {
+		t.Error("no days must mean every day")
+	}
+}
+
+func TestTestRestoreDay(t *testing.T) {
+	for _, c := range []struct {
+		days []int
+		want time.Weekday
+	}{{nil, time.Sunday}, {[]int{0, 3}, time.Sunday}, {[]int{5, 2}, time.Tuesday}} {
+		if got := testRestoreDay(BackupSchedule{Days: c.days}); got != c.want {
+			t.Errorf("%v: %v", c.days, got)
+		}
+	}
+}
+
+func TestValidDays(t *testing.T) {
+	for d, want := range map[string]bool{"[]": true, "[0,6]": true, "[7]": false, "[1,1]": false, "[-1]": false} {
+		var x []int
+		json.Unmarshal([]byte(d), &x)
+		if validDays(x) != want {
+			t.Errorf("%s: want %v", d, want)
+		}
+	}
+}
+
 func testStore(t *testing.T, st backupStore) {
 	ctx := context.Background()
 	big := make([]byte, s3PartSize*2+12345)
