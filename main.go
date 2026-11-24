@@ -35,6 +35,7 @@ type App struct {
 	jobs       jobs
 	metrics    *metricStore
 	sched      scheduler
+	wa         waPending
 }
 
 func main() {
@@ -197,6 +198,17 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/ui/setup", a.handleSetup)
 	mux.HandleFunc("GET /api/ui/oidc/login", a.handleOIDCLogin)
 	mux.HandleFunc("GET /api/ui/oidc/callback", a.handleOIDCCallback)
+	mux.HandleFunc("POST /api/ui/passkey/login/begin", a.handlePasskeyLoginBegin)
+	mux.HandleFunc("POST /api/ui/passkey/login/finish", a.handlePasskeyLoginFinish)
+	mux.Handle("GET /api/ui/account/security", auth(a.handleSecurityGet))
+	mux.Handle("POST /api/ui/account/totp/setup", auth(a.handleTOTPSetup))
+	mux.Handle("POST /api/ui/account/totp", auth(a.handleTOTPEnable))
+	mux.Handle("POST /api/ui/account/totp/disable", auth(a.handleTOTPDisable))
+	mux.Handle("POST /api/ui/account/recovery-codes", auth(a.handleRecoveryRenew))
+	mux.Handle("POST /api/ui/account/passkeys/begin", auth(a.handlePasskeyRegisterBegin))
+	mux.Handle("POST /api/ui/account/passkeys/finish", auth(a.handlePasskeyRegisterFinish))
+	mux.Handle("PUT /api/ui/account/passkeys/{id}", auth(a.handlePasskeyRename))
+	mux.Handle("DELETE /api/ui/account/passkeys/{id}", auth(a.handlePasskeyDelete))
 
 	mux.Handle("GET /api/ui/servers", auth(a.handleServers))
 	mux.Handle("POST /api/ui/servers", admin(a.handleServerAdd))
@@ -206,6 +218,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/ui/users", admin(a.handleUserCreate))
 	mux.Handle("PUT /api/ui/users/{name}", admin(a.handleUserPut))
 	mux.Handle("DELETE /api/ui/users/{name}", admin(a.handleUserDelete))
+	mux.Handle("POST /api/ui/users/{name}/reset-sign-in", admin(a.handleUserResetSignIn))
 	mux.Handle("PUT /api/ui/theme", admin(a.handleTheme))
 	mux.Handle("GET /api/ui/prefs", auth(a.handlePrefsGet))
 	mux.Handle("PUT /api/ui/prefs", auth(a.handlePrefsPut))

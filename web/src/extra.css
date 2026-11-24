@@ -418,3 +418,20 @@ tr.empty{display:table-row;padding:0}
 .imp-svcs { display: grid; gap: 8px; }
 .imp-svc { display: grid; gap: 2px; font-size: 13.5px; }
 .imp-svc .dim { font-size: 12.5px; }
+
+/* sign-in security */
+.sec-setup{padding:16px;display:flex;gap:20px;flex-wrap:wrap;max-width:640px;margin-bottom:14px}
+.sec-qr{flex:0 0 auto;width:196px;height:196px;padding:8px;background:#fff;border-radius:8px;display:grid;place-items:center}
+.sec-qr img{image-rendering:pixelated;display:block}
+.sec-steps{flex:1 1 260px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.sec-steps ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:13.5px;color:var(--ink-2)}
+.sec-key{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+.sec-key .mono{overflow-wrap:anywhere;color:var(--ink)}
+.sec-steps .fl,.sec-pass .fl,.sec-add .fl{margin:0}
+.sec-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.sec-pass{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:420px}
+.sec-codes{padding:16px;display:flex;flex-direction:column;gap:14px;max-width:420px}
+.sec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 20px;font-size:14px}
+.sec-add{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;max-width:640px}
+.sec-add .fl:first-child{flex:1 1 220px}
+.sec-note{color:var(--ink-3);font-size:13.5px}

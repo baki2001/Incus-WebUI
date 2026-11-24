@@ -2,8 +2,9 @@ import { useRef, useState } from "react";
 import { ui } from "../api";
 import { Mark } from "../icons";
 import { shake } from "../ui";
+import { passkeyBlocker, signInWithPasskey } from "../passkey";
 
-type Info = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string };
+type Info = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; passkeys?: boolean };
 
 const ssoErrors: Record<string, string> = {
   sso_failed: "Single sign-on didn't complete. Try again.",
@@ -52,7 +53,17 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
   const [token, setToken] = useState("");
   const [err, setErr] = useState(() => ssoErrors[new URLSearchParams(location.search).get("error") || ""] || "");
   const [busy, setBusy] = useState(false);
+  // After a right password, an account with two-factor sign-in asks for a code.
+  const [needCode, setNeedCode] = useState(false);
+  const [code, setCode] = useState("");
   const form = useRef<HTMLFormElement>(null);
+  const showPasskey = !setup && info.passkeys && !passkeyBlocker();
+
+  const finish = () => {
+    takeNext(); // drop any leftover single sign-on target
+    history.replaceState(null, "", wanted());
+    onDone();
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,17 +71,71 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
     setErr("");
     try {
       if (setup) await ui("/setup", { method: "POST", body: { token: token.trim(), username: user, password: pass } });
-      else await ui("/login", { method: "POST", body: { username: user, password: pass } });
-      takeNext(); // drop any leftover single sign-on target
-      history.replaceState(null, "", wanted());
-      onDone();
+      else {
+        const r = await ui<{ totp_required?: boolean }>("/login", { method: "POST", body: { username: user, password: pass, code: needCode ? code : "" } });
+        if (r?.totp_required) {
+          setNeedCode(true);
+          return;
+        }
+      }
+      finish();
     } catch (e: any) {
       setErr(e.message);
+      if (needCode) setCode("");
       shake(form.current);
     } finally {
       setBusy(false);
     }
   };
+
+  const passkey = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await signInWithPasskey();
+      finish();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const back = () => {
+    setNeedCode(false);
+    setCode("");
+    setPass("");
+    setErr("");
+  };
+
+  if (needCode)
+    return (
+      <div className="login">
+        <div className="login-card panel sq">
+          <div className="login-brand">
+            <Mark />
+            <span className="brand">Incus</span>
+          </div>
+          <h1>Enter your code</h1>
+          <p className="dim2">Open your authenticator app and enter the 6-digit code for {user}. Lost your phone? Enter one of your recovery codes.</p>
+          <form ref={form} onSubmit={submit} className="login-form">
+            <div className="fl">
+              <label htmlFor="c">Code</label>
+              <div className="field">
+                <input id="c" className="mono" inputMode="text" autoComplete="one-time-code" autoCapitalize="off" spellCheck={false} maxLength={16} value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+              </div>
+            </div>
+            {err && <div className="login-err">{err}</div>}
+            <button className="btn btn-p press" disabled={busy || code.trim().length < 6} style={{ width: "100%", height: 36 }}>
+              Verify
+            </button>
+            <button type="button" className="btn btn-q press" onClick={back} style={{ width: "100%", height: 36 }}>
+              Back
+            </button>
+          </form>
+        </div>
+      </div>
+    );
 
   return (
     <div className="login">
@@ -111,9 +176,17 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
           </form>
         )}
         {!info.password && !setup && err && <div className="login-err">{err}</div>}
-        {info.oidc && (
+        {showPasskey && (
           <>
             {info.password && <div className="login-or">or</div>}
+            <button type="button" className="btn btn-s press" disabled={busy} onClick={passkey} style={{ width: "100%", height: 36 }}>
+              Sign in with a passkey
+            </button>
+          </>
+        )}
+        {info.oidc && (
+          <>
+            {(info.password || showPasskey) && <div className="login-or">or</div>}
             <a className="btn btn-s press" href="/api/ui/oidc/login" onClick={rememberNext} style={{ width: "100%", height: 36, textDecoration: "none" }}>
               {info.oidc_label || "Sign in with SSO"}
             </a>

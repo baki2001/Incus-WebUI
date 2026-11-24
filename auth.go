@@ -24,7 +24,7 @@ const sessionTTL = 7 * 24 * time.Hour
 
 type Session struct {
 	User    string `json:"u"`
-	Method  string `json:"m"` // password | oidc
+	Method  string `json:"m"` // password (any local user sign-in, also a passkey) | oidc
 	Expires int64  `json:"e"`
 	ID      string `json:"i"`            // lets logout revoke this one session
 	OIDCGen int64  `json:"og,omitempty"` // oidc sessions: must match the config's OIDCGen
@@ -341,7 +341,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "bad request origin")
 		return
 	}
-	var req struct{ Username, Password string }
+	var req struct{ Username, Password, Code string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
@@ -352,10 +352,10 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := dummyHash
-	found := false
+	found, twoFactor := false, false
 	for _, u := range a.store.Get().Users {
 		if u.Username == req.Username {
-			hash, found = []byte(u.PasswordHash), true
+			hash, found, twoFactor = []byte(u.PasswordHash), true, u.TOTPSecret != ""
 		}
 	}
 	if bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) != nil || !found {
@@ -363,8 +363,28 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "Wrong username or password.")
 		return
 	}
+	method := "password"
+	if twoFactor {
+		// The password is right: ask for the code. The client sends the
+		// password again with it. A wrong code counts as a failed login.
+		if strings.TrimSpace(req.Code) == "" {
+			a.loginLimit.release(ip, req.Username)
+			writeJSON(w, map[string]bool{"totp_required": true})
+			return
+		}
+		recovery, err := a.useSecondFactor(req.Username, req.Code)
+		if err != nil {
+			a.auditLogin(r, req.Username, "password+totp", false)
+			jsonError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		method = "password+totp"
+		if recovery {
+			method = "password+recovery code"
+		}
+	}
 	a.loginLimit.release(ip, req.Username)
-	a.auditLogin(r, req.Username, "password", true)
+	a.auditLogin(r, req.Username, method, true)
 	a.setSession(w, r, req.Username, "password")
 	writeJSON(w, map[string]string{"user": req.Username})
 }
@@ -399,6 +419,11 @@ func (a *App) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
 		"password":       len(cfg.Users) > 0,
 		"oidc":           cfg.OIDC != nil,
 		"theme":          cfg.Theme,
+	}
+	for _, u := range cfg.Users {
+		if len(u.Passkeys) > 0 {
+			resp["passkeys"] = true // some user has one: offer the button
+		}
 	}
 	if cfg.OIDC != nil {
 		label := cfg.OIDC.ButtonLabel
@@ -478,9 +503,9 @@ func (a *App) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Get()
-	out := []map[string]string{}
+	out := []map[string]any{}
 	for _, u := range cfg.Users {
-		out = append(out, map[string]string{"username": u.Username})
+		out = append(out, map[string]any{"username": u.Username, "totp": u.TOTPSecret != "", "passkeys": len(u.Passkeys)})
 	}
 	resp := map[string]any{"users": out}
 	if cfg.OIDC != nil {

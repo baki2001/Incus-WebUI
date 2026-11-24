@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
 import { useCrumbs } from "../Shell";
 import { BackupSettings } from "./Backups";
+import { Security } from "./Security";
 import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
 import { confirmDialog, CopyBtn, Field, Input, Seg, Select } from "../ui";
 
-type Section = "appearance" | "servers" | "users" | "backups" | "about";
-const sections: { v: Section; l: string; admin?: boolean }[] = [
+type Section = "appearance" | "security" | "servers" | "users" | "backups" | "about";
+const sections: { v: Section; l: string; admin?: boolean; local?: boolean }[] = [
   { v: "appearance", l: "Appearance" },
+  { v: "security", l: "Sign-in security", local: true },
   { v: "servers", l: "Servers", admin: true },
   { v: "users", l: "Users and roles", admin: true },
   { v: "backups", l: "Backups", admin: true },
@@ -18,7 +20,8 @@ const sections: { v: Section; l: string; admin?: boolean }[] = [
 export function Settings() {
   const { section = "appearance" } = useParams();
   const nav = useNavigate();
-  const { admin } = useApp();
+  const { admin, method } = useApp();
+  const local = method === "password";
   useCrumbs([{ label: "Settings", to: "/settings" }, { label: sections.find((s) => s.v === section)?.l || "" }]);
   return (
     <>
@@ -27,7 +30,7 @@ export function Settings() {
       </div>
       <div className="set">
         <nav className="set-nav">
-          {sections.filter((s) => admin || !s.admin).map((s) => (
+          {sections.filter((s) => (admin || !s.admin) && (local || !s.local)).map((s) => (
             <button key={s.v} aria-current={section === s.v ? "page" : undefined} onClick={() => nav(`/settings/${s.v}`)}>
               {s.l}
             </button>
@@ -35,6 +38,7 @@ export function Settings() {
         </nav>
         <div className="set-body">
           {section === "appearance" && <Appearance />}
+          {section === "security" && local && <Security />}
           {section === "servers" && admin && <Servers />}
           {section === "users" && admin && <Users />}
           {section === "backups" && admin && <BackupSettings />}
@@ -267,7 +271,7 @@ function Servers() {
 
 function Users() {
   const app = useApp();
-  const q = useData<{ users: { username: string }[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
+  const q = useData<{ users: { username: string; totp?: boolean; passkeys?: number }[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [role, setRole] = useState<RoleName>("viewer");
@@ -297,6 +301,16 @@ function Users() {
       setPw({ ...pw, err: e.message });
     }
   };
+  const resetSignIn = async (name: string) => {
+    if (!(await confirmDialog({ title: `Reset sign-in for ${name}?`, body: "Their two-factor sign-in and all their passkeys are removed and they are signed out everywhere. They can sign in with their password and set them up again.", confirm: "Reset", danger: true }))) return;
+    try {
+      await ui(`/users/${encodeURIComponent(name)}/reset-sign-in`, { method: "POST" });
+      app.toast(`Sign-in reset for ${name}`);
+      invalidate("ui-users");
+    } catch (e: any) {
+      app.fail(e, "Could not reset the sign-in.");
+    }
+  };
   const del = async (name: string) => {
     if (!(await confirmDialog({ title: `Remove ${name}?`, body: "They can't sign in with a password any more.", confirm: "Remove", danger: true }))) return;
     try {
@@ -317,8 +331,15 @@ function Users() {
               <span>
                 {x.username}
                 {x.username === app.user && <span className="dim"> · you</span>}
+                {x.totp && <span className="dim"> · 2FA</span>}
+                {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
               </span>
               <span className="r">
+                {x.username !== app.user && (x.totp || !!x.passkeys) && (
+                  <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => resetSignIn(x.username)}>
+                    Reset 2FA and passkeys
+                  </button>
+                )}
                 <button className="btn btn-q btn-sm" style={{ minHeight: 40 }} onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
                   Change password
                 </button>
