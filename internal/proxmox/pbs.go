@@ -113,6 +113,9 @@ func RawDisk(r io.Reader, size int64, w io.WriterAt, q bool, progress func(int64
 		clear(buf[want:])
 		if n == 0 {
 			head = bytes.Clone(buf)
+			if p := GPTProblem(head); q && p != "" {
+				return nil, gptError(p)
+			}
 		}
 		if progress != nil && n%64 == 0 {
 			progress(n * qcow2.ClusterSize)
