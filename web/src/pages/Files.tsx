@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { bytes, friendlyError, incusRaw, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useApp } from "../state";
-import { confirmDialog, Dialog, MidTrunc } from "../ui";
+import { confirmDialog, Dialog, Empty, Field, MidTrunc } from "../ui";
 
 type Entry = { name: string; type: string; size: number; mode: string; modified: string; target?: string; resolved?: string; uid: number; gid: number };
 
@@ -75,9 +75,8 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
 
   if (!running)
     return (
-      <div className="panel" style={{ padding: 24 }}>
-        <b>Start {inst.name} to browse its files.</b>
-        <div className="dim">The file explorer works on running instances. Virtual machines also need the Incus agent.</div>
+      <div className="panel">
+        <Empty title={`Start ${inst.name} to browse its files.`}>The file explorer works on running instances. Virtual machines also need the Incus agent.</Empty>
       </div>
     );
 
@@ -223,7 +222,7 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
         <button className="btn btn-s press" onClick={() => setNewFolder(true)}>
           {ic.folder}New folder
         </button>
-        <button className="btn btn-p press" onClick={() => upload.current?.click()}>
+        <button className="btn btn-s press" onClick={() => upload.current?.click()}>
           {ic.up}Upload
         </button>
         <input
@@ -294,8 +293,8 @@ export function FilesTab({ inst }: { inst: Instance & { server: string } }) {
               </tr>
             ))}
             {entries && !entries.length && (
-              <tr style={{ cursor: "default" }}>
-                <td colSpan={6} className="dim" style={{ padding: 24, textAlign: "center" }}>
+              <tr className="empty">
+                <td colSpan={6} className="emp">
                   {err || "This folder is empty. Drop files here to upload."}
                 </td>
               </tr>
@@ -343,12 +342,12 @@ function NewFolder({ open, existing, onClose, onCreate }: { open: boolean; exist
       >
         <div className="dlg-b">
           <h2>New folder</h2>
-          <div className="fl" style={{ marginTop: 10 }}>
-            <label>Name</label>
-            <div className={"field" + (bad ? " bad" : "")}>
-              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className={"hint" + (bad ? " bad" : "")}>{bad}</div>
+          <div style={{ marginTop: 10 }}>
+            <Field label="Name" hint={bad} bad={!!bad}>
+              <div className={"field" + (bad ? " bad" : "")}>
+                <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+            </Field>
           </div>
         </div>
         <div className="dlg-f">
@@ -421,9 +420,12 @@ function Editor({ inst, path, entry, onClose, onSaved }: { inst: Instance & { se
   };
   return (
     <Dialog open={!!entry} onClose={onClose} dirty={dirty} size="md">
-      <div className="ptitle">
-        <h2 className="mono">{path}</h2>
-        <span className="r">{entry && bytes(entry.size)}</span>
+      <div className="dlg-b" style={{ paddingBottom: 12 }}>
+        <h2>{entry?.name || path}</h2>
+        <p className="dim mono">
+          {path}
+          {entry ? ` · ${bytes(entry.size)}` : ""}
+        </p>
       </div>
       {entry && isLink(entry) && (
         <div className="dlg-b" style={{ paddingBottom: 0 }}>

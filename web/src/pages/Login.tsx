@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { ui } from "../api";
 import { Mark } from "../icons";
-import { shake } from "../ui";
+import { Field, shake } from "../ui";
 import { passkeyBlocker, signInWithPasskey } from "../passkey";
 
 type Info = { setup_required: boolean; password: boolean; oidc: boolean; oidc_label?: string; passkeys?: boolean };
@@ -117,19 +117,18 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
             <span className="brand">Incus</span>
           </div>
           <h1>Enter your code</h1>
-          <p className="dim2">Open your authenticator app and enter the 6-digit code for {user}. Lost your phone? Enter one of your recovery codes.</p>
+          <p className="dim">Open your authenticator app and enter the 6-digit code for {user}. Lost your phone? Enter one of your recovery codes.</p>
           <form ref={form} onSubmit={submit} className="login-form">
-            <div className="fl">
-              <label htmlFor="c">Code</label>
+            <Field label="Code">
               <div className="field">
-                <input id="c" className="mono" inputMode="text" autoComplete="one-time-code" autoCapitalize="off" spellCheck={false} maxLength={16} value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+                <input className="mono" inputMode="text" autoComplete="one-time-code" autoCapitalize="off" spellCheck={false} maxLength={16} value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
               </div>
-            </div>
+            </Field>
             {err && <div className="login-err">{err}</div>}
-            <button className="btn btn-p press" disabled={busy || code.trim().length < 6} style={{ width: "100%", height: 36 }}>
+            <button className="btn btn-p press" disabled={busy || code.trim().length < 6}>
               Verify
             </button>
-            <button type="button" className="btn btn-q press" onClick={back} style={{ width: "100%", height: 36 }}>
+            <button type="button" className="btn btn-q btn-sm" style={{ alignSelf: "flex-start", width: "auto" }} onClick={back}>
               Back
             </button>
           </form>
@@ -145,32 +144,28 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
           <span className="brand">Incus</span>
         </div>
         <h1>{setup ? "Create your account" : "Sign in"}</h1>
-        {setup && <p className="dim2">Use the setup code from the server log. This account can manage everything on the connected servers.</p>}
+        {setup && <p className="dim">Use the setup code from the server log. This account can manage everything on the connected servers.</p>}
         {(info.password || setup) && (
           <form ref={form} onSubmit={submit} className="login-form">
             {setup && (
-              <div className="fl">
-                <label htmlFor="tok">Setup code</label>
+              <Field label="Setup code">
                 <div className="field">
-                  <input id="tok" className="mono" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} autoFocus />
+                  <input className="mono" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} autoFocus />
                 </div>
-              </div>
+              </Field>
             )}
-            <div className="fl">
-              <label htmlFor="u">Username</label>
+            <Field label="Username">
               <div className="field">
-                <input id="u" autoComplete="username" value={user} onChange={(e) => setUser(e.target.value)} autoFocus={!setup} />
+                <input autoComplete="username" value={user} onChange={(e) => setUser(e.target.value)} autoFocus={!setup} />
               </div>
-            </div>
-            <div className="fl">
-              <label htmlFor="p">Password</label>
+            </Field>
+            <Field label="Password" hint={setup ? "At least 10 characters." : undefined}>
               <div className="field">
-                <input id="p" type="password" autoComplete={setup ? "new-password" : "current-password"} value={pass} onChange={(e) => setPass(e.target.value)} />
+                <input type="password" autoComplete={setup ? "new-password" : "current-password"} value={pass} onChange={(e) => setPass(e.target.value)} />
               </div>
-              {setup && <div className="hint">At least 10 characters.</div>}
-            </div>
+            </Field>
             {err && <div className="login-err">{err}</div>}
-            <button className="btn btn-p press" disabled={busy || !user || !pass} style={{ width: "100%", height: 36 }}>
+            <button className="btn btn-p press" disabled={busy || !user || !pass}>
               {setup ? "Create account" : "Sign in"}
             </button>
           </form>
@@ -179,7 +174,7 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
         {showPasskey && (
           <>
             {info.password && <div className="login-or">or</div>}
-            <button type="button" className="btn btn-s press" disabled={busy} onClick={passkey} style={{ width: "100%", height: 36 }}>
+            <button type="button" className="btn btn-s press" disabled={busy} onClick={passkey}>
               Sign in with a passkey
             </button>
           </>
@@ -187,7 +182,7 @@ export function Login({ info, onDone }: { info: Info; onDone: () => void }) {
         {info.oidc && (
           <>
             {(info.password || showPasskey) && <div className="login-or">or</div>}
-            <a className="btn btn-s press" href="/api/ui/oidc/login" onClick={rememberNext} style={{ width: "100%", height: 36, textDecoration: "none" }}>
+            <a className="btn btn-s press" href="/api/ui/oidc/login" onClick={rememberNext} style={{ textDecoration: "none" }}>
               {info.oidc_label || "Sign in with SSO"}
             </a>
           </>

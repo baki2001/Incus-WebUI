@@ -23,7 +23,7 @@ function Ruler({ label, title, v, u, of, used, lim, note, hot, nobar }: RulerPro
           ))}
         </div>}
         {note && (
-          <small className="ru-note" style={lim != null && lim <= 0.8 ? { left: `${lim * 100}%` } : { right: 0 }}>
+          <small className="ru-note" style={lim != null && lim < 0.15 ? { left: 0 } : lim != null && lim <= 0.8 ? { left: `${lim * 100}%` } : { right: 0 }}>
             {note}
           </small>
         )}

@@ -66,9 +66,8 @@ function AptUpdates({ server, config }: { server: string; config: Record<string,
   if (!st) {
     return (
       <>
-        <p>
-          Incus here comes from your distribution's packages, so the UI can't update it on its own. Run this once on the server to allow it. It adds a
-          small timer that only upgrades the Incus packages when you ask from this page.
+        <p className="none">
+          Run this once on the server to allow Incus package updates from this page.
         </p>
         <div className="cmd">
           <code className="mono">{HELPER}</code>

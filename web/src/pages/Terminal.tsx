@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { incus, incusRaw, wsURL, type Instance } from "../api";
 import { ic } from "../icons";
+import { Field } from "../ui";
 
 type Inst = Instance & { server: string };
 type Conn = { state: "connecting" | "open" | "closed" | "error"; msg?: string };
@@ -152,11 +153,11 @@ function KeyRow({ send, ctrl }: { send: (d: string) => void; ctrl: { current: bo
   const keys: [string, string][] = [["Esc", "\x1b"], ["Tab", "\t"], ["↑", "\x1b[A"], ["↓", "\x1b[B"], ["←", "\x1b[D"], ["→", "\x1b[C"], ["|", "|"], ["~", "~"], ["/", "/"]];
   return (
     <div className="keyrow" onPointerDown={(e) => e.preventDefault()}>
-      <button className={"btn btn-s" + (on ? " on" : "")} aria-pressed={on} onClick={() => setOn((ctrl.current = !ctrl.current))}>
+      <button className={"btn btn-q" + (on ? " on" : "")} aria-pressed={on} onClick={() => setOn((ctrl.current = !ctrl.current))}>
         Ctrl
       </button>
       {keys.map(([l, v]) => (
-        <button key={l} className="btn btn-s" onClick={() => send(v)} aria-label={l}>
+        <button key={l} className="btn btn-q" onClick={() => send(v)} aria-label={l}>
           {l}
         </button>
       ))}
@@ -166,7 +167,7 @@ function KeyRow({ send, ctrl }: { send: (d: string) => void; ctrl: { current: bo
 
 function NotRunning({ inst, onStart, what }: { inst: Inst; onStart: () => void; what: string }) {
   return (
-    <div className="panel" style={{ padding: 24, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+    <div className="panel empty" style={{ flexDirection: "row", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
       <div>
         <b>{inst.name} is not running.</b>
         <div className="dim">{what}</div>
@@ -305,25 +306,24 @@ export function TerminalTab({ inst, onStart, visible = true }: { inst: Inst; onS
             if (!uidBad) connect();
           }}
         >
-          <label>
-            User ID
+          <Field label="User ID">
             <span className={"field" + (uidBad ? " bad" : "")}>
               <input inputMode="numeric" placeholder="0 (root)" value={opts.uid} onChange={(e) => setOpts({ ...opts, uid: e.target.value.trim() })} />
             </span>
-          </label>
-          <label className="grow">
-            Command
-            <span className="field">
-              <input className="mono" placeholder="Login shell" value={opts.cmd} onChange={(e) => setOpts({ ...opts, cmd: e.target.value })} />
-            </span>
-          </label>
-          <label>
-            Folder
+          </Field>
+          <div style={{ flex: "1 1 200px" }}>
+            <Field label="Command">
+              <span className="field" style={{ width: "auto" }}>
+                <input className="mono" placeholder="Login shell" value={opts.cmd} onChange={(e) => setOpts({ ...opts, cmd: e.target.value })} />
+              </span>
+            </Field>
+          </div>
+          <Field label="Folder">
             <span className="field">
               <input className="mono" placeholder="Home folder" value={opts.cwd} onChange={(e) => setOpts({ ...opts, cwd: e.target.value })} />
             </span>
-          </label>
-          <button type="submit" className="btn btn-p press" disabled={uidBad}>
+          </Field>
+          <button type="submit" className="btn btn-s press" disabled={uidBad}>
             Connect
           </button>
         </form>
@@ -336,7 +336,9 @@ export function TerminalTab({ inst, onStart, visible = true }: { inst: Inst; onS
         <span>Started {started.current.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
         <span>{size}</span>
         <span>UTF-8</span>
-        <span>{isMac ? "Copy with ⌘C, paste with ⌘V" : "Select to copy with Ctrl+C or Ctrl+Shift+C, paste with Ctrl+Shift+V"}</span>
+        {!window.matchMedia("(pointer:coarse)").matches && (
+          <span>{isMac ? "Copy with ⌘C, paste with ⌘V" : "Select to copy with Ctrl+C or Ctrl+Shift+C, paste with Ctrl+Shift+V"}</span>
+        )}
       </div>
     </div>
   );
@@ -349,23 +351,21 @@ export function ConsoleTab({ inst, onStart }: { inst: Inst; onStart: () => void 
   const [mode, setMode] = useState<"vga" | "text">(isVM ? "vga" : "text");
   return (
     <div className="col">
-      <div className="radios" role="radiogroup" aria-label="Console type">
-        {isVM && (
+      {isVM && (
+        <div className="radios" role="radiogroup" aria-label="Console type">
           <label>
             <input type="radio" name="cmode" checked={mode === "vga"} onChange={() => setMode("vga")} />
             Graphic
           </label>
-        )}
-        {isVM && (
           <label>
             <input type="radio" name="cmode" checked={mode === "text"} onChange={() => setMode("text")} />
             Text console
           </label>
-        )}
-        <span className="dim" style={{ fontSize: 12.5 }}>
-          {mode === "vga" ? "The VM's screen, like a monitor plugged into it." : "The boot and login console. Works even when the network inside is down."}
-        </span>
-      </div>
+          <span className="dim" style={{ fontSize: 12.5 }}>
+            {mode === "vga" ? "The VM's screen, like a monitor plugged into it." : "The boot and login console. Works even when the network inside is down."}
+          </span>
+        </div>
+      )}
       {inst.status !== "Running" ? (
         <NotRunning inst={inst} onStart={onStart} what="Start it to see its console. Boot messages show up here from the first second." />
       ) : mode === "vga" ? (

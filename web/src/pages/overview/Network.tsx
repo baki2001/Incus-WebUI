@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { bytes } from "../../api";
+import { Seg } from "../../ui";
 import { addresses, exposure, handshakeAge, intIp, ports, type Addr, type Info, type Peer, type Tunnel } from "./model";
 import { Nothing, Skel, type D } from "./parts";
 
@@ -69,18 +70,22 @@ export function Addresses({ d, size }: { d: D; size: "s" | "m" }) {
         {list.length > 3 && <small className="dim">+{list.length - 3} more networks</small>}
       </>
     );
-  const a = list[Math.min(sel, list.length - 1)];
+  const idx = Math.min(sel, list.length - 1);
+  const a = list[idx];
   return (
     <>
       <div className="b-head">
         <span className="b-t">Addresses</span>
-        <span className="b-r seg0" role="tablist">
-          {list.map((x, i) => (
-            <button key={x.net.server + x.net.name} role="tab" aria-selected={x === a} className={x === a ? "on" : ""} onClick={() => setSel(i)} onKeyDown={(e) => e.key === "ArrowRight" && setSel((i + 1) % list.length)}>
-              {label(x, multi)}
-            </button>
-          ))}
-        </span>
+        {list.length > 1 && (
+          <span className="b-r">
+            <Seg<string>
+              label="Network"
+              value={String(idx)}
+              options={list.map((x, i) => ({ v: String(i), l: label(x, multi) }))}
+              onChange={(v) => setSel(Number(v))}
+            />
+          </span>
+        )}
       </div>
       {a.grid ? (
         <IpGrid a={a} />
@@ -178,8 +183,25 @@ export function Tunnels({ d, size }: { d: D; size: "s" | "m" }) {
 
 // ---------- exposure and open ports ----------
 
+function zeroLabel(label: string) {
+  if (label.includes("port")) return "open ports";
+  if (label.includes("privileged")) return "privileged containers";
+  if (label.includes("nesting")) return "nesting";
+  return "public API";
+}
+
 export function Exposure({ d }: { d: D }) {
   const rows = useMemo(() => (d.rows && d.nets && d.info ? exposure(d.rows, ports(d.rows, d.nets), Object.values(d.info) as Info[]) : null), [d.rows, d.nets, d.info]);
+  const active = rows ? rows.filter((r) => r.n > 0) : [];
+  const zeros = rows ? rows.filter((r) => r.n === 0).map((r) => zeroLabel(r.label)) : [];
+  const zeroLine =
+    active.length === 0
+      ? "No privileged containers, nesting, open ports or public API."
+      : zeros.length > 1
+        ? `No ${zeros.slice(0, -1).join(", ")} or ${zeros[zeros.length - 1]}.`
+        : zeros.length === 1
+          ? `No ${zeros[0]}.`
+          : "";
   return (
     <>
       <span className="b-t">Exposure</span>
@@ -187,15 +209,15 @@ export function Exposure({ d }: { d: D }) {
         <Skel lines={4} />
       ) : (
         <div className="exp">
-          {rows.map((r) => (
-            <div className={"exp-r" + (r.n === 0 ? " zero" : "")} key={r.label}>
-              <b className={r.warn ? "snwarn" : ""}>{r.n}</b>
-              <div>
-                <span>{r.label}</span>
-                <small className="dim">{r.sub}</small>
-              </div>
+          {active.map((r) => (
+            <div className="exp-r" key={r.label}>
+              <span>
+                <b className={r.warn ? "snwarn" : ""}>{r.n}</b> {r.label}
+              </span>
+              <small className="dim">{r.sub}</small>
             </div>
           ))}
+          {zeroLine && <p className="none">{zeroLine}</p>}
         </div>
       )}
     </>

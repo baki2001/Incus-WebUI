@@ -2,7 +2,7 @@ import { useState } from "react";
 import { friendlyError, incusOp, type Instance } from "../api";
 import { useNames } from "../data";
 import { invalidate, useApp } from "../state";
-import { Dialog, Select } from "../ui";
+import { Dialog, Field, Select } from "../ui";
 
 type Inst = Instance & { server: string };
 
@@ -57,7 +57,7 @@ export function StopHost() {
             <button type="button" className="btn btn-s press" onClick={() => close(null)}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-p press" autoFocus>
+            <button type="submit" className={"btn press " + (force || a.allFrozen ? "btn-d" : "btn-p")} autoFocus>
               {force || a.allFrozen ? "Force stop" : "Stop"}
             </button>
           </div>
@@ -94,15 +94,6 @@ export function DlgForm({ title, intro, confirm, disabled, onClose, onSubmit, ch
   );
 }
 
-export function F({ label, hint, bad, children }: { label: string; hint?: React.ReactNode; bad?: boolean; children: React.ReactNode }) {
-  return (
-    <div className="fl">
-      <label>{label}</label>
-      {children}
-      {hint && <div className={"hint" + (bad ? " bad" : "")}>{hint}</div>}
-    </div>
-  );
-}
 
 const NAME_RE = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 export function nameProblem(n: string, taken: string[] = []) {
@@ -160,11 +151,11 @@ export function RenameDialog({ inst, open, onClose, onDone }: { inst: Inst; open
             .then((ok) => ok && onDone(name));
         }}
       >
-        <F label="New name" hint={bad} bad>
+        <Field label="New name" hint={bad} bad>
           <div className="field">
-            <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
           </div>
-        </F>
+        </Field>
       </DlgForm>
     </Dialog>
   );
@@ -212,17 +203,17 @@ export function CopyDialog({ inst, open, onClose, onDone }: { inst: Inst; open: 
             .then((ok) => ok && onDone(name, project));
         }}
       >
-        <F label="New name" hint={bad} bad>
+        <Field label="New name" hint={bad} bad>
           <div className="field">
-            <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
           </div>
-        </F>
-        <F label="Project">
+        </Field>
+        <Field label="Project">
           <Select value={project} onChange={setProject} options={projects} />
-        </F>
-        <F label="Storage pool">
+        </Field>
+        <Field label="Storage pool">
           <Select value={pool} onChange={setPool} options={[{ v: "", l: `Same as the original (${rootPool(inst) || "default"})` }, ...pools.filter((p) => p !== rootPool(inst)).map((p) => ({ v: p, l: p }))]} />
-        </F>
+        </Field>
         {nSnaps > 0 && (
           <label className="check-row">
             <input type="checkbox" checked={snaps} onChange={(e) => setSnaps(e.target.checked)} />
@@ -277,12 +268,12 @@ export function MoveDialog({ inst, open, onClose, onDone }: { inst: Inst; open: 
             .then((ok) => ok && onDone(project));
         }}
       >
-        <F label="Project" hint={clash ? `${project} already has an instance named ${inst.name}.` : undefined} bad>
+        <Field label="Project" hint={clash ? `${project} already has an instance named ${inst.name}.` : undefined} bad>
           <Select value={project} onChange={setProject} options={projects} />
-        </F>
-        <F label="Storage pool">
+        </Field>
+        <Field label="Storage pool">
           <Select value={pool} onChange={setPool} options={pools.length ? pools : [pool]} />
-        </F>
+        </Field>
       </DlgForm>
     </Dialog>
   );
@@ -318,11 +309,11 @@ export function PublishDialog({ inst, open, onClose }: { inst: Inst; open: boole
           );
         }}
       >
-        <F label="Alias (optional)" hint="A short name to find the image by.">
+        <Field label="Alias (optional)" hint="A short name to find the image by.">
           <div className="field">
-            <input className="mono" autoFocus placeholder="web-base" value={alias} onChange={(e) => setAlias(e.target.value.trim())} />
+            <input autoFocus placeholder="web-base" value={alias} onChange={(e) => setAlias(e.target.value.trim())} />
           </div>
-        </F>
+        </Field>
       </DlgForm>
     </Dialog>
   );
@@ -359,11 +350,11 @@ export function SnapRenameDialog({ inst, snap, onClose, reload }: { inst: Inst; 
             );
           }}
         >
-          <F label="New name" hint={bad} bad>
+          <Field label="New name" hint={bad} bad>
             <div className="field">
-              <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
             </div>
-          </F>
+          </Field>
         </DlgForm>
       )}
     </Dialog>
@@ -403,11 +394,11 @@ export function FromSnapDialog({ inst, snap, onClose, onDone }: { inst: Inst; sn
               .then((ok) => ok && onDone(name));
           }}
         >
-          <F label="Name of the new instance" hint={bad} bad>
+          <Field label="Name of the new instance" hint={bad} bad>
             <div className="field">
-              <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value.trim())} />
             </div>
-          </F>
+          </Field>
         </DlgForm>
       )}
     </Dialog>

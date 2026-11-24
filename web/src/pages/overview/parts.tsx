@@ -26,7 +26,7 @@ export function Skel({ lines = 3 }: { lines?: number }) {
 }
 
 export function Nothing({ children }: { children: ReactNode }) {
-  return <p className="b-none">{children}</p>;
+  return <p className="none">{children}</p>;
 }
 
 export function splitBytes(s: string): [string, string] {

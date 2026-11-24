@@ -251,6 +251,11 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
 
   useEffect(() => applyTheme(theme, mode), [theme, mode]);
 
+  const dismiss = useCallback((id: number) => {
+    setToasts((t) => t.map((x) => (x.id === id ? { ...x, out: true } : x)));
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 200);
+  }, []);
+
   const toast = useCallback((msg: string, action?: Toast["action"]) => {
     const id = seq.current++;
     setToasts((t) => [...t.slice(-2), { id, msg, action }]);
@@ -283,7 +288,7 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
         return r;
       } catch (e) {
         if (errSink) errSink(e);
-        else fail(e);
+        else fail(e, failTitle(label));
         record({ state: "failed", error: friendlyError(e) });
         return undefined;
       } finally {
@@ -340,7 +345,7 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
             {t.err && (
               <button
                 aria-label="Dismiss"
-                onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
+                onClick={() => dismiss(t.id)}
               >
                 Dismiss
               </button>
@@ -349,7 +354,7 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
               <button
                 onClick={() => {
                   t.action!.fn();
-                  setToasts((x) => x.filter((y) => y.id !== t.id));
+                  dismiss(t.id);
                 }}
               >
                 {t.action.label}
@@ -366,4 +371,34 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
 export function useScopedServers() {
   const { servers, scope } = useApp();
   return servers.filter((s) => s.online && s.trusted && (scope === "*" || s.name === scope));
+}
+
+const gerundVerb: [RegExp, string][] = [
+  [/^Creating\b\s*/i, "create"],
+  [/^Deleting\b\s*/i, "delete"],
+  [/^Saving\b\s*/i, "save"],
+  [/^Starting\b\s*/i, "start"],
+  [/^Stopping\b\s*/i, "stop"],
+  [/^Restarting\b\s*/i, "restart"],
+  [/^Pausing\b\s*/i, "pause"],
+  [/^Resuming\b\s*/i, "resume"],
+  [/^Restoring\b\s*/i, "restore"],
+  [/^Removing\b\s*/i, "remove"],
+  [/^Pulling\b\s*/i, "pull"],
+  [/^Renaming\b\s*/i, "rename"],
+  [/^Copying\b\s*/i, "copy"],
+  [/^Moving\b\s*/i, "move"],
+  [/^Uploading\b\s*/i, "upload"],
+  [/^Attaching\b\s*/i, "attach"],
+  [/^Detaching\b\s*/i, "detach"],
+];
+
+function failTitle(label: string) {
+  for (const [re, verb] of gerundVerb) {
+    if (re.test(label)) {
+      const rest = label.replace(re, "").trim();
+      return rest ? `Couldn't ${verb} ${rest}` : `Couldn't ${verb}`;
+    }
+  }
+  return `${label} failed`;
 }

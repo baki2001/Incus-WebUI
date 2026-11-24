@@ -21,21 +21,25 @@ export function MetricsPanel({ server, project, instance }: { server: string; pr
   const m = q.data;
   const has = (k: keyof Metrics["series"]) => !!m?.series[k]?.some((v) => v != null && v > 0);
   return (
-    <div className="panel charts">
-      <div className="charts-h">
-        <h3>{instance ? "History" : "History of all instances"}</h3>
-        <Seg value={range} onChange={setRange} label="Range" options={[{ v: "1h", l: "1 hour" }, { v: "24h", l: "24 hours" }, { v: "7d", l: "7 days" }]} />
+    <div className="panel">
+      <div className="ptitle">
+        <h2>{instance ? "History" : "History of all instances"}</h2>
+        <span className="r">
+          <Seg value={range} onChange={setRange} label="Range" options={[{ v: "1h", l: "1 hour" }, { v: "24h", l: "24 hours" }, { v: "7d", l: "7 days" }]} />
+        </span>
       </div>
-      {q.error && <p className="bad">{String(q.error)}</p>}
-      {m && m.instances === 0 && <p className="dim">No history yet. The UI records a point every minute from now on.</p>}
-      {m && m.instances > 0 && (
-        <div className="charts-g">
-          <Chart title="CPU" m={m} a="cpu" fmt={cores} />
-          <Chart title="Memory" m={m} a="mem" fmt={(n) => bytes(n)} />
-          <Chart title="Network" m={m} a="rx" b="tx" la="in" lb="out" fmt={rate} />
-          {(has("rd") || has("wr")) && <Chart title="Disk" m={m} a="rd" b="wr" la="read" lb="write" fmt={rate} />}
-        </div>
-      )}
+      <div className="charts">
+        {q.error && <div className="note-box bad">{String(q.error)}</div>}
+        {m && m.instances === 0 && <p className="none">No history yet. The UI records a point every minute from now on.</p>}
+        {m && m.instances > 0 && (
+          <div className="charts-g">
+            <Chart title="CPU" m={m} a="cpu" fmt={cores} />
+            <Chart title="Memory" m={m} a="mem" fmt={(n) => bytes(n)} />
+            <Chart title="Network" m={m} a="rx" b="tx" la="in" lb="out" fmt={rate} />
+            {(has("rd") || has("wr")) && <Chart title="Disk" m={m} a="rd" b="wr" la="read" lb="write" fmt={rate} />}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

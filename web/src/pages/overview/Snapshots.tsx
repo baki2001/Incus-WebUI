@@ -100,7 +100,7 @@ export function Timeline({ d }: { d: D }) {
   return (
     <>
       <div className="b-head">
-        <span className="b-t0">Next 24 hours</span>
+        <span className="b-t">Next 24 hours</span>
         {tl && (
           <span className="b-r dim b-leg">
             {tl.legend.map((l) => (
@@ -117,14 +117,14 @@ export function Timeline({ d }: { d: D }) {
       ) : (
         <div className="tl">
           <div className="tl-ev" style={{ height: tl.groups.length ? Math.min(4, Math.max(...tl.groups.map((g) => g.lines.length))) * 19 + 12 : 28 }}>
-            {tl.groups.length === 0 && <span className="b-none tl-none">Nothing scheduled</span>}
+            {tl.groups.length === 0 && <span className="none tl-none">Nothing scheduled</span>}
             {tl.groups.map((g: TlGroup, i) => {
               const p = pct(g.at);
               return (
-                <div key={i} className={"tl-e" + (p > 62 ? " flip" : "")} style={{ left: `${p}%` }}>
+                <div key={i} className={"tl-e" + (p > 52 ? " flip" : "")} style={{ left: `${p}%` }}>
                   {g.lines.slice(0, 4).map((l) => (
                     <div key={l.kind} className="tl-l">
-                      <span className="mono">{hh(l.at)}</span>
+                      <span className="dim">{hh(l.at)}</span>
                       <b>{l.kind}</b>
                       <span>{l.text}</span>
                     </div>

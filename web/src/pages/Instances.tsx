@@ -4,7 +4,7 @@ import { bytes, imageLabel, incusOp, ipv4, since, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, mutateCache, useApp } from "../state";
-import { confirmDialog, Menu, Seg, SkRows, SortTh, Status, useOutside } from "../ui";
+import { confirmDialog, Menu, Seg, SkRows, SortTh, Status, useOutside, usePresence } from "../ui";
 import { PinButton } from "./Instance";
 import { CreateInstance } from "./CreateInstance";
 import { ImportSheet } from "./Import";
@@ -249,6 +249,9 @@ export function Instances() {
   });
   const multi = app.servers.length > 1;
   const selected = shown.filter((r) => sel.has(id(r)));
+  const bulkPres = usePresence(selected.length > 0);
+  const lastSel = useRef(0);
+  if (selected.length > 0) lastSel.current = selected.length;
   const ncols = 7 + (multi ? 1 : 0) + (allProjects ? 1 : 0);
 
   const th = (k: SortKey, label: string, cls = "") => <SortTh k={k} label={label} cls={cls} sort={sort} setSort={(s) => patch({ sort: s.k === "name" ? null : s.k, dir: s.asc ? null : "desc" })} />;
@@ -463,8 +466,8 @@ export function Instances() {
               );
             })}
             {data && shown.length === 0 && (
-              <tr style={{ cursor: "default" }}>
-                <td colSpan={ncols + 2} className="dim" style={{ padding: 24, textAlign: "center" }}>
+              <tr className="empty">
+                <td colSpan={ncols + 2} className="emp">
                   {rows.length ? "No instances match these filters." : "No instances yet."}
                 </td>
               </tr>
@@ -472,9 +475,9 @@ export function Instances() {
           </tbody>
         </table>
       </div>
-      {selected.length > 0 && (
-        <div className="bulk">
-          <b>{selected.length} selected</b>
+      {bulkPres.mounted && (
+        <div className={"bulk" + (bulkPres.leaving ? " leaving" : "")}>
+          <b>{selected.length || lastSel.current} selected</b>
           <button className="btn btn-q btn-sm press" disabled={!n("start")} onClick={() => bulk("start")}>
             {ic.play}Start
           </button>
@@ -513,6 +516,7 @@ export function Instances() {
 
 function MultiFilter({ label, value, onChange, options, count }: { label: string; value: string[]; onChange: (v: string[]) => void; options: { v: string; l: string; n: number }[]; count: (d: string[]) => number }) {
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const [draft, setDraft] = useState<string[]>(value);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false), open);
@@ -525,8 +529,8 @@ function MultiFilter({ label, value, onChange, options, count }: { label: string
         {on && <span className="fval">{value.length === 1 ? options.find((o) => o.v === value[0])?.l : `${value.length} selected`}</span>}
         {ic.down}
       </button>
-      {open && (
-        <div className="fpop">
+      {mounted && (
+        <div className={"fpop" + (leaving ? " leaving" : "")}>
           <div className="fopts">
             {options.map((o) => (
               <label key={o.v} className={"fopt" + (o.n === 0 && !draft.includes(o.v) ? " dis" : "")}>

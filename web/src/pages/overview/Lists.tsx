@@ -65,7 +65,7 @@ export function Pinned({ d, rows }: { d: D; rows: Row[] }) {
           const busy = !on && r.status !== "Stopped";
           return (
             <div className="pin" key={r.server + r.project + r.name}>
-              <span className={"tun-s" + (on ? " on" : "")} />
+              <span className="st-dot" data-s={r.status} />
               <div className="pin-t">
                 <b title={r.name}>{r.name}</b>
                 <small className="dim">
@@ -112,9 +112,9 @@ export function BaseImages({ d }: { d: D }) {
                 {m.label} <span className="dim">· {m.count}</span>
               </span>
               <div className="age-t">{m.days != null && <i style={{ width: `${(m.days / max) * 100}%` }} />}</div>
-              <span className="mono">{m.days ?? "–"}</span>
+              <span className="tnum">{m.days ?? "–"}</span>
               {m.newer ? (
-                <button className="lnk0" onClick={() => nav("/images")}>
+                <button className="linkish" onClick={() => nav("/images")}>
                   Newer build
                 </button>
               ) : (

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ui } from "../api";
+import { ic } from "../icons";
 import { addPasskey, guessPasskeyName, passkeyBlocker } from "../passkey";
 import { invalidate, useApp, useData } from "../state";
-import { confirmDialog, CopyBtn, Field } from "../ui";
+import { confirmDialog, CopyBtn, Field, shake, Skel } from "../ui";
 
 type PasskeyRow = { id: string; name: string; created: number; last_used?: number };
 type SecurityInfo = { totp: boolean; recovery_left: number; passkeys: PasskeyRow[] };
@@ -31,6 +32,7 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<null | "off" | "codes">(null);
   const [pass, setPass] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
 
   const start = async () => {
     setErr("");
@@ -54,6 +56,7 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
       onCodes(r.recovery_codes);
     } catch (e: any) {
       setErr(e.message);
+      shake(formRef.current);
     } finally {
       setBusy(false);
     }
@@ -82,11 +85,9 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
 
   return (
     <section className="set-sec">
-      <h2>
-        Two-factor sign-in<span className="scope-tag">Just for you</span>
-      </h2>
+      <h2>Two-factor sign-in</h2>
       {!info ? (
-        <p>Loading…</p>
+        <Skel lines={2} />
       ) : info.totp ? (
         <p>
           On. After your password, you enter a code from your authenticator app. {info.recovery_left === 1 ? "1 recovery code" : `${info.recovery_left} recovery codes`} left.
@@ -96,13 +97,15 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
       )}
 
       {info && !info.totp && !setup && (
-        <button className="btn btn-p press" onClick={start}>
-          Set up two-factor sign-in
-        </button>
+        <div>
+          <button className="btn btn-p press" onClick={start}>
+            Set up two-factor sign-in
+          </button>
+        </div>
       )}
 
       {setup && (
-        <form className="panel sec-setup" onSubmit={enable}>
+        <form ref={formRef} className="panel sec-setup" onSubmit={enable}>
           <div className="sec-qr">{setup.qr ? <img src={setup.qr} alt="QR code to scan with your authenticator app" width={180} height={180} /> : null}</div>
           <div className="sec-steps">
             <ol>
@@ -146,7 +149,7 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
       )}
 
       {confirm && (
-        <form className="panel sec-pass" onSubmit={withPassword}>
+        <form className="set-form" style={{ maxWidth: 420 }} onSubmit={withPassword}>
           <Field label="Your password" hint={confirm === "off" ? "Needed to turn off two-factor sign-in." : "Needed to make new recovery codes. The old ones stop working."}>
             <div className="field">
               <input type="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} autoFocus />
@@ -154,7 +157,7 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
           </Field>
           {err && <div className="bad">{err}</div>}
           <div className="sec-btns">
-            <button className={"btn press " + (confirm === "off" ? "btn-d" : "btn-p")} disabled={busy || !pass}>
+            <button className={"btn press " + (confirm === "off" ? "btn-d" : "btn-s")} disabled={busy || !pass}>
               {confirm === "off" ? "Turn off" : "Make new codes"}
             </button>
             <button
@@ -176,6 +179,7 @@ function TwoFactor({ info, onCodes }: { info?: SecurityInfo; onCodes: (c: string
 }
 
 function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+  const app = useApp();
   const text = codes.join("\n");
   const download = () => {
     const a = document.createElement("a");
@@ -188,15 +192,17 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
     <section className="set-sec">
       <h2>Save your recovery codes</h2>
       <p>If you lose your phone, sign in with one of these instead of a code. Each works once. They won't be shown again, so keep them somewhere safe, like your password manager.</p>
-      <div className="panel sec-codes">
+      <div className="set-form" style={{ maxWidth: 420 }}>
         <div className="sec-grid mono">
           {codes.map((c) => (
             <span key={c}>{c}</span>
           ))}
         </div>
         <div className="sec-btns">
-          <CopyBtn text={text} />
-          <button className="btn btn-s btn-sm press" onClick={download}>
+          <button type="button" className="btn btn-s btn-sm press" onClick={() => navigator.clipboard?.writeText(text).then(() => app.toast("Copied"))}>
+            {ic.copy}Copy
+          </button>
+          <button type="button" className="btn btn-s btn-sm press" onClick={download}>
             Download
           </button>
         </div>
@@ -256,20 +262,18 @@ function Passkeys({ info }: { info?: SecurityInfo }) {
 
   return (
     <section className="set-sec">
-      <h2>
-        Passkeys<span className="scope-tag">Just for you</span>
-      </h2>
+      <h2>Passkeys</h2>
       <p>Sign in with your fingerprint, face or device PIN instead of your password and code. Your password keeps working too.</p>
       {keys.length > 0 && (
         <div className="panel" style={{ marginBottom: 14 }}>
           {keys.map((k) => (
-            <div className="snap" key={k.id} style={{ flexWrap: "wrap" }}>
+            <div className="prow" key={k.id}>
               {edit?.id === k.id ? (
                 <form onSubmit={rename} style={{ display: "flex", gap: 8, flex: 1, flexWrap: "wrap" }}>
                   <div className="field" style={{ flex: "1 1 180px" }}>
                     <input aria-label="Passkey name" value={edit.name} maxLength={64} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus />
                   </div>
-                  <button className="btn btn-p btn-sm press" disabled={!edit.name.trim()}>
+                  <button className="btn btn-s btn-sm press" disabled={!edit.name.trim()}>
                     Save
                   </button>
                   <button type="button" className="btn btn-q btn-sm" onClick={() => setEdit(null)}>
@@ -309,7 +313,7 @@ function Passkeys({ info }: { info?: SecurityInfo }) {
             </div>
           </Field>
           <div className="fl">
-            <button className="btn btn-p press" disabled={busy} style={{ minHeight: 40 }}>
+            <button className="btn btn-s press" disabled={busy}>
               {busy ? "Waiting for your device…" : "Add a passkey"}
             </button>
             <div className="hint" />

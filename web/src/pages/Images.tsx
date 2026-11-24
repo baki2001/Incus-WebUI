@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { bytes, dateTime, incusOp, incusURL, upload, waitOp } from "../api";
 import { ic } from "../icons";
@@ -55,8 +55,8 @@ export function Images() {
       <div className="fbar">
         <Search value={search} onChange={setSearch} placeholder="Filter by name, OS, fingerprint" />
         <Seg value={type} onChange={setType} label="Type" options={[{ v: "all", l: "All" }, { v: "container", l: "Containers" }, { v: "virtual-machine", l: "VMs" }]} />
+        <span className="dim fnote">Images on the server. New instances start from these without downloading again.</span>
       </div>
-      <p className="dim fnote">Images on the server. New instances start from these without downloading again.</p>
       <Table<Image>
         rows={rows}
         loading={q.loading}
@@ -239,12 +239,12 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
     <Sheet
       open={!!img}
       onClose={onClose}
-      title={i ? i.properties?.description || imageName(i) : ""}
+      title={i ? `Image ${imageName(i)}` : ""}
       wide
       footer={
         i && (
           <>
-            <button className="btn btn-q press l" style={{ color: "var(--err)" }} onClick={del}>
+            <button className="btn btn-q danger press l" onClick={del}>
               {ic.trash}Delete
             </button>
             <a className="btn btn-s press" style={{ textDecoration: "none" }} href={incusURL(i.server, base + "/export", project)} download>
@@ -260,6 +260,12 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
       {i && (
         <>
           <dl className="kv tight">
+            {i.properties?.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{i.properties.description}</dd>
+              </>
+            )}
             <dt>Fingerprint</dt>
             <dd className="mono">
               {i.fingerprint.slice(0, 24)}… <CopyBtn text={i.fingerprint} />
@@ -285,10 +291,10 @@ function ImageSheet({ img, onClose, project, onCreate }: { img: Image | null; on
             {Object.entries(i.properties || {})
               .filter(([k]) => ["os", "release", "variant", "serial"].includes(k))
               .map(([k, v]) => (
-                <div key={k} style={{ display: "contents" }}>
+                <Fragment key={k}>
                   <dt>{k === "os" ? "OS" : k[0].toUpperCase() + k.slice(1)}</dt>
                   <dd>{v}</dd>
-                </div>
+                </Fragment>
               ))}
           </dl>
           <SheetSec title="Names">

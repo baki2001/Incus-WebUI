@@ -58,9 +58,7 @@ export function Customize({ open, onClose, items, onChange }: { open: boolean; o
               }}
             >
               <span className="cz-grip" aria-hidden="true">
-                <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-                  {[2, 7, 12].flatMap((y) => [2, 8].map((x) => <circle key={x + "" + y} cx={x} cy={y} r="1.2" />))}
-                </svg>
+                {ic.grip}
               </span>
               <div className="cz-t">
                 <b>{el.title}</b>

@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ic } from "../icons";
 import { incusOp } from "../api";
-import { Field, Input, KVEditor, SheetSec } from "../ui";
+import { Field, Input, KVEditor, SheetSec, Status } from "../ui";
 import { EditSheet } from "./Resource";
 import { bytes, incus, incusRaw, type Instance } from "../api";
 import { useCrumbs } from "../Shell";
@@ -124,10 +124,10 @@ export function Host() {
                 </div>
                 <dl className="kv">
                   {nics.data.map((n) => (
-                    <div key={n.name} style={{ display: "contents" }}>
-                      <dt className="mono">{n.name}</dt>
+                    <Fragment key={n.name}>
+                      <dt>{n.name}</dt>
                       <dd className="mono">{n.addrs.join(", ") || <span className="dim">{n.state ? `No address, ${n.state}` : "No address"}</span>}</dd>
-                    </div>
+                    </Fragment>
                   ))}
                 </dl>
               </div>
@@ -139,7 +139,7 @@ export function Host() {
                 </div>
                 <dl className="kv">
                   {pools.data.map((p) => (
-                    <div key={p.name} style={{ display: "contents" }}>
+                    <Fragment key={p.name}>
                       <dt>
                         {p.name} <span className="dim">({p.driver})</span>
                       </dt>
@@ -151,7 +151,7 @@ export function Host() {
                           </div>
                         )}
                       </dd>
-                    </div>
+                    </Fragment>
                   ))}
                 </dl>
               </div>
@@ -184,14 +184,19 @@ export function Host() {
               </div>
               {insts.data?.length ? (
                 <>
-                  <ul className="hostlist">
+                  <div>
                     {(allInst ? insts.data : insts.data.slice(0, 8)).map((i) => (
-                      <li key={i.project + i.name}>
-                        <Link to={`/instances/${server}/${encodeURIComponent(i.name)}?project=${encodeURIComponent(i.project || "default")}`}>{i.name}</Link>
-                        <span className="dim">{i.project && i.project !== "default" ? i.project + " · " : ""}{i.status}</span>
-                      </li>
+                      <div className="prow" key={i.project + i.name}>
+                        <span>
+                          {i.project && i.project !== "default" && <span className="dim">{i.project} / </span>}
+                          <Link to={`/instances/${server}/${encodeURIComponent(i.name)}?project=${encodeURIComponent(i.project || "default")}`}>{i.name}</Link>
+                        </span>
+                        <span className="r">
+                          <Status status={i.status} />
+                        </span>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                   {insts.data.length > 8 && (
                     <div className="pfoot">
                       <button className="btn btn-q btn-sm" onClick={() => setAllInst(!allInst)}>
@@ -201,8 +206,8 @@ export function Host() {
                   )}
                 </>
               ) : (
-                <div className="pfoot" style={{ borderTop: 0 }}>
-                  {insts.loading ? "Loading…" : "No instances on this server."}
+                <div className="empty">
+                  <span className="none">{insts.loading ? "Loading…" : "No instances on this server."}</span>
                 </div>
               )}
             </div>
@@ -252,19 +257,15 @@ function ServerConfig({ server, config, onSaved }: { server: string; config: Rec
       {shown.length ? (
         <dl className="kv">
           {shown.map(([k, v]) => (
-            <div key={k} style={{ display: "contents" }}>
-              <dt className="mono" style={{ fontSize: 12 }}>
-                {k}
-              </dt>
-              <dd className="mono" style={{ fontSize: 12.5 }}>
-                {k.includes("password") ? "••••••" : v}
-              </dd>
-            </div>
+            <Fragment key={k}>
+              <dt className="mono">{k}</dt>
+              <dd className="mono">{k.includes("password") ? "••••••" : v}</dd>
+            </Fragment>
           ))}
         </dl>
       ) : (
-        <div className="pfoot" style={{ borderTop: 0 }}>
-          Everything is at its default.
+        <div className="empty">
+          <span className="none">Everything is at its default.</span>
         </div>
       )}
       <EditSheet<{ config: Record<string, string> }>
