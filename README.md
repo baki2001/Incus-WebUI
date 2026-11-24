@@ -29,6 +29,7 @@
 - Import from Proxmox (VM and container backup files) and from Docker Compose files. A preview shows what each part becomes and what doesn't carry over; a failed import cleans up after itself. See [Import](docs/migrate.md).
 - Roles per server and project (viewer, operator, manager, admin), for local users, SSO users and SSO groups, and an audit log of every change and sign-in. See [Roles and the audit log](docs/roles.md).
 - A week of CPU, memory, network and disk history for every instance and host, kept by the UI itself.
+- Instances on your own LAN, with a fixed address set inside the instance like Proxmox does. See [Instances on your own LAN](docs/networking.md).
 - WireGuard tunnels for remote access to your networks, a homelab to VPS link with port publishing, or monitoring an existing tunnel. See [WireGuard tunnels](docs/tunnels.md).
 - Operations and warnings, so you can see what Incus is doing and what it noticed.
 - Terminal, console and files for every instance, each on its own tab:

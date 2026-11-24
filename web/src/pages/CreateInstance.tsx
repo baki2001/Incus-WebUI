@@ -9,6 +9,7 @@ import { Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } f
 import { cpuOK, lanNic, lanParents, SizeField, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
 import { LocalPicker, ociRegistries, RemotePicker, useImageServers, useRemoteImages, useServerArch } from "./ImagePicker";
+import { cloudInitNet, fixedError, formatFixed, ipKey, writeContainerNet, type FixedIP } from "./guestnet";
 import "../cfg.css";
 
 const nameRe = /^[a-zA-Z][a-zA-Z0-9-]{0,62}$/;
@@ -43,6 +44,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const [disk, setDisk] = useState("");
   const [pool, setPool] = useState("");
   const [network, setNetwork] = useState("");
+  const [fixed, setFixed] = useState<FixedIP | null>(null);
   const [cloudInit, setCloudInit] = useState("");
   const [desc, setDesc] = useState("");
   const [start, setStart] = useState(true);
@@ -149,7 +151,9 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const cpuBad = cpu !== "" && !cpuOK(cpu);
   const sizeBad = (v: string) => v !== "" && !((memBytes(v) ?? 0) > 0);
   const devErrs = checkDevices(devs);
-  const hasErr = nameBad || srcBad || !projSel || cpuBad || sizeBad(mem) || sizeBad(disk) || Object.keys(devErrs).length > 0;
+  const fixedOn = !!fixed && network.startsWith("host:");
+  const fixedErr = fixedOn ? fixedError(fixed!) : undefined;
+  const hasErr = !!fixedErr || nameBad || srcBad || !projSel || cpuBad || sizeBad(mem) || sizeBad(disk) || Object.keys(devErrs).length > 0;
   const dirty =
     !!(name || alias || fp || oci.ref || iso || cpu || mem || disk || pool || network || cloudInit || desc || proj) ||
     profiles.join() !== "default" ||
@@ -173,7 +177,13 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     const devices: Devs = {};
     if (disk || pool) devices.root = { type: "disk", path: "/", pool: pool || pools.data?.[0] || "default", ...(disk ? { size: disk } : {}) };
     const lan = lans.find((l) => "host:" + l.name === network);
-    if (lan) devices.eth0 = lanNic(lan, "eth0");
+    if (lan) {
+      devices.eth0 = lanNic(lan, "eth0");
+      if (fixedOn) {
+        config[ipKey("eth0")] = formatFixed(fixed!);
+        if (isVM && !config["cloud-init.network-config"]) config["cloud-init.network-config"] = cloudInitNet([{ iface: "eth0", f: fixed }]);
+      }
+    }
     else if (network) devices.eth0 = { type: "nic", network, name: "eth0" };
     if (source === "iso") {
       const v = isos.data?.find((x) => `${x.pool}/${x.name}` === iso);
@@ -185,7 +195,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     else if (source === "local") src = { type: "image", fingerprint: fp };
     else if (source === "oci") src = { type: "image", alias: oci.ref.trim(), server: oci.url, protocol: "oci", mode: "pull" };
     else src = { type: "none" };
-    return { name: name || undefined, type, profiles, config, devices, start, ephemeral, description: desc, source: src };
+    // A container with a fixed LAN address is started only after the address is written into it.
+    return { name: name || undefined, type, profiles, config, devices, start: start && !(fixedOn && !isVM), ephemeral, description: desc, source: src };
   };
 
   const submit = async () => {
@@ -201,6 +212,15 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
       const op = await incusOp(srv, "/1.0/instances", { method: "POST", project: projSel, body: request() }, setProgress);
       invalidate("instances:");
       const made = name || (op?.resources?.instances?.[0] || "").split("/").pop()?.split("?")[0];
+      if (fixedOn && !isVM && made) {
+        try {
+          setProgress("Setting the fixed address");
+          await writeContainerNet({ server: srv, project: projSel, name: made }, "eth0", fixed);
+        } catch (e) {
+          app.toast(`${made}: ${friendlyError(e)}`);
+        }
+        if (start) await incusOp(srv, `/1.0/instances/${encodeURIComponent(made)}/state`, { method: "PUT", project: projSel, body: { action: "start" } }, setProgress);
+      }
       app.toast(`${label} created`);
       if (openRef.current) onClose();
       if (made) nav(`/instances/${srv}/${made}?project=${encodeURIComponent(projSel)}`);
@@ -346,9 +366,21 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
               <Select value={pool} onChange={setPool} options={[{ v: "", l: "From the profile" }, ...(pools.data || []).map((p) => ({ v: p, l: p }))]} />
             </Field>
           </div>
-          <Field label="Network" hint={network.startsWith("host:") ? "On your own LAN. Your router's DHCP gives it an address." : undefined}>
-            <Select value={network} onChange={setNetwork} options={[{ v: "", l: "From the profile" }, ...(nets.data || []).map((p) => ({ v: p.name, l: p.name })), ...lans.map((l) => ({ v: "host:" + l.name, l: `Your LAN via ${l.name} (${l.type === "bridge" ? "host bridge" : "macvlan"})` }))]} />
+          <Field label="Network" hint={network.startsWith("host:") && !fixedOn ? "On your own LAN. Your router's DHCP gives it an address." : undefined}>
+            <Select value={network} onChange={(v) => (setNetwork(v), v.startsWith("host:") || setFixed(null))} options={[{ v: "", l: "From the profile" }, ...(nets.data || []).map((p) => ({ v: p.name, l: p.name })), ...lans.map((l) => ({ v: "host:" + l.name, l: `Your LAN via ${l.name} (${l.type === "bridge" ? "host bridge" : "macvlan"})` }))]} />
           </Field>
+          {network.startsWith("host:") && (
+            <Field label="Address" hint={fixedOn ? fixedErr || (isVM ? "Set through cloud-init, so the VM needs cloud-init (cloud images have it)." : "Written into the container before it starts. Pick an address your router doesn't hand out.") : undefined} bad={tried && !!fixedErr}>
+              <Seg value={fixedOn ? "fixed" : "auto"} onChange={(v) => setFixed(v === "fixed" ? { address: "", gateway: "", dns: "" } : null)} options={[{ v: "auto", l: "Automatic (DHCP)" }, { v: "fixed", l: "Fixed" }]} />
+              {fixedOn && (
+                <div className="three">
+                  <Input mono aria-label="Fixed address" value={fixed!.address} onChange={(v) => setFixed({ ...fixed!, address: v.trim() })} placeholder="192.168.1.50/24" />
+                  <Input mono aria-label="Gateway" value={fixed!.gateway} onChange={(v) => setFixed({ ...fixed!, gateway: v.trim() })} placeholder="Gateway" />
+                  <Input mono aria-label="DNS" value={fixed!.dns} onChange={(v) => setFixed({ ...fixed!, dns: v.replace(/\s+/g, "") })} placeholder="DNS" />
+                </div>
+              )}
+            </Field>
+          )}
         </SheetSec>
 
         <SheetSec title="Profiles">

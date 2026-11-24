@@ -6,6 +6,7 @@ import { invalidate, useApp, useData } from "../state";
 import { Dialog, Seg, shake } from "../ui";
 import { CONFLICT, cpuCount, cpuOK, fixedIPv4Net, lanNic, lanParents, nicIPv4Error, SizeField, subnetOf, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
+import { cloudInitNet, fixedError, formatFixed, ipKey, MARK, parseFixed, writeContainerNet, type FixedIP } from "./guestnet";
 import "../cfg.css";
 
 type Inst = Instance & { server: string };
@@ -70,13 +71,37 @@ function validate(d: Put, cores?: number, hostMem?: number, nets?: any[]) {
   size(d.devices.root?.size, "Disk size", "root");
   Object.assign(err, checkDevices(d.devices));
   for (const [n, dev] of Object.entries(d.devices)) {
-    const e = dev.type === "nic" && nicIPv4Error(dev, nets);
+    const f = parseFixed(d.config[ipKey(n)]);
+    const e = dev.type === "nic" && (nicIPv4Error(dev, nets) || (f && fixedError(f)));
     if (e) err["dev." + n] = e;
   }
   return { err, warn };
 }
 
 type NetDev = { n: string; d: Dev; from: string | null };
+
+// Cards whose address comes from the LAN rather than from Incus.
+const lanCard = (d: Dev | undefined, nets?: any[]) => !!d && d.type === "nic" && !fixedIPv4Net(d, nets) && (!d.network || !!nets?.some((x) => x.name === d.network));
+
+// Keeps the fixed-address keys in step with the cards, and for a VM writes them
+// into cloud-init.network-config (unless someone wrote their own there).
+function withGuestNet(d: Put, isVM: boolean, nets: any[] | undefined, profDev: Devs): Put {
+  const next: Put = JSON.parse(JSON.stringify(d));
+  const eff = { ...profDev, ...next.devices };
+  for (const k of Object.keys(next.config)) {
+    const m = /^user\.incus-webui\.ip\.(.+)$/.exec(k);
+    if (m && !lanCard(eff[m[1]], nets)) delete next.config[k];
+  }
+  if (!isVM) return next;
+  const cards = Object.entries(eff)
+    .filter(([n, v]) => lanCard(v, nets) && next.config[ipKey(n)])
+    .map(([n, v]) => ({ iface: v.name || n, f: parseFixed(next.config[ipKey(n)]) }));
+  const cur = next.config["cloud-init.network-config"];
+  if (cur && !cur.startsWith(MARK)) return next;
+  if (cards.length) next.config["cloud-init.network-config"] = cloudInitNet(cards);
+  else if (cur) delete next.config["cloud-init.network-config"];
+  return next;
+}
 
 export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) {
   const app = useApp();
@@ -101,6 +126,16 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const host = useData<any>(`resources:${server}`, () => incus(server, "/1.0/resources"));
   const pools = useData<string[]>(`pools:${server}:${project}`, async () => (await incus<string[]>(server, "/1.0/storage-pools", { project })).map((p) => p.split("/").pop()!));
   const nets = useNetworkList(server, project);
+  // The host's own address on each LAN interface, for placeholders like 10.10.50.x/24.
+  const hostAddrs = useData<Record<string, any>>(nets.data ? `lanaddrs:${server}` : null, async () => {
+    const out: Record<string, any> = {};
+    for (const l of lanParents(nets.data)) {
+      const st = await incus<any>(server, `/1.0/networks/${encodeURIComponent(l.name)}/state`).catch(() => null);
+      const a = st?.addresses?.find((x: any) => x.family === "inet" && x.scope === "global");
+      if (a) out[l.name] = a;
+    }
+    return out;
+  });
   const profs = useData<any[]>(`profiles-full:${server}:${project}`, async () => (await incus<any[]>(server, "/1.0/profiles?recursion=1", { project })) || []);
 
   // The version we edit from, with its ETag so a save can't overwrite someone else's change.
@@ -208,6 +243,11 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
       setYamlErr("");
       d = clean(p);
     }
+    const g = withGuestNet(d, inst.type === "virtual-machine", nets.data, prof.dev);
+    if (JSON.stringify(g) !== JSON.stringify(d)) {
+      d = g;
+      setDraft(g);
+    }
     const v = validate(d, cores, hostMem, nets.data);
     if (Object.keys(v.err).length) {
       setTried(true);
@@ -217,6 +257,24 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
     }
     setApplyErr("");
     setReview(true);
+  };
+
+  // Containers: write changed fixed addresses into the guest's own network files.
+  const writeGuestNets = async () => {
+    const eff = { ...prof.dev, ...cd.devices };
+    const files: string[] = [];
+    const names = new Set([...Object.keys(cd.config), ...Object.keys(original.config)].map((k) => /^user\.incus-webui\.ip\.(.+)$/.exec(k)?.[1]).filter(Boolean) as string[]);
+    for (const n of names) {
+      const before = original.config[ipKey(n)];
+      const after = cd.config[ipKey(n)];
+      if (before === after || !eff[n]) continue;
+      try {
+        files.push(await writeContainerNet({ server, project, name }, eff[n].name || n, parseFixed(after)));
+      } catch (e) {
+        app.toast(`${n}: ${friendlyError(e)}`);
+      }
+    }
+    return [...new Set(files)];
   };
 
   const apply = async () => {
@@ -247,7 +305,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
       setReview(false);
       setDirty(false);
       setTried(false);
-      app.toast("Changes applied");
+      const wrote = inst.type === "virtual-machine" ? [] : await writeGuestNets();
+      app.toast(wrote.length ? `Changes applied. The address is set in ${wrote.join(", ")}; restart ${name} to use it.` : "Changes applied");
       invalidate("instances:");
       await loadBase().catch(() => {});
       reload();
@@ -286,6 +345,13 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const managed = managedNets.map((n) => n.name as string);
   const hostNics = (nets.data || []).filter((n) => !n.managed && n.type !== "loopback").map((n) => n.name as string);
   const lans = lanParents(nets.data);
+  const lanHint = (d: Dev) => {
+    const parent = d.parent || (nets.data || []).find((x) => x.name === d.network)?.config?.parent;
+    const a: any = (hostAddrs.data || {})[parent || ""];
+    if (!a) return { address: "Address/prefix", gateway: "Gateway" };
+    const base = a.address.split(".").slice(0, 3).join(".");
+    return { address: `${base}.x/${a.netmask}`, gateway: `${base}.1` };
+  };
   const autostart = (eff("boot.autostart") || "false") === "true";
   const nesting = (eff("security.nesting") || "false") === "true";
   const schedV = eff("snapshots.schedule");
@@ -483,6 +549,9 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                   const onLan = hostMode || (netRow && !fixedNet);
                   const mac = d.hwaddr || inst.config?.["volatile." + n + ".hwaddr"];
                   const macvlan = hostMode ? d.nictype === "macvlan" || !d.nictype : netRow?.type === "macvlan";
+                  const fixed = onLan ? parseFixed(draft.config[ipKey(n)]) : null;
+                  const setFixed = (k: keyof FixedIP, v: string) => upd((x) => void (x.config[ipKey(n)] = formatFixed({ ...(parseFixed(x.config[ipKey(n)]) || { address: "", gateway: "", dns: "" }), [k]: v.replace(/\s+/g, "") })));
+                  const hint = lanHint(d);
                   return (
                     <div key={n} className="devgrp">
                       <div className="dev n">
@@ -535,19 +604,44 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                               }
                             />
                           </div>
+                        ) : onLan ? (
+                          <div className="field">
+                            <select
+                              aria-label={`Address of ${n}`}
+                              disabled={dis}
+                              value={fixed ? "fixed" : "auto"}
+                              onChange={(e) => upd((x) => (e.target.value === "fixed" ? (x.config[ipKey(n)] = formatFixed({ address: "", gateway: "", dns: "" })) : delete x.config[ipKey(n)]))}
+                            >
+                              <option value="auto">Automatic (DHCP)</option>
+                              <option value="fixed">Fixed address</option>
+                            </select>
+                          </div>
                         ) : (
-                          <span className="note">{onLan ? "Address from your LAN" : "–"}</span>
+                          <span className="note">–</span>
                         )}
                         {dis ? (
                           <button className="btn btn-q btn-sm" title={`From profile ${pf}. Copy to this instance to edit.`} onClick={() => upd((x) => void (x.devices[n] = { ...d }))}>
                             Edit
                           </button>
                         ) : (
-                          <button className="btn btn-q ib btn-sm" aria-label={"Remove " + n} onClick={() => upd((x) => void delete x.devices[n])}>
+                          <button className="btn btn-q ib btn-sm" aria-label={"Remove " + n} onClick={() => upd((x) => void (delete x.devices[n], delete x.config[ipKey(n)]))}>
                             {ic.x}
                           </button>
                         )}
                       </div>
+                      {fixed && (
+                        <div className="line" style={{ marginTop: 6 }}>
+                          <div className="field mono-in" style={{ width: 170, height: 30 }}>
+                            <input aria-label={`Fixed address of ${n}`} disabled={dis} value={fixed.address} onChange={(e) => setFixed("address", e.target.value)} placeholder={hint.address} />
+                          </div>
+                          <div className="field mono-in" style={{ width: 130, height: 30 }}>
+                            <input aria-label={`Gateway of ${n}`} disabled={dis} value={fixed.gateway} onChange={(e) => setFixed("gateway", e.target.value)} placeholder={hint.gateway} />
+                          </div>
+                          <div className="field mono-in" style={{ width: 150, height: 30 }}>
+                            <input aria-label={`DNS of ${n}`} disabled={dis} value={fixed.dns} onChange={(e) => setFixed("dns", e.target.value)} placeholder="DNS, like 1.1.1.1" />
+                          </div>
+                        </div>
+                      )}
                       {pick === "__host" && (
                         <div className="line" style={{ marginTop: 6 }}>
                           <div className="field" style={{ width: 150, height: 30 }}>
@@ -574,17 +668,21 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                         </span>
                       ) : fixedNet && subnetOf(fixedNet) ? (
                         <span className="note">Fixed addresses go in {subnetOf(fixedNet)}.</span>
+                      ) : fixed ? (
+                        <span className="note">
+                          {inst.type === "virtual-machine" ? "Set through cloud-init when you apply, so the VM needs cloud-init (cloud images have it)." : "Written into the container's network settings when you apply."} It takes effect after a restart. Pick an address your router doesn't hand out.
+                        </span>
                       ) : onLan ? (
                         <span className="note">
                           Your router's DHCP gives this card its address.{" "}
                           {mac ? (
                             <>
-                              For a fixed one, reserve <span className="mono">{mac}</span> in your router
+                              You can also reserve <span className="mono">{mac}</span> in your router
                             </>
                           ) : (
-                            "For a fixed one, reserve its MAC address in your router after the first start"
+                            "You can also reserve its MAC address in your router after the first start"
                           )}
-                          , or set it inside the instance.{macvlan && " The host itself can't reach the instance over macvlan; a host bridge can."}
+                          .{macvlan && " The host itself can't reach the instance over macvlan; a host bridge can."}
                         </span>
                       ) : null}
                       {dis && <span className="note">From profile {pf}</span>}
@@ -605,7 +703,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                     {ic.plus}Add network card
                   </button>
                 </div>
-                <span className="note">A fixed IPv4 works on Incus bridge networks. To put an instance on your own LAN, pick a host interface.</span>
+                <span className="note">To put an instance on your own LAN, pick a host interface. A fixed address works there and on Incus bridges.</span>
               </div>
             </div>
             <div className="hrow">
