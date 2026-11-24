@@ -6,7 +6,6 @@ package main
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,12 +18,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/baki2001/incus-webui/internal/proxmox"
+	"github.com/klauspost/compress/gzip"
 )
 
 // importFile is an uploaded backup waiting to be imported.
@@ -36,10 +38,12 @@ type importFile struct {
 	Kind    string    `json:"kind"`  // container | virtual-machine
 	Size    int64     `json:"size"`
 	Created time.Time `json:"created"`
+	Expires time.Time `json:"expires"` // when pruneImports removes it
 }
 
-// Uploads nobody imported are removed after a day.
-const importKeep = 24 * time.Hour
+// Uploads stay on the UI server until they are imported or removed, or for a
+// week at most, so a big backup doesn't fill the disk forever.
+const importKeep = 7 * 24 * time.Hour
 
 var importID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
@@ -59,6 +63,7 @@ func (a *App) readImport(id string, s *Session) (*importFile, error) {
 	if json.Unmarshal(b, &f) != nil || (f.Owner != owner(s) && !a.isAdmin(s)) {
 		return nil, errors.New("no such upload")
 	}
+	f.Expires = f.Created.Add(importKeep)
 	return &f, nil
 }
 
@@ -126,6 +131,7 @@ func (a *App) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	f.Expires = f.Created.Add(importKeep)
 	writeJSON(w, f)
 }
 
@@ -278,6 +284,7 @@ func extraVolName(inst, key string) string { return inst + "-" + key }
 // it created. It returns a note for the user when the import worked but
 // something needs a look.
 func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *proxmox.Plan, q importReq, set func(float64, string)) (note string, err error) {
+	lowPriority()
 	tmp, err := os.MkdirTemp(a.importDir(), f.ID+"-")
 	if err != nil {
 		return "", err
@@ -441,6 +448,17 @@ func (a *App) runImport(ctx context.Context, c *incusConn, f *importFile, p *pro
 	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address or a network interface name that changed.", nil
 }
 
+// lowPriority makes the calling goroutine's thread nice 10, so a long
+// conversion doesn't slow down the rest of the UI. The goroutine stays on
+// that thread, and Go ends the thread when the goroutine returns, so no other
+// work inherits the lower priority.
+func lowPriority() {
+	runtime.LockOSThread()
+	if err := syscall.Setpriority(syscall.PRIO_PROCESS, syscall.Gettid(), 10); err != nil {
+		log.Printf("import: lower priority: %v", err)
+	}
+}
+
 func biosMissing(err error) bool {
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "seabios") || strings.Contains(m, "csm") || strings.Contains(m, "firmware")
@@ -541,7 +559,10 @@ func importVolume(ctx context.Context, c *incusConn, project, pool, name, img st
 		return err
 	}
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(volumeBackup(pw, pool, name, f, st.Size())) }()
+	go func() {
+		lowPriority()
+		pw.CloseWithError(volumeBackup(pw, pool, name, f, st.Size()))
+	}()
 	defer pr.Close()
 	_, err = c.send(ctx, "POST", "/1.0/storage-pools/"+url.PathEscape(pool)+"/volumes/custom", project, pr,
 		map[string]string{"Content-Type": "application/octet-stream", "X-Incus-name": name})

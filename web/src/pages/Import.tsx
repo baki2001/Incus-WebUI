@@ -4,7 +4,9 @@ import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useManagedNetworks, useNames } from "../data";
 import { Field, Input, Seg, Select, Sheet, SheetSec, TglRow } from "../ui";
 
-type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string };
+type Upload = { id: string; name: string; kind: "container" | "virtual-machine"; size: number; created: string; expires: string };
+
+const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 type Plan = {
   type: string;
   name: string;
@@ -56,6 +58,14 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
   const qs = new URLSearchParams({ network, pool: storage, name, keep_mac: String(keepMAC) });
   const plan = useData<Plan>(file && network && storage ? `import-plan:${file.id}:${qs}` : null, () => ui(`/imports/${file!.id}/plan?${qs}`));
 
+  // The upload is the one step that needs this page; warn before leaving it.
+  useEffect(() => {
+    if (sending == null) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [sending != null]);
+
   useEffect(() => {
     if (!open) {
       setFile(null);
@@ -91,7 +101,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
       await ui(`/imports/${file!.id}/run`, { method: "POST", body: { server: srv, project, name, network, pool: storage, keep_mac: keepMAC, start } });
       invalidate("ui-jobs");
       invalidate("ui-imports");
-      app.toast(`Importing ${p!.name}. Follow it under Tasks.`);
+      app.toast(`Importing ${p!.name} on the server. You can close this page; follow it under Tasks.`);
       onClose();
     } catch (e) {
       setErr(friendlyError(e));
@@ -133,9 +143,12 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
           {err}
         </div>
       )}
-      <SheetSec title="Backup">
+      <SheetSec title="1. Upload the backup">
         <p className="dim" style={{ margin: 0 }}>
-          A vzdump file from Proxmox: <code>vzdump-qemu-*.vma</code> for a VM or <code>vzdump-lxc-*.tar</code> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <code>/var/lib/vz/dump</code>.
+          A vzdump file from Proxmox: <code>vzdump-qemu-*.vma</code> for a VM or <code>vzdump-lxc-*.tar</code> for a container, plain or compressed with zstd or gzip. Proxmox keeps them under <code>/var/lib/vz/dump</code>. Backups on a Proxmox Backup Server can't be imported yet: restore them in Proxmox and make a vzdump backup.
+        </p>
+        <p className="dim" style={{ margin: "8px 0 0" }}>
+          Your browser sends the file to the UI server. Keep this page open until the upload is done. After that the browser isn't needed anymore.
         </p>
         <div className="imp-up">
           <input ref={input} type="file" hidden accept=".vma,.zst,.gz,.tgz,.tar,.lzo" onChange={(e) => e.target.files?.[0] && send(e.target.files[0])} />
@@ -156,7 +169,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
                   {u.name}
                 </button>
                 <span className="dim">
-                  {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}
+                  {u.kind === "container" ? "container" : "VM"}, {bytes(u.size)}, on the server until {day(u.expires)}
                 </span>
                 <button className="lnk" onClick={() => drop(u)}>
                   Remove
@@ -169,7 +182,7 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
 
       {file && (
         <>
-          <SheetSec title="Where">
+          <SheetSec title="2. Choose where it goes">
             <div className="two">
               <Field label="Name" hint={nameBad ? "Start with a letter; use letters, numbers and dashes." : "Leave empty to keep the Proxmox name."} bad={nameBad}>
                 <Input value={name} onChange={setName} placeholder={p?.name || ""} bad={nameBad} />
@@ -193,7 +206,10 @@ function ProxmoxSheet({ open, onClose, head }: { open: boolean; onClose: () => v
             <TglRow title="Start after the import" note="The import waits up to 3 minutes for a network address." on={start} onChange={setStart} />
           </SheetSec>
 
-          <SheetSec title="What it becomes">
+          <SheetSec title="3. Check what it becomes">
+            <p className="dim" style={{ margin: 0 }}>
+              The import runs on the UI server. Once it has started you can close the browser: it keeps going and shows under Tasks. The uploaded file is deleted when the import is done.
+            </p>
             {plan.error && <p className="bad">{friendlyError(plan.error)}</p>}
             {!p && !plan.error && <p className="dim">Reading the backup…</p>}
             {p && <PlanView p={p} />}
