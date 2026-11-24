@@ -404,6 +404,10 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {ic.folder}
           {lbl("Projects")}
         </NavLink>
+        <NavLink to="/backups" className="ni" title="Backups">
+          {ic.backup}
+          {lbl("Backups")}
+        </NavLink>
         {app.servers.length > 0 && <div className="grp">Hosts</div>}
         {app.servers.map((s) => (
           <NavLink key={s.name} to={`/hosts/${s.name}`} className="ni" title={s.name}>
@@ -625,6 +629,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
       { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
       { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
+      { group: "Go to", label: "Backups", icon: ic.backup, run: go("/backups") },
       { group: "Go to", label: "Tasks", icon: ic.tasks, run: go("/tasks") },
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },

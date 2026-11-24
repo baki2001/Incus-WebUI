@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -196,5 +198,45 @@ func TestBackupIncus(t *testing.T) {
 	}
 	if exec.Command("incus", "info", name).Run() == nil {
 		t.Error("the failed restore left an instance")
+	}
+}
+
+// TestBackupsAllProjects lists every project's backups on a server, but only
+// those of projects the user may view.
+func TestBackupsAllProjects(t *testing.T) {
+	a := testApp(t, "bob")
+	dir := t.TempDir()
+	_ = a.store.Update(func(c *Config) error {
+		c.Backups.Targets = []BackupTarget{{Name: "disk", Type: "dir", Path: dir}}
+		c.Access = []Access{{Who: "user:bob", Server: "lab", Project: "web", Role: "viewer"}}
+		return nil
+	})
+	st := dirStore{dir}
+	for _, k := range []string{"lab/web/a/20260101-000000", "lab/db/b/20260101-000000", "other/web/c/20260101-000000"} {
+		m, _ := json.Marshal(BackupMeta{Created: time.Now(), Name: "snap1"})
+		if _, err := st.put(context.Background(), k+".json", strings.NewReader(string(m))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ck := signedIn(t, a, "bob")
+	get := func(url string) (int, []BackupMeta) {
+		r := httptest.NewRequest("GET", url, nil)
+		r.SetPathValue("server", "lab")
+		r.AddCookie(ck)
+		w := httptest.NewRecorder()
+		a.handleBackups(w, r)
+		var out struct{ Backups []BackupMeta }
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out.Backups
+	}
+	code, l := get("/x?project=*")
+	if code != 200 || len(l) != 1 || l[0].Instance != "a" || l[0].Name != "snap1" {
+		t.Errorf("all projects: %d %+v", code, l)
+	}
+	if code, _ := get("/x?project=db"); code != 403 {
+		t.Errorf("project db without a role: %d", code)
+	}
+	if code, l := get("/x?project=web&instance=a"); code != 200 || len(l) != 1 {
+		t.Errorf("one instance: %d %+v", code, l)
 	}
 }

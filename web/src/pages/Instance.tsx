@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { bytes, dateTime, imageLabel, incus, incusOp, incusRaw, parseBytes, since, type Instance } from "../api";
+import { bytes, dateTime, imageLabel, incus, incusOp, incusRaw, parseBytes, since, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, mutateCache, useApp, useData } from "../state";
@@ -12,7 +12,7 @@ import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
 import { MetricsPanel } from "./Charts";
-import { BackupsTab } from "./Backups";
+import { BackupsTab, useBackupTargets } from "./Backups";
 
 type Tab = "overview" | "history" | "configuration" | "snapshots" | "backups" | "files" | "terminal" | "console" | "logs";
 const tabOrder: Tab[] = ["overview", "history", "configuration", "snapshots", "backups", "files", "terminal", "console", "logs"];
@@ -436,21 +436,36 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
   const [custom, setCustom] = useState("");
   const [ren, setRen] = useState<string | null>(null);
   const [from, setFrom] = useState<string | null>(null);
+  // Where the snapshot goes: "" is a local Incus snapshot, otherwise a backup target.
+  const [where, setWhere] = useState("");
+  const targets = useBackupTargets();
+  const canBackup = app.can(inst.server, inst.project, "manager") && (targets.data?.length || 0) > 0;
+  const dest = canBackup && targets.data!.some((t) => t.name === where) ? where : "";
   const snaps = (inst.snapshots || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
   const base = `/1.0/instances/${encodeURIComponent(inst.name)}`;
   const o = { project: inst.project };
   const canState = inst.status === "Running" && inst.expanded_config?.["migration.stateful"] === "true";
   const hasSize = snaps.some((s) => s.size > 0);
-  const bad = nameProblem(name.trim(), snaps.map((s) => s.name));
+  const bad = nameProblem(name.trim(), dest ? [] : snaps.map((s) => s.name));
   const expiresAt = () => {
     if (exp === "never") return undefined;
     if (exp === "custom") return custom ? new Date(custom).toISOString() : undefined;
     return new Date(Date.now() + Number(exp) * 86400000).toISOString();
   };
-  const create = () => {
-    if (bad || (exp === "custom" && !custom)) return;
+  const create = async () => {
+    if (bad || (!dest && exp === "custom" && !custom)) return;
     const n = name.trim() || `snap-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`;
     setName("");
+    if (dest) {
+      try {
+        await ui(`/backups/${encodeURIComponent(inst.server)}`, { method: "POST", body: { project: inst.project, instance: inst.name, target: dest, name: n } });
+        invalidate("ui-jobs");
+        app.toast(`Saving snapshot ${n} to ${dest}. Follow it under Tasks; it shows under Backups when done.`);
+      } catch (e) {
+        app.fail(e, "Couldn't start the snapshot.");
+      }
+      return;
+    }
     app.run(
       `Snapshot of ${inst.name}`,
       () =>
@@ -476,29 +491,44 @@ function SnapshotsTab({ inst, reload }: { inst: Instance & { server: string }; r
         <div className="field" style={{ maxWidth: 240 }}>
           <input className="mono" placeholder="Snapshot name (optional)" aria-invalid={!!bad} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         </div>
-        <div className="field" style={{ maxWidth: 190 }}>
-          <select aria-label="Expiry" value={exp} onChange={(e) => setExp(e.target.value)}>
-            {expiries.map((x) => (
-              <option key={x.v} value={x.v}>
-                {x.l}
-              </option>
-            ))}
-          </select>
-        </div>
-        {exp === "custom" && (
+        {canBackup && (
+          <div className="field" style={{ maxWidth: 230 }}>
+            <select aria-label="Where to keep the snapshot" value={dest} onChange={(e) => setWhere(e.target.value)}>
+              <option value="">Local, on the server</option>
+              {targets.data!.map((t) => (
+                <option key={t.name} value={t.name}>
+                  On backup target {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!dest && (
+          <div className="field" style={{ maxWidth: 190 }}>
+            <select aria-label="Expiry" value={exp} onChange={(e) => setExp(e.target.value)}>
+              {expiries.map((x) => (
+                <option key={x.v} value={x.v}>
+                  {x.l}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!dest && exp === "custom" && (
           <div className="field" style={{ maxWidth: 210 }}>
             <input type="datetime-local" aria-label="Expires on" value={custom} min={new Date().toISOString().slice(0, 16)} onChange={(e) => setCustom(e.target.value)} />
           </div>
         )}
-        {canState && (
+        {canState && !dest && (
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input type="checkbox" checked={stateful} onChange={(e) => setStateful(e.target.checked)} /> Include memory
           </label>
         )}
-        <button className="btn btn-p press" disabled={!!bad || (exp === "custom" && !custom)} onClick={create}>
+        <button className="btn btn-p press" disabled={!!bad || (!dest && exp === "custom" && !custom)} onClick={create}>
           {ic.snap}Take snapshot
         </button>
         {bad && <span className="snap-err">{bad}</span>}
+        {dest && !bad && <span className="snap-note">Saves a full copy of {inst.name} (config and root disk) to {dest}, kept until you delete it. Find it on the Backups tab or the Backups page.</span>}
       </div>
       <div className="panel tw tw-menu">
         <table>
