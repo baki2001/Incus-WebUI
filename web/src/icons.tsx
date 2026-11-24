@@ -77,7 +77,7 @@ export function Mark() {
     <svg className="mark" viewBox="0 0 22 22" aria-hidden="true">
       <rect x="2" y="3" width="18" height="4.5" rx="2.25" fill="var(--ink)" />
       <rect x="2" y="9" width="18" height="4.5" rx="2.25" fill="var(--ink)" opacity=".45" />
-      <rect x="2" y="15" width="10" height="4.5" rx="2.25" fill="var(--accent)" />
+      <rect x="2" y="15" width="10" height="4.5" rx="2.25" fill="var(--cta, var(--accent))" />
     </svg>
   );
 }

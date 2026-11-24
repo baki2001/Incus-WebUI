@@ -256,7 +256,7 @@ func (a *App) handleTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch t.Name {
-	case "graphite", "harbor":
+	case "graphite", "kyoto":
 		t.Accent = ""
 	case "custom":
 		if !hexColor.MatchString(t.Accent) {

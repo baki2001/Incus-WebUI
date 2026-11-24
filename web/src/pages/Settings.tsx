@@ -62,7 +62,7 @@ function Appearance() {
   const pair = accentPair(custom);
   const themes: { v: Theme["name"]; l: string; note: string; sw: [string, string, string] }[] = [
     { v: "graphite", l: "Graphite", note: "Default", sw: ["#f5f5f7", "#1c1c1f", "#3d5fc4"] },
-    { v: "harbor", l: "Harbor", note: "Teal, tinted sidebar", sw: ["#0f2a33", "#f1f5f6", "#0e6b80"] },
+    { v: "kyoto", l: "Kyoto", note: "Stone, indigo and vermilion", sw: ["#142950", "#ebecef", "#e93d0d"] },
     { v: "custom", l: "Custom", note: "Your accent colour", sw: ["#f5f5f7", "#1c1c1f", pair.light] },
   ];
   return (
@@ -83,11 +83,11 @@ function Appearance() {
           {themes.map((t) => (
             <button key={t.v} className="tcard press" aria-pressed={app.theme.name === t.v} onClick={() => setTheme(t.v === "custom" ? { name: "custom", accent: custom } : { name: t.v })}>
               <div className="prev one">
-                <div className="pv" style={{ background: t.v === "harbor" ? t.sw[1] : t.sw[0] }}>
-                  <div className="ps" style={{ background: t.v === "harbor" ? t.sw[0] : "transparent" }}>
-                    <i style={{ background: t.v === "harbor" ? "#fff" : t.sw[1] }} />
-                    <i style={{ background: t.v === "harbor" ? "#fff" : t.sw[1] }} />
-                    <i style={{ background: t.v === "harbor" ? "#fff" : t.sw[1] }} />
+                <div className="pv" style={{ background: t.v === "kyoto" ? t.sw[1] : t.sw[0] }}>
+                  <div className="ps" style={{ background: t.v === "kyoto" ? t.sw[0] : "transparent" }}>
+                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
+                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
+                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
                   </div>
                   <div className="pm">
                     <div className="c" style={{ background: "#fff" }}>
