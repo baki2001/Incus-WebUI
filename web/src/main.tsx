@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./styles.css";
 import "./extra.css";
 import { setUnauthorizedHandler, ui } from "./api";
-import { AppProvider, applyTheme, type Mode, type Theme } from "./state";
+import { AppProvider, applyTheme, defaultLook, storedLook, type Theme } from "./state";
 import { Shell } from "./Shell";
 import { Login, takeNext } from "./pages/Login";
 import { Overview } from "./pages/Overview";
@@ -40,13 +40,7 @@ function Root() {
   }, []);
   useEffect(() => {
     if (auth) {
-      let mode: Mode = "auto";
-      try {
-        mode = (localStorage.getItem("iwui.mode") as Mode) || "auto";
-      } catch {
-        /* ignore */
-      }
-      applyTheme(auth.theme, mode);
+      applyTheme(auth.theme, storedLook() || defaultLook(auth.theme));
     }
   }, [auth]);
   if (!auth) return null;

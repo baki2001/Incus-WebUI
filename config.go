@@ -49,7 +49,7 @@ type Config struct {
 }
 
 type Theme struct {
-	Name   string `yaml:"name" json:"name"`                         // graphite | kyoto | custom
+	Name   string `yaml:"name" json:"name"`                         // kyoto | light | graphite | custom
 	Accent string `yaml:"accent,omitempty" json:"accent,omitempty"` // hex, for custom
 }
 

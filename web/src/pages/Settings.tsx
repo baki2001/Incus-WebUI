@@ -53,48 +53,51 @@ function Appearance() {
     app.setTheme(t);
     try {
       await ui("/theme", { method: "PUT", body: t });
-      app.toast(`Theme set to ${t.name[0].toUpperCase() + t.name.slice(1)} for everyone`, { label: "Undo", fn: () => setTheme(prev) });
+      app.toast(`Default look set to ${t.name[0].toUpperCase() + t.name.slice(1)}`, { label: "Undo", fn: () => setTheme(prev) });
     } catch (e: any) {
       app.setTheme(prev);
       app.fail(e, "Could not change the theme.");
     }
   };
   const pair = accentPair(custom);
-  const themes: { v: Theme["name"]; l: string; note: string; sw: [string, string, string] }[] = [
-    { v: "kyoto", l: "Kyoto", note: "Default", sw: ["#142950", "#ebecef", "#e93d0d"] },
-    { v: "graphite", l: "Graphite", note: "Neutral grey", sw: ["#f5f5f7", "#1c1c1f", "#3d5fc4"] },
-    { v: "custom", l: "Custom", note: "Your accent colour", sw: ["#f5f5f7", "#1c1c1f", pair.light] },
+  // Preview colours: page, sidebar, sidebar lines, card, card lines, button.
+  type Pv = { page: string; side: string; sideInk: string; card: string; cardInk: string; btn: string };
+  const themes: { v: Theme["name"]; l: string; note: string; pv: Pv }[] = [
+    { v: "kyoto", l: "Kyoto", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#fff", card: "#fff", cardInk: "#101a30", btn: "#db390c" } },
+    { v: "light", l: "Light", note: "Plain light", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: "#3d5fc4" } },
+    { v: "graphite", l: "Graphite", note: "Dark", pv: { page: "#0e0e10", side: "transparent", sideInk: "rgba(255,255,255,.7)", card: "#1d1d20", cardInk: "rgba(255,255,255,.8)", btn: "#93a8ee" } },
+    { v: "custom", l: "Custom", note: "Your accent on Light and Graphite", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: pair.light } },
   ];
   return (
     <>
       <section className="set-sec">
         <h2>
-          Mode<span className="scope-tag">Just for you, on this browser</span>
+          Look<span className="scope-tag">Just for you, on this browser</span>
         </h2>
-        <p>Auto follows your system setting.</p>
-        <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "auto", l: "Auto" }, { v: "light", l: "Light" }, { v: "dark", l: "Dark" }]} />
+        <p>Kyoto is stone and indigo, Light is plain light, Graphite is dark.</p>
+        <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "kyoto", l: "Kyoto" }, { v: "light", l: "Light" }, { v: "graphite", l: "Graphite" }]} />
       </section>
       {app.admin && <section className="set-sec">
         <h2>
-          Theme<span className="scope-tag">For everyone using this server</span>
+          Default look<span className="scope-tag">For everyone using this server</span>
         </h2>
-        <p>Works in both light and dark mode.</p>
+        <p>What people see until they pick their own look.</p>
         <div className="tcards">
           {themes.map((t) => (
             <button key={t.v} className="tcard press" aria-pressed={app.theme.name === t.v} onClick={() => setTheme(t.v === "custom" ? { name: "custom", accent: custom } : { name: t.v })}>
               <div className="prev one">
-                <div className="pv" style={{ background: t.v === "kyoto" ? t.sw[1] : t.sw[0] }}>
-                  <div className="ps" style={{ background: t.v === "kyoto" ? t.sw[0] : "transparent" }}>
-                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
-                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
-                    <i style={{ background: t.v === "kyoto" ? "#fff" : t.sw[1] }} />
+                <div className="pv" style={{ background: t.pv.page }}>
+                  <div className="ps" style={{ background: t.pv.side }}>
+                    <i style={{ background: t.pv.sideInk }} />
+                    <i style={{ background: t.pv.sideInk }} />
+                    <i style={{ background: t.pv.sideInk }} />
                   </div>
                   <div className="pm">
-                    <div className="c" style={{ background: "#fff" }}>
-                      <i style={{ background: "#1c1c1f" }} />
-                      <i style={{ background: "#1c1c1f" }} />
+                    <div className="c" style={{ background: t.pv.card }}>
+                      <i style={{ background: t.pv.cardInk }} />
+                      <i style={{ background: t.pv.cardInk }} />
                     </div>
-                    <div className="b" style={{ background: t.sw[2] }} />
+                    <div className="b" style={{ background: t.pv.btn }} />
                   </div>
                 </div>
               </div>

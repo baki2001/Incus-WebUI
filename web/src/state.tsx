@@ -95,8 +95,22 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 
 // ---------- app-wide state ----------
 
-export type Mode = "auto" | "light" | "dark";
-export type Theme = { name: "graphite" | "kyoto" | "custom"; accent?: string };
+// Mode is the look one person picks: Kyoto (stone + indigo), plain Light, or Graphite (dark).
+export type Mode = "kyoto" | "light" | "graphite";
+// Theme is the server-wide default look, or a custom accent on top of Light and Graphite.
+export type Theme = { name: "kyoto" | "light" | "graphite" | "custom"; accent?: string };
+const looks: Mode[] = ["kyoto", "light", "graphite"];
+export function defaultLook(t: Theme): Mode {
+  return t.name === "custom" ? "light" : looks.includes(t.name as Mode) ? (t.name as Mode) : "kyoto";
+}
+// storedLook is this browser's own pick, or "" to follow the server default.
+// Older versions stored a light/dark mode instead.
+export function storedLook(): Mode | "" {
+  const v = ls("iwui.look", "");
+  if (looks.includes(v as Mode)) return v as Mode;
+  const old = ls("iwui.mode", "");
+  return old === "dark" ? "graphite" : old === "light" ? "light" : "";
+}
 type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
 
@@ -151,10 +165,10 @@ function lsSet(key: string, v: string) {
 export function applyTheme(theme: Theme, mode: Mode) {
   const html = document.documentElement;
   html.classList.add("switching");
-  if (mode === "auto") html.removeAttribute("data-theme");
-  else html.setAttribute("data-theme", mode);
-  if (theme.name === "graphite") html.removeAttribute("data-brand");
-  else html.setAttribute("data-brand", theme.name);
+  html.setAttribute("data-theme", mode === "graphite" ? "dark" : "light");
+  const brand = mode === "kyoto" ? "kyoto" : theme.name === "custom" ? "custom" : "";
+  if (brand) html.setAttribute("data-brand", brand);
+  else html.removeAttribute("data-brand");
   if (theme.name === "custom" && theme.accent) {
     const { light, dark } = accentPair(theme.accent);
     html.style.setProperty("--cl", light);
@@ -202,8 +216,9 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const [serversLoaded, setLoaded] = useState(false);
   const [scope, setScopeS] = useState(ls("iwui.scope", "*"));
   const [project, setProjectS] = useState(ls("iwui.project", "default"));
-  const [mode, setModeS] = useState<Mode>(ls("iwui.mode", "auto") as Mode);
+  const [look, setLook] = useState<Mode | "">(storedLook);
   const [theme, setThemeS] = useState<Theme>(initialTheme);
+  const mode = look || defaultLook(theme);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lastUpdate, setLast] = useState(Date.now());
@@ -298,8 +313,8 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
     },
     mode,
     setMode: (m) => {
-      setModeS(m);
-      lsSet("iwui.mode", m);
+      setLook(m);
+      lsSet("iwui.look", m);
     },
     theme,
     setTheme: setThemeS,

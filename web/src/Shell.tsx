@@ -510,15 +510,15 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   );
 }
 
-// ModeBtn cycles Auto -> Light -> Dark. Settings > Appearance has the same choice.
+// ModeBtn cycles Kyoto -> Light -> Graphite. Settings > Appearance has the same choice.
 function ModeBtn() {
   const app = useApp();
-  const order: Mode[] = ["auto", "light", "dark"];
+  const order: Mode[] = ["kyoto", "light", "graphite"];
   const next = order[(order.indexOf(app.mode) + 1) % order.length];
   const name = (m: Mode) => m[0].toUpperCase() + m.slice(1);
   return (
-    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Colour mode: ${name(app.mode)}. Switch to ${name(next)}`} title={`Colour mode: ${name(app.mode)}`}>
-      {app.mode === "light" ? ic.sun : app.mode === "dark" ? ic.moon : ic.auto}
+    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Look: ${name(app.mode)}. Switch to ${name(next)}`} title={`Look: ${name(app.mode)}`}>
+      {app.mode === "light" ? ic.sun : app.mode === "graphite" ? ic.moon : ic.auto}
     </button>
   );
 }
@@ -697,8 +697,9 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
-      { group: "Actions", label: "Switch to dark mode", icon: ic.screen, run: () => (app.setMode("dark"), onClose()) },
-      { group: "Actions", label: "Switch to light mode", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
+      { group: "Actions", label: "Switch to Kyoto", icon: ic.screen, run: () => (app.setMode("kyoto"), onClose()) },
+      { group: "Actions", label: "Switch to Light", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
+      { group: "Actions", label: "Switch to Graphite (dark)", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
     ];
     const where = (project: string | undefined, server: string, always = false) => [project && (always || project !== "default") ? project : "", multi ? server : ""].filter(Boolean).join(" · ");
     for (const r of found.data?.instances || []) {
