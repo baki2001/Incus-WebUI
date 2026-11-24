@@ -4,7 +4,7 @@ import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { useCollection, useCurrentProject, useServerInfo } from "../data";
-import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, SheetSec, Table, TglRow, type Col } from "../ui";
+import { confirmDialog, Dialog, Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, Table, TglRow, type Col } from "../ui";
 import { EditSheet, matches, PageHead, Search, UsedBy } from "./Resource";
 import { UsedBySec, usedByBody, useOpenParam } from "./usedby";
 
@@ -60,6 +60,13 @@ const netKeys = [
   "security.acls.default.egress.action", "raw.dnsmasq", "parent", "mtu", "vlan",
 ];
 
+const typeNote: Record<string, string> = {
+  bridge: "A private network that Incus runs, with its own subnet, DHCP and NAT. Instances can get a fixed address here.",
+  macvlan: "Puts instances straight on the LAN of a host interface. Your router's DHCP gives out the addresses, so Incus can't set a fixed one. The host itself can't reach these instances.",
+  physical: "Hands a whole host interface to one instance. Addresses come from the network it's plugged into.",
+  ovn: "A software-defined network across servers. Needs OVN set up on the host.",
+};
+
 function ServerCol<T extends { server: string }>(multi: boolean): Col<T> {
   return { k: "server", label: "Server", cell: (r) => r.server, sort: (r) => r.server, hide: !multi, cls: "hide-m" };
 }
@@ -78,7 +85,11 @@ export function Networks() {
   const settling = !!q.data?.some((n) => n.managed && n.status === "Pending");
   useEffect(() => setPoll(settling ? 3000 : 0), [settling]);
   useOpenParam(q.data, setEdit);
-  const rows = q.data?.filter((n) => n.managed && matches(search, n.name, n.description, n.config["ipv4.address"], n.type));
+  // Host interfaces (unmanaged) are listed read-only after the Incus networks,
+  // so people can see what an instance can join without opening a terminal.
+  const shown = (n: Net) => n.managed || ["physical", "bridge", "bond", "vlan"].includes(n.type);
+  const rows = q.data?.filter((n) => shown(n) && matches(search, n.name, n.description, n.config["ipv4.address"], n.type)).sort((a, b) => Number(b.managed) - Number(a.managed));
+  const [hostNet, setHostNet] = useState<Net | null>(null);
 
   const del = async (n: Net) => {
     if (!(await confirmDialog({ title: `Delete network ${n.name}?`, body: usedByBody("These still use it; Incus refuses to delete it until they don't.", n.used_by, n.server), confirm: "Delete", danger: true }))) return;
@@ -103,15 +114,15 @@ export function Networks() {
         rows={rows}
         loading={q.loading}
         rowKey={(n) => n.server + n.name}
-        onRow={setEdit}
-        empty={q.error || (search ? "No networks match." : "No managed networks yet.")}
+        onRow={(n) => (n.managed ? setEdit(n) : setHostNet(n))}
+        empty={q.error || (search ? "No networks match." : "No networks yet.")}
         cols={[
           { k: "name", label: "Name", sort: (n) => n.name, cell: (n) => <NameCell name={n.name} sub={n.description} /> },
-          { k: "type", label: "Type", sort: (n) => n.type, cell: (n) => n.type },
+          { k: "type", label: "Type", sort: (n) => n.type, cell: (n) => (n.managed ? n.type : <span className="dim">{n.type}, host</span>) },
           ServerCol<Net>(multi),
           { k: "v4", label: "IPv4", sort: (n) => n.config["ipv4.address"], cell: (n) => <span className="mono">{!n.config["ipv4.address"] || n.config["ipv4.address"] === "none" ? "–" : n.config["ipv4.address"]}</span>, cls: "hide-s" },
           { k: "v6", label: "IPv6", sort: (n) => n.config["ipv6.address"], cell: (n) => <span className="mono dim">{!n.config["ipv6.address"] || n.config["ipv6.address"] === "none" ? "–" : n.config["ipv6.address"]}</span>, cls: "hide-m" },
-          { k: "status", label: "State", sort: (n) => n.status, cell: (n) => <span className={"st " + (n.status === "Created" ? "running" : n.status === "Pending" ? "busy" : "error")}>{netState(n.status)}</span> },
+          { k: "status", label: "State", sort: (n) => n.status, cell: (n) => (n.managed ? <span className={"st " + (n.status === "Created" ? "running" : n.status === "Pending" ? "busy" : "error")}>{netState(n.status)}</span> : <span className="dim">Set up on the host</span>) },
           { k: "used", label: "Used by", sort: (n) => n.used_by?.length || 0, cell: (n) => <UsedBy list={n.used_by} />, cls: "right" },
         ]}
       />
@@ -122,6 +133,7 @@ export function Networks() {
         project={project}
         onSaved={() => invalidate("networks:")}
       />
+      <HostNetSheet net={hostNet} project={project} onClose={() => setHostNet(null)} />
       <NetworkSheet open={!!edit} net={edit} onClose={() => setEdit(null)} servers={[]} project={project} onSaved={() => invalidate("networks:")} onDelete={edit ? () => del(edit) : undefined} />
     </>
   );
@@ -133,6 +145,47 @@ export function NameCell({ name, sub }: { name: string; sub?: string }) {
       <span className="nm2">{name}</span>
       {sub && <small className="dim">{sub}</small>}
     </span>
+  );
+}
+
+// Read-only view of a host interface. Incus doesn't manage these, so the host's
+// own network config (netplan, ifupdown, IncusOS) is where they change.
+function HostNetSheet({ net, project, onClose }: { net: Net | null; project: string; onClose: () => void }) {
+  const [last, setLast] = useState<Net | null>(null);
+  useEffect(() => void (net && setLast(net)), [net]);
+  const n = net || last;
+  const st = useData<any>(net ? `netstate:${net.server}:${net.name}` : null, () => incus(net!.server, `/1.0/networks/${encodeURIComponent(net!.name)}/state`, { project }));
+  const addrs: any[] = (st.data?.addresses || []).filter((a: any) => a.scope !== "link");
+  return (
+    <Sheet open={!!net} onClose={onClose} title={n ? `Host interface ${n.name}` : ""}>
+      {n && (
+        <>
+          <div className="notice sm">
+            The host manages this {n.type}, not Incus, so it can't be changed here. Instances can use it to sit on your LAN: pick it as the network of a network card.
+            {n.type !== "bridge" && " Through macvlan the host itself can't reach those instances; a bridge on the host avoids that."}
+          </div>
+          <SheetSec title="Details">
+            <dl className="kv">
+              <dt>State</dt>
+              <dd>{st.data ? (st.data.state === "up" ? "Up" : "Down") : "–"}</dd>
+              <dt>Addresses</dt>
+              <dd className="mono">{addrs.length ? addrs.map((a) => `${a.address}/${a.netmask}`).join(", ") : "–"}</dd>
+              <dt>MAC</dt>
+              <dd className="mono">{st.data?.hwaddr || "–"}</dd>
+              <dt>MTU</dt>
+              <dd className="mono">{st.data?.mtu || "–"}</dd>
+              {st.data?.bridge?.upper_devices?.length > 0 && (
+                <>
+                  <dt>Ports</dt>
+                  <dd className="mono">{st.data.bridge.upper_devices.join(", ")}</dd>
+                </>
+              )}
+            </dl>
+          </SheetSec>
+          <UsedBySec list={n.used_by} server={n.server} />
+        </>
+      )}
+    </Sheet>
   );
 }
 
@@ -220,7 +273,7 @@ function NetworkSheet({ open, net, onClose, servers, project, onSaved, onDelete 
               </div>
             )}
             {!net && (
-              <Field label="Type">
+              <Field label="Type" hint={typeNote[type]}>
                 <Seg
                   value={type}
                   onChange={(t) => set((x) => void ((x.type = t), (x.config = t === "bridge" ? { "ipv4.address": "auto", "ipv4.nat": "true", "ipv6.address": "none" } : {})))}

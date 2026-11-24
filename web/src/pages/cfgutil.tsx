@@ -98,3 +98,57 @@ export function cpuCount(s: string): number {
 }
 export const portOK = (s: string) => /^\d+$/.test(s) && Number(s) >= 1 && Number(s) <= 65535;
 export const portsOK = (s: string) => /^\d+(-\d+)?$/.test(s) && s.split("-").every(portOK);
+
+// ---------- Network cards ----------
+
+type NetRow = { name: string; type: string; managed: boolean; config?: Record<string, string> };
+
+// Host interfaces an instance can use to sit on the host's own LAN.
+export const lanParents = (nets: NetRow[] | undefined) => (nets || []).filter((n) => !n.managed && ["physical", "bridge", "bond", "vlan"].includes(n.type));
+
+// A card on the LAN through a host interface: a host bridge is shared with
+// "bridged" (the host can reach the instance), anything else goes through
+// macvlan (the host itself can't reach the instance).
+export const lanNic = (parent: NetRow, name: string): Record<string, string> => ({ type: "nic", nictype: parent.type === "bridge" ? "bridged" : "macvlan", parent: parent.name, name });
+
+// Incus only takes ipv4.address on a card attached to a managed bridge or OVN
+// network. Anywhere else (macvlan, physical, a host bridge) the address comes
+// from the LAN, and Incus rejects the key with "Invalid device option".
+export function fixedIPv4Net(d: Record<string, string>, nets: NetRow[] | undefined): NetRow | null {
+  if (!d.network) return null;
+  const n = (nets || []).find((x) => x.name === d.network);
+  return n && n.managed && (n.type === "bridge" || n.type === "ovn") ? n : null;
+}
+
+const ip4 = (s: string) => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim());
+  if (!m) return null;
+  const p = m.slice(1).map(Number);
+  return p.every((x) => x <= 255) ? ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0 : null;
+};
+
+// The subnet of a managed network, like 10.49.239.0/24, or "" when unknown.
+export function subnetOf(n: NetRow | null): string {
+  const m = /^([\d.]+)\/(\d+)$/.exec(n?.config?.["ipv4.address"] || "");
+  const a = m && ip4(m[1]);
+  if (a == null || !m) return "";
+  const bits = Number(m[2]);
+  const net = bits === 0 ? 0 : (a & (~0 << (32 - bits))) >>> 0;
+  return `${[24, 16, 8, 0].map((s) => (net >>> s) & 255).join(".")}/${bits}`;
+}
+
+// Why a card's fixed IPv4 would fail, in words, before Incus says so.
+export function nicIPv4Error(d: Record<string, string>, nets: NetRow[] | undefined): string | undefined {
+  const v = d["ipv4.address"];
+  if (!v || !nets) return;
+  const n = fixedIPv4Net(d, nets);
+  if (!n) return `Incus can't give a fixed address to a card on ${d.network || d.parent || "the host network"}. Remove the address: your LAN's DHCP hands one out, and you can reserve it in your router.`;
+  if (ip4(v) == null) return "Enter an IPv4 address like 10.0.0.20.";
+  const sub = subnetOf(n);
+  if (sub) {
+    const [base, bits] = sub.split("/");
+    const mask = Number(bits) === 0 ? 0 : (~0 << (32 - Number(bits))) >>> 0;
+    if (((ip4(v)! & mask) >>> 0) !== ip4(base)) return `${v} is outside ${n.name} (${sub}). For an address on your own LAN, connect the card to the host network instead.`;
+  }
+  if (n.config?.["ipv4.dhcp"] === "false" && d["security.ipv4_filtering"] !== "true") return `${n.name} has DHCP turned off, so Incus can't hand out a fixed address. Turn DHCP on for ${n.name}, or set the address inside the instance.`;
+}

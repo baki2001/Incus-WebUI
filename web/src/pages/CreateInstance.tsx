@@ -6,7 +6,7 @@ import { ic } from "../icons";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { hasExt, listVolumes, nameOf, useManagedNetworks, useNames } from "../data";
 import { Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } from "../ui";
-import { cpuOK, SizeField } from "./cfgutil";
+import { cpuOK, lanNic, lanParents, SizeField, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
 import { LocalPicker, ociRegistries, RemotePicker, useImageServers, useRemoteImages, useServerArch } from "./ImagePicker";
 import "../cfg.css";
@@ -73,6 +73,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const pools = useNames(open ? srv : "", "storage-pools", project);
   const projects = useNames(open ? srv : "", "projects");
   const nets = useManagedNetworks(open ? srv : "", project);
+  const lans = lanParents(useNetworkList(open ? srv : "", project).data);
   const taken = useData<string[]>(open && srv && projSel ? `instance-names:${srv}:${projSel}` : null, async () => ((await incus<string[]>(srv, "/1.0/instances", { project: projSel })) || []).map(nameOf));
   const isos = useData<any[]>(open && srv && type === "virtual-machine" ? `isos:${srv}:${project}` : null, async () =>
     (await listVolumes(srv, project)).filter((v) => v.content_type === "iso"),
@@ -171,7 +172,9 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     for (const [k, v] of Object.entries(extra)) if (k) config[k] = v;
     const devices: Devs = {};
     if (disk || pool) devices.root = { type: "disk", path: "/", pool: pool || pools.data?.[0] || "default", ...(disk ? { size: disk } : {}) };
-    if (network) devices.eth0 = { type: "nic", network, name: "eth0" };
+    const lan = lans.find((l) => "host:" + l.name === network);
+    if (lan) devices.eth0 = lanNic(lan, "eth0");
+    else if (network) devices.eth0 = { type: "nic", network, name: "eth0" };
     if (source === "iso") {
       const v = isos.data?.find((x) => `${x.pool}/${x.name}` === iso);
       devices.iso = { type: "disk", pool: v?.pool, source: v?.name, "boot.priority": "10" };
@@ -343,8 +346,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
               <Select value={pool} onChange={setPool} options={[{ v: "", l: "From the profile" }, ...(pools.data || []).map((p) => ({ v: p, l: p }))]} />
             </Field>
           </div>
-          <Field label="Network" hint="Managed networks only. Add a host interface (macvlan) after creating, under Configuration.">
-            <Select value={network} onChange={setNetwork} options={[{ v: "", l: "From the profile" }, ...(nets.data || []).map((p) => ({ v: p.name, l: p.name }))]} />
+          <Field label="Network" hint={network.startsWith("host:") ? "On your own LAN. Your router's DHCP gives it an address." : undefined}>
+            <Select value={network} onChange={setNetwork} options={[{ v: "", l: "From the profile" }, ...(nets.data || []).map((p) => ({ v: p.name, l: p.name })), ...lans.map((l) => ({ v: "host:" + l.name, l: `Your LAN via ${l.name} (${l.type === "bridge" ? "host bridge" : "macvlan"})` }))]} />
           </Field>
         </SheetSec>
 
