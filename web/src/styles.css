@@ -70,7 +70,7 @@ h1,h2,h3{text-wrap:balance;margin:0}
 .brand{font-weight:600;font-size:14.5px;letter-spacing:-.01em;white-space:nowrap}
 .collapse{margin-left:auto;width:26px;height:26px;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-3);display:grid;place-items:center}
 .collapse:hover{background:var(--s2);color:var(--ink)}
-.rail .brand,.rail .lbl,.rail .count,.rail .grp,.rail .sub,.rail .scope-txt,.rail .acct-txt,.rail .theme-seg{display:none}
+.rail .brand,.rail .lbl,.rail .count,.rail .grp,.rail .sub,.rail .scope-txt,.rail .acct-txt{display:none}
 .rail .side-top{justify-content:center;padding:0}
 .rail .collapse{margin:0;position:absolute;left:17px;top:52px}
 .rail .mark{display:none}
@@ -108,9 +108,6 @@ html[data-dir="a"] .ni[aria-current="page"] svg{color:var(--accent)}
 .sub .ni::before{content:"";position:absolute;left:-12px;top:50%;width:9px;height:1px;background:var(--line-2)}
 .sub .st{width:6px;height:6px;border-radius:50%;flex:none}
 .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:12px}
-.theme-seg{display:grid;grid-template-columns:repeat(3,1fr);padding:2px;border-radius:var(--r-sm);background:var(--s2);margin:4px 0 6px}
-.theme-seg button{height:26px;border:0;border-radius:calc(var(--r-sm) - 2px);background:none;font-size:12.5px;color:var(--ink-2)}
-.theme-seg button[aria-pressed="true"]{background:var(--s1);color:var(--ink);box-shadow:var(--shadow);font-weight:500}
 .acct{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r-sm)}
 .rail .acct{justify-content:center;padding:6px 0}
 .av{width:26px;height:26px;border-radius:50%;flex:none;background:var(--s3);color:var(--ink);display:grid;place-items:center;font-size:11px;font-weight:600}
@@ -476,9 +473,6 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
 :root[data-brand="kyoto"] .side .ni[aria-current="page"]{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:#fff}
 :root[data-brand="kyoto"] .side .ni[aria-current="page"] svg{color:#fff}
 :root[data-brand="kyoto"] .side .scope{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .theme-seg{background:var(--side-s)}
-:root[data-brand="kyoto"] .side .theme-seg button{color:var(--side-ink-2)}
-:root[data-brand="kyoto"] .side .theme-seg button[aria-pressed="true"]{background:rgba(255,255,255,.14);color:#fff;box-shadow:none}
 :root[data-brand="kyoto"] .side .sub::before,:root[data-brand="kyoto"] .side .sub .ni::before{background:var(--side-line)}
 :root[data-brand="kyoto"] .side .av{background:rgba(255,255,255,.14);color:#fff}
 :root[data-brand="kyoto"] .side .mark rect:nth-child(1),:root[data-brand="kyoto"] .side .mark rect:nth-child(2){fill:#fff}
@@ -612,11 +606,11 @@ textarea.yaml{width:100%;min-height:520px;border:0;outline:0;resize:vertical;pad
 .thumb{position:absolute;left:0;top:0;pointer-events:none;z-index:0;opacity:0;transition:transform var(--t3) var(--spring),width var(--t3) var(--spring),height var(--t3) var(--spring),opacity var(--t1)}
 .thumb.pill{border-radius:calc(var(--r-sm) - 2px);background:var(--s1);box-shadow:var(--shadow)}
 .thumb.line{background:var(--ink);border-radius:2px}
-.seg,.theme-seg,.views{position:relative}
+.seg,.views{position:relative}
 .set-nav{position:sticky}
 @media (max-width:860px){.set-nav{position:relative;top:0}}
-.seg>button,.theme-seg>button,.views>:not(.thumb),.set-nav>button,#side .ni{position:relative;z-index:1}
-.seg button[aria-pressed="true"],.theme-seg button[aria-pressed="true"]{background:none!important;box-shadow:none!important}
+.seg>button,.views>:not(.thumb),.set-nav>button,#side .ni{position:relative;z-index:1}
+.seg button[aria-pressed="true"]{background:none!important;box-shadow:none!important}
 .vtab[aria-selected="true"]::after{display:none}
 .set-nav button[aria-current="page"]{background:none;box-shadow:none}
 .set-nav>.thumb{border-radius:var(--r-xs)}
@@ -624,7 +618,6 @@ textarea.yaml{width:100%;min-height:520px;border:0;outline:0;resize:vertical;pad
 #side .ni[aria-current="page"]{background:none;box-shadow:none}
 #side .ni[aria-current="page"]:hover{background:none}
 :root[data-brand="kyoto"] #side>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
-:root[data-brand="kyoto"] .side .theme-seg>.thumb{background:rgba(255,255,255,.14);box-shadow:none}
 :root[data-brand="kyoto"] .side .ni[aria-current="page"]{background:none;box-shadow:none}
 @media (max-width:860px){#side>.thumb{background:var(--s2);box-shadow:none}}
 .seg>.thumb{border-radius:calc(var(--r-sm) - 2px)}

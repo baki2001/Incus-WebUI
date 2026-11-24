@@ -183,7 +183,7 @@ th .arr{position:absolute;left:calc(100% + 3px);top:50%;transform:translateY(-50
   .chip{height:40px}
   .chip-b{padding-left:14px}
   .chip-x{width:40px;height:40px;margin-right:0}
-  .seg button,.theme-seg button{min-height:40px;height:40px}
+  .seg button{min-height:40px;height:40px}
   .pre{height:40px}
   .crumbs button,.crumbs a{display:inline-flex;align-items:center;min-height:40px;padding:0 8px}
   .pathbar button{min-height:40px;padding:0 8px}
@@ -248,7 +248,6 @@ pre,pre.code,.tb .l{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break
   .side{background:var(--s1);padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
   .nav-wrap::after{background:linear-gradient(to bottom,transparent,var(--s1))}
   .side .ni,.side .sub .ni{height:40px}
-  .side .theme-seg button{height:36px}
   .side .acct{min-height:40px}
   .side .collapse.slop{display:grid;width:40px;height:40px}
   .cmdk-i{height:44px}

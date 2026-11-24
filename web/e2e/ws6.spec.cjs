@@ -116,7 +116,7 @@ const sh = (c) => execSync(c, { encoding: "utf8" }).trim();
   await p.click(".menu-btn");
   await p.waitForTimeout(500);
   await p.screenshot({ path: OUT + "/phone-drawer.png" });
-  const small = await p.evaluate(() => [...document.querySelectorAll(".side .ni, .side .theme-seg button")].filter((e) => e.getBoundingClientRect().height && e.getBoundingClientRect().height < 36).length);
+  const small = await p.evaluate(() => [...document.querySelectorAll(".side .ni")].filter((e) => e.getBoundingClientRect().height && e.getBoundingClientRect().height < 36).length);
   ok(small === 0, "drawer targets are tall enough");
   await p.evaluate(() => { const n = document.querySelector(".side .nav"); n.scrollTop = n.scrollHeight; });
   await p.waitForTimeout(300);
