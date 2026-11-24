@@ -61,8 +61,8 @@ function Appearance() {
   };
   const pair = accentPair(custom);
   const themes: { v: Theme["name"]; l: string; note: string; sw: [string, string, string] }[] = [
-    { v: "graphite", l: "Graphite", note: "Default", sw: ["#f5f5f7", "#1c1c1f", "#3d5fc4"] },
-    { v: "kyoto", l: "Kyoto", note: "Stone, indigo and vermilion", sw: ["#142950", "#ebecef", "#e93d0d"] },
+    { v: "kyoto", l: "Kyoto", note: "Default", sw: ["#142950", "#ebecef", "#e93d0d"] },
+    { v: "graphite", l: "Graphite", note: "Neutral grey", sw: ["#f5f5f7", "#1c1c1f", "#3d5fc4"] },
     { v: "custom", l: "Custom", note: "Your accent colour", sw: ["#f5f5f7", "#1c1c1f", pair.light] },
   ];
   return (

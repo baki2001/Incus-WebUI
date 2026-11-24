@@ -115,7 +115,7 @@ func loadStore(dataDir string) (*Store, error) {
 		changed = true
 	}
 	if s.cfg.Theme.Name == "" {
-		s.cfg.Theme.Name = "graphite"
+		s.cfg.Theme.Name = "kyoto"
 		changed = true
 	}
 	// Harbor (teal) was replaced by Kyoto in 0.6.
