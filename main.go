@@ -74,6 +74,7 @@ func main() {
 	}
 	go app.collectMetrics(context.Background())
 	app.sched.load(filepath.Join(*dataDir, "backup-schedules.json"))
+	app.jobs.load(filepath.Join(*dataDir, "tasks.json"))
 	go app.runSchedules(context.Background())
 	go app.cleanImports(context.Background())
 
@@ -222,6 +223,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("PUT /api/ui/access", admin(a.handleAccessPut))
 	mux.Handle("GET /api/ui/audit", admin(a.handleAudit))
 	mux.Handle("GET /api/ui/jobs", auth(a.handleJobs))
+	// Not audited: it only notes an action the audit log already has.
+	mux.Handle("POST /api/ui/jobs", a.requireAuth(http.HandlerFunc(a.handleJobRecord)))
 	mux.Handle("GET /api/ui/metrics/{server}", auth(a.handleMetrics))
 	mux.Handle("DELETE /api/ui/jobs/{id}", auth(a.handleJobCancel))
 	mux.Handle("GET /api/ui/backup-config", admin(a.handleBackupConfigGet))
@@ -261,8 +264,11 @@ func (a *App) handleTheme(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
+	if t.Name == "harbor" { // replaced by Kyoto; old browser tabs may still send it
+		t.Name = "kyoto"
+	}
 	switch t.Name {
-	case "graphite", "harbor":
+	case "graphite", "kyoto":
 		t.Accent = ""
 	case "custom":
 		if !hexColor.MatchString(t.Accent) {

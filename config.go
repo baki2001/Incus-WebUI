@@ -49,7 +49,7 @@ type Config struct {
 }
 
 type Theme struct {
-	Name   string `yaml:"name" json:"name"`                         // graphite | harbor | custom
+	Name   string `yaml:"name" json:"name"`                         // graphite | kyoto | custom
 	Accent string `yaml:"accent,omitempty" json:"accent,omitempty"` // hex, for custom
 }
 
@@ -115,7 +115,12 @@ func loadStore(dataDir string) (*Store, error) {
 		changed = true
 	}
 	if s.cfg.Theme.Name == "" {
-		s.cfg.Theme.Name = "graphite"
+		s.cfg.Theme.Name = "kyoto"
+		changed = true
+	}
+	// Harbor (teal) was replaced by Kyoto in 0.6.
+	if s.cfg.Theme.Name == "harbor" {
+		s.cfg.Theme.Name = "kyoto"
 		changed = true
 	}
 	if len(s.cfg.Access) == 0 {

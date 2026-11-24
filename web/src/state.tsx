@@ -96,7 +96,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 // ---------- app-wide state ----------
 
 export type Mode = "auto" | "light" | "dark";
-export type Theme = { name: "graphite" | "harbor" | "custom"; accent?: string };
+export type Theme = { name: "graphite" | "kyoto" | "custom"; accent?: string };
 type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
 
@@ -253,15 +253,23 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const run = useCallback(
     async <T,>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => {
       const id = seq.current++;
+      const started = Date.now();
       setTasks((t) => [...t, { id, label }]);
       const progress = (detail: string) => setTasks((t) => t.map((x) => (x.id === id ? { ...x, detail } : x)));
+      // Every action lands in the task history, so people can look back at what they did.
+      const record = (body: { state: "done" | "failed"; note?: string; error?: string }) =>
+        ui("/jobs", { method: "POST", body: { title: label, took: Date.now() - started, ...body } })
+          .catch(() => {})
+          .then(() => invalidate("ui-jobs"));
       try {
         const r = await fn(progress);
         if (done) toast(done);
+        record({ state: "done", note: done });
         return r;
       } catch (e) {
         if (errSink) errSink(e);
         else fail(e);
+        record({ state: "failed", error: friendlyError(e) });
         return undefined;
       } finally {
         setTasks((t) => t.filter((x) => x.id !== id));

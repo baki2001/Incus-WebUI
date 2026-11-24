@@ -2,12 +2,113 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { dateTime, incus, opProgress, since, ui } from "../api";
 import { ic } from "../icons";
-import { useCrumbs } from "../Shell";
+import { cancelJob, jobResult, useCrumbs, useJobs, type Job } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
 import { confirmDialog, Seg, Select, Table } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
 
 type Op = { id: string; class: string; description: string; created_at: string; updated_at: string; status: string; status_code: number; resources: Record<string, string[]> | null; metadata: any; may_cancel: boolean; err: string; location: string; server: string; project?: string };
+
+// Tasks: everything people did through the UI in the last 30 days, from a
+// start or a delete to a backup or an import. Admins see everyone's.
+export function Tasks() {
+  useCrumbs([{ label: "Tasks" }]);
+  const app = useApp();
+  const q = useJobs(true);
+  const [show, setShow] = useState<"all" | "running" | "failed">("all");
+  const [search, setSearch] = useState("");
+  const all = q.data;
+  const rows = all?.filter((j) => (show === "all" || j.state === show) && matches(search, j.title, j.user, j.note, j.error));
+  const users = new Set(all?.map((j) => j.user || ""));
+  const running = all?.filter((j) => j.state === "running").length || 0;
+  const failed = all?.filter((j) => j.state === "failed").length || 0;
+  return (
+    <>
+      <PageHead title="Tasks" />
+      <div className="fbar">
+        <Search value={search} onChange={setSearch} placeholder="Filter by task or user" />
+        <Seg
+          value={show}
+          onChange={setShow}
+          label="Show"
+          options={[
+            { v: "all", l: "All" },
+            { v: "running", l: <>Running<span className="n">{running}</span></> },
+            { v: "failed", l: <>Failed<span className="n">{failed}</span></> },
+          ]}
+        />
+        <span className="dim fnote">Kept for 30 days. What Incus itself runs is under Operations.</span>
+      </div>
+      <Table<Job>
+        rows={rows}
+        loading={q.loading}
+        rowKey={(j) => j.id}
+        empty={q.error || (all?.length ? "No tasks match." : "No tasks yet. Backups, imports and actions like starting an instance show up here.")}
+        initial={{ k: "when", asc: false }}
+        cols={[
+          {
+            k: "task",
+            label: "Task",
+            sort: (j) => j.title,
+            cell: (j) => (
+              <span className="nm">
+                <span className="nm2">{j.title}</span>
+                {j.link && j.state === "done" && (
+                  <small>
+                    <Link to={j.link} className="rlink">
+                      Open result
+                    </Link>
+                  </small>
+                )}
+              </span>
+            ),
+          },
+          {
+            k: "state",
+            label: "Result",
+            sort: (j) => j.state,
+            cell: (j) =>
+              j.state === "running" ? (
+                <span className="nm" style={{ display: "block" }}>
+                  <span className="st busy">{Math.round(j.progress * 100)}%</span>
+                  <small className="dim" style={{ display: "block" }}>{j.detail || "working"}</small>
+                </span>
+              ) : (
+                <span className={"st" + (j.state === "failed" ? " error" : " unknown")} title={jobResult(j)}>
+                  <span className="clamp2">{jobResult(j)}</span>
+                </span>
+              ),
+          },
+          { k: "user", label: "User", sort: (j) => j.user || "", cell: (j) => j.user || "Scheduler", hide: !app.admin || users.size < 2, cls: "hide-m" },
+          { k: "when", label: "Started", sort: (j) => Date.parse(j.started), cell: (j) => <span className="dim" title={dateTime(j.started)}>{ago(j.started)}</span>, cls: "hide-s" },
+          { k: "took", label: "Took", sort: (j) => took(j, true), cell: (j) => <span className="dim tnum">{took(j)}</span>, cls: "hide-m" },
+          {
+            k: "act",
+            label: "",
+            cell: (j) =>
+              j.state === "running" ? (
+                <button className="btn btn-q btn-sm" onClick={() => cancelJob(j)}>
+                  Cancel
+                </button>
+              ) : null,
+          },
+        ]}
+      />
+    </>
+  );
+}
+
+function took(j: Job, raw: true): number;
+function took(j: Job): string;
+function took(j: Job, raw?: boolean): number | string {
+  const end = j.ended && !j.ended.startsWith("0001") ? Date.parse(j.ended) : Date.now();
+  const s = Math.max(0, (end - Date.parse(j.started)) / 1000);
+  if (raw) return s;
+  if (s < 1) return "under 1 s";
+  if (s < 60) return `${Math.round(s)} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
 
 // Operations: what Incus is doing or did lately, on every server in scope.
 export function Operations() {
