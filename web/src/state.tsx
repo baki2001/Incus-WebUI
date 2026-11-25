@@ -4,9 +4,20 @@ import { friendlyError, ui, type ServerStatus } from "./api";
 
 // ---------- data fetching with a shared cache (stale-while-revalidate) ----------
 
-type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void>; stale?: boolean };
+// okAt is when the last load succeeded. at also moves on a failed load, so it can't tell freshness.
+type Entry = { data?: any; error?: string; at: number; okAt?: number; loading: boolean; p?: Promise<void>; stale?: boolean };
 const cache = new Map<string, Entry>();
 const subs = new Map<string, Set<() => void>>();
+// Keys that the open page shows, with how many hooks use each. The top bar's own
+// data (tasks, update check, badges) is left out, so "Updated x ago" is about the page.
+const shown = new Map<string, number>();
+
+// lastFresh is when data on the open page last loaded fine, or 0 if it has none yet.
+export function lastFresh() {
+  let t = 0;
+  for (const k of shown.keys()) t = Math.max(t, cache.get(k)?.okAt || 0);
+  return t;
+}
 function notify(key: string) {
   subs.get(key)?.forEach((f) => f());
 }
@@ -36,7 +47,8 @@ export function mutateCache(key: string, fn: (d: any) => any) {
   }
 }
 
-export function useData<T>(key: string | null, fetcher: () => Promise<T>, interval = 0) {
+// quiet marks data the top bar loads for itself; it doesn't count for "Updated x ago".
+export function useData<T>(key: string | null, fetcher: () => Promise<T>, interval = 0, quiet = false) {
   const [, force] = useState(0);
   const fRef = useRef(fetcher);
   fRef.current = fetcher;
@@ -56,6 +68,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
       (d) => {
         entry.data = d;
         entry.error = undefined;
+        entry.okAt = Date.now();
       },
       (err) => {
         entry.error = err instanceof Error ? err.message : String(err);
@@ -75,15 +88,21 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
     const f = () => force((n) => n + 1);
     if (!subs.has(key)) subs.set(key, new Set());
     subs.get(key)!.add(f);
+    if (!quiet) shown.set(key, (shown.get(key) || 0) + 1);
     const e = cache.get(key);
     if (!e || Date.now() - e.at > 2000) load();
     let t: number | undefined;
     if (interval) t = window.setInterval(() => !document.hidden && load(), interval);
     return () => {
       subs.get(key)?.delete(f);
+      if (!quiet) {
+        const n = (shown.get(key) || 1) - 1;
+        if (n) shown.set(key, n);
+        else shown.delete(key);
+      }
       if (t) clearInterval(t);
     };
-  }, [key, interval, load]);
+  }, [key, interval, load, quiet]);
 
   // reload when invalidated
   const e = key ? cache.get(key) : undefined;
@@ -140,8 +159,6 @@ type Ctx = {
   fail: (err: unknown, title?: string) => void;
   tasks: Task[];
   run: <T>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => Promise<T | undefined>;
-  lastUpdate: number;
-  touch: () => void;
 };
 
 const AppCtx = createContext<Ctx>(null as any);
@@ -221,7 +238,6 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
   const mode = look || defaultLook(theme);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [lastUpdate, setLast] = useState(Date.now());
   const seq = useRef(1);
   const [me, setMe] = useState<{ admin: boolean; access: AccessEntry[] }>({ admin: false, access: [] });
   useEffect(() => {
@@ -327,8 +343,6 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
     fail,
     tasks,
     run,
-    lastUpdate,
-    touch: () => setLast(Date.now()),
   };
 
   return (
