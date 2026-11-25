@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { dateTime, incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
-import { invalidate, useApp, useData, useScopedServers, type Mode } from "./state";
+import { invalidate, useApp, useData, useScopedServers } from "./state";
 import { ConfirmHost, Dialog, useOutside, usePresence, useShown, useThumb } from "./ui";
 import { canDo } from "./pages/Instances";
 import { askStop, StopHost } from "./pages/InstanceDialogs";
@@ -98,7 +98,6 @@ export function Shell() {
           <div className="top-r">
             <Fresh />
             <Tasks />
-            <ModeBtn />
             <button className="kbtn press" onClick={() => setCmdk(true)} aria-label="Search or run a command">
               {ic.search}
               <span className="lbl2">Search or run a command</span>
@@ -517,19 +516,6 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         <Account />
       </div>
     </aside>
-  );
-}
-
-// ModeBtn cycles Kyoto -> Light -> Graphite. Settings > Appearance has the same choice.
-function ModeBtn() {
-  const app = useApp();
-  const order: Mode[] = ["kyoto", "light", "graphite"];
-  const next = order[(order.indexOf(app.mode) + 1) % order.length];
-  const name = (m: Mode) => m[0].toUpperCase() + m.slice(1);
-  return (
-    <button className="btn btn-q ib press" onClick={() => app.setMode(next)} aria-label={`Look: ${name(app.mode)}. Switch to ${name(next)}`} title={`Look: ${name(app.mode)}`}>
-      {app.mode === "light" ? ic.sun : app.mode === "graphite" ? ic.moon : ic.kyoto}
-    </button>
   );
 }
 
