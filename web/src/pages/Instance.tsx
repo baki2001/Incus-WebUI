@@ -50,10 +50,6 @@ export function InstancePage() {
   useEffect(() => {
     if (tab === "terminal") setSeenTerm(true);
   }, [tab]);
-  useEffect(() => {
-    if (inst) app.touch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inst]);
   useCrumbs([{ label: "Instances", to: "/instances" }, { label: name }]);
   usePins();
 

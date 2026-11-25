@@ -112,10 +112,9 @@ export function readable(e: unknown) {
 }
 
 const rootPool = (i: Inst) => i.expanded_devices?.root?.pool || "";
-const done = (app: ReturnType<typeof useApp>) => {
+const done = () => {
   invalidate("instances:");
   invalidate("instance:");
-  app.touch();
 };
 
 // ---------- rename ----------
@@ -143,7 +142,7 @@ export function RenameDialog({ inst, open, onClose, onDone }: { inst: Inst; open
                 } catch (e) {
                   throw new Error(readable(e));
                 }
-                done(app);
+                done();
                 return true;
               },
               `Renamed to ${name}`,
@@ -195,7 +194,7 @@ export function CopyDialog({ inst, open, onClose, onDone }: { inst: Inst; open: 
                 } catch (e) {
                   throw new Error(readable(e));
                 }
-                done(app);
+                done();
                 return true;
               },
               `Copied to ${name}`,
@@ -260,7 +259,7 @@ export function MoveDialog({ inst, open, onClose, onDone }: { inst: Inst; open: 
                 } catch (e) {
                   throw new Error(readable(e));
                 }
-                done(app);
+                done();
                 return true;
               },
               `${inst.name} moved`,
@@ -386,7 +385,7 @@ export function FromSnapDialog({ inst, snap, onClose, onDone }: { inst: Inst; sn
                   } catch (e) {
                     throw new Error(readable(e));
                   }
-                  done(app);
+                  done();
                   return true;
                 },
                 `${name} created`,

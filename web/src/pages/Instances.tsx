@@ -51,11 +51,7 @@ export function stateAction(app: ReturnType<typeof useApp>, key: string | null, 
   // optimistic: show the transition right away
   if (key) mutateCache(key, (rows: Row[]) => rows.map((x) => (same(x, r) ? { ...x, status: verbs[action][0] } : x)));
   return app.run(`${verbs[action][0]} ${r.name}`, async () => {
-    try {
-      await putState(r, project, action, force);
-    } finally {
-      app.touch();
-    }
+    await putState(r, project, action, force);
   });
 }
 
@@ -75,7 +71,6 @@ async function bulkState(app: ReturnType<typeof useApp>, key: string | null, row
       ),
     );
   });
-  app.touch();
   const parts = [`${verbs[action][1]} ${ok.length - errs.length}`];
   if (skipped.length) {
     const g: Record<string, number> = {};
@@ -134,7 +129,6 @@ async function deleteMany(app: ReturnType<typeof useApp>, rows: Row[]) {
     }
   });
   invalidate("instances:");
-  app.touch();
   app.toast(`Deleted ${rows.length - errs.length}` + (errs.length ? `, ${errs.length} failed: ${errs[0]}` : ""));
   return true;
 }
@@ -186,7 +180,6 @@ export function Instances() {
 
   useEffect(() => {
     if (!data) return;
-    app.touch();
     const next: Record<string, number> = {};
     for (const r of data) {
       const v = cpuPct(r, cpuPrev.current, id(r));
