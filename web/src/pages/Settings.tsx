@@ -5,7 +5,7 @@ import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { BackupSettings } from "./Backups";
 import { Security } from "./Security";
-import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
+import { contrast, DEFAULT_CUSTOM, fitAccent, inkFor, invalidate, isHex, useApp, useData, type AccessEntry, type CustomTheme, type Mode, type RoleName } from "../state";
 import { confirmDialog, CopyBtn, Dialog, Field, Menu, Seg, Select, Table, useThumb } from "../ui";
 import { DlgForm } from "./InstanceDialogs";
 
@@ -56,104 +56,297 @@ export function Settings() {
   );
 }
 
+type CustomPreset = { name: string; value: CustomTheme };
+const CUSTOM_PRESETS: CustomPreset[] = [
+  { name: "Forest", value: { base: "porcelain", accent: "#2d6a4f", cta: "#d95d39", sidebar: "#1b4332" } },
+  { name: "Ocean", value: { base: "porcelain", accent: "#1d5fa7", cta: "#0f9d9a", sidebar: "#0f2c4c" } },
+  { name: "Plum", value: { base: "porcelain", accent: "#6d3b7d", cta: "#c94c4c", sidebar: "#3b1d47" } },
+  { name: "Amber", value: { base: "porcelain", accent: "#9a5b13", cta: "#2a7b88", sidebar: "#3e2716" } },
+  { name: "Midnight", value: { base: "graphite", accent: "#74b3ff", cta: "#38bdf8", sidebar: "#101828" } },
+  { name: "Ember", value: { base: "graphite", accent: "#f59e6c", cta: "#2eb3b2", sidebar: "#2a1712" } },
+];
+
 function Appearance() {
   const app = useApp();
-  const [custom, setCustom] = useState(app.theme.accent || "#7a4fd6");
-  const setTheme = async (t: Theme) => {
-    const prev = app.theme;
-    app.setTheme(t);
-    try {
-      await ui("/theme", { method: "PUT", body: t });
-      app.toast(`Default look set to ${t.name[0].toUpperCase() + t.name.slice(1)}`, { label: "Undo", fn: () => setTheme(prev) });
-    } catch (e: any) {
-      app.setTheme(prev);
-      app.fail(e, "Could not change the theme.");
-    }
+  const c = app.custom;
+  const [accentIn, setAccentIn] = useState(c.accent);
+  const [ctaIn, setCtaIn] = useState(c.cta);
+  const [sideIn, setSideIn] = useState(c.sidebar || "#1b4332");
+  useEffect(() => {
+    setAccentIn(c.accent);
+    setCtaIn(c.cta);
+    if (c.sidebar) setSideIn(c.sidebar);
+  }, [c.accent, c.cta, c.sidebar]);
+
+  const patchCustom = (next: Partial<CustomTheme>) => {
+    const merged = { ...c, ...next };
+    app.setCustom(merged);
+    if (app.mode !== "custom") app.setMode("custom");
   };
-  const pair = accentPair(custom);
+
+  const fittedAccent = fitAccent(c.accent, c.base);
+  const baseBg = c.base === "graphite" ? "#1e2026" : "#f1f2f5";
+  const accentRatio = contrast(fittedAccent, baseBg);
+  const ctaColor = isHex(c.cta) ? c.cta : fittedAccent;
+  const ctaInk = inkFor(ctaColor);
+  const ctaRatio = contrast(ctaColor, ctaInk);
+  const sameCta = c.cta.toLowerCase() === c.accent.toLowerCase();
+  const isDefaultCustom =
+    c.base === DEFAULT_CUSTOM.base &&
+    c.accent.toLowerCase() === DEFAULT_CUSTOM.accent.toLowerCase() &&
+    c.cta.toLowerCase() === DEFAULT_CUSTOM.cta.toLowerCase() &&
+    c.sidebar.toLowerCase() === DEFAULT_CUSTOM.sidebar.toLowerCase();
+
   // Preview colours: page, sidebar, sidebar lines, card, card lines, button.
   type Pv = { page: string; side: string; sideInk: string; card: string; cardInk: string; btn: string };
-  const themes: { v: Theme["name"]; l: string; note: string; pv: Pv }[] = [
-    { v: "kyoto", l: "Kyoto", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#fff", card: "#fff", cardInk: "#101a30", btn: "#db390c" } },
-    { v: "light", l: "Light", note: "Plain light", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: "#3d5fc4" } },
-    { v: "graphite", l: "Graphite", note: "Dark", pv: { page: "#0e0e10", side: "transparent", sideInk: "rgba(255,255,255,.7)", card: "#1d1d20", cardInk: "rgba(255,255,255,.8)", btn: "#93a8ee" } },
-    { v: "custom", l: "Custom", note: "Your accent", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: pair.light } },
+  const customPv: Pv =
+    c.base === "graphite"
+      ? {
+          page: "#16171b",
+          side: c.sidebar || "transparent",
+          sideInk: c.sidebar ? inkFor(c.sidebar) : "#c2c6d1",
+          card: "#1e2026",
+          cardInk: "#f1f3f7",
+          btn: ctaColor,
+        }
+      : {
+          page: "#f1f2f5",
+          side: c.sidebar || "transparent",
+          sideInk: c.sidebar ? inkFor(c.sidebar) : "#16181d",
+          card: "#ffffff",
+          cardInk: "#16181d",
+          btn: ctaColor,
+        };
+
+  const themes: { v: Mode; l: string; note: string; pv: Pv }[] = [
+    { v: "indigo", l: "Indigo", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#ffffff", card: "#ffffff", cardInk: "#101a30", btn: "#db390c" } },
+    { v: "porcelain", l: "Porcelain", note: "Crisp light", pv: { page: "#f1f2f5", side: "transparent", sideInk: "#16181d", card: "#ffffff", cardInk: "#16181d", btn: "#3456bd" } },
+    { v: "graphite", l: "Graphite", note: "Soft dark", pv: { page: "#16171b", side: "transparent", sideInk: "#c2c6d1", card: "#1e2026", cardInk: "#f1f3f7", btn: "#8fa8f8" } },
+    { v: "terracotta", l: "Terracotta", note: "Sand, clay and teal", pv: { page: "#f3e7dc", side: "#772f10", sideInk: "#fdf7f2", card: "#fffdfb", cardInk: "#2b140a", btn: "#2eb3b2" } },
+    { v: "custom", l: "Custom", note: "Your palette", pv: customPv },
   ];
+
   return (
-    <>
-      <section className="set-sec">
-        <h2>
-          Look<span className="scope-tag">Just for you, on this browser</span>
-        </h2>
-        <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "kyoto", l: "Kyoto" }, { v: "light", l: "Light" }, { v: "graphite", l: "Graphite" }]} />
-      </section>
-      {app.admin && <section className="set-sec">
-        <h2>
-          Default look<span className="scope-tag">For everyone using this server</span>
-        </h2>
-        <p>What people see until they pick their own look.</p>
-        <div className="tcards">
-          {themes.map((t) => (
-            <button key={t.v} className="tcard press" aria-pressed={app.theme.name === t.v} onClick={() => setTheme(t.v === "custom" ? { name: "custom", accent: custom } : { name: t.v })}>
-              <div className="prev one">
-                <div className="pv" style={{ background: t.pv.page }}>
-                  <div className="ps" style={{ background: t.pv.side }}>
-                    <i style={{ background: t.pv.sideInk }} />
-                    <i style={{ background: t.pv.sideInk }} />
-                    <i style={{ background: t.pv.sideInk }} />
+    <section className="set-sec">
+      <h2>
+        Theme<span className="scope-tag">Just for you, in this browser</span>
+      </h2>
+      <p>Pick the look you prefer. Changes apply right away and only affect you.</p>
+      <div className="tcards">
+        {themes.map((t) => (
+          <button key={t.v} className="tcard press" aria-pressed={app.mode === t.v} onClick={() => app.setMode(t.v)}>
+            <div className="prev one">
+              <div className="pv" style={{ background: t.pv.page }}>
+                <div className="ps" style={{ background: t.pv.side }}>
+                  <i style={{ background: t.pv.sideInk }} />
+                  <i style={{ background: t.pv.sideInk }} />
+                  <i style={{ background: t.pv.sideInk }} />
+                </div>
+                <div className="pm">
+                  <div className="c" style={{ background: t.pv.card }}>
+                    <i style={{ background: t.pv.cardInk }} />
+                    <i style={{ background: t.pv.cardInk }} />
                   </div>
-                  <div className="pm">
-                    <div className="c" style={{ background: t.pv.card }}>
-                      <i style={{ background: t.pv.cardInk }} />
-                      <i style={{ background: t.pv.cardInk }} />
-                    </div>
-                    <div className="b" style={{ background: t.pv.btn }} />
-                  </div>
+                  <div className="b" style={{ background: t.pv.btn }} />
                 </div>
               </div>
-              <span className="nm">
-                <span className="ck" />
-                {t.l}
-                <small>{t.note}</small>
-              </span>
+            </div>
+            <span className="nm">
+              <span className="ck" />
+              {t.l}
+              <small>{t.note}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {app.mode === "custom" && (
+        <div className="cust-card">
+          <div className="cust-head">
+            <div>
+              <h3>Custom palette</h3>
+              <p>Pick a base surface, then tune the sidebar, accent and main button colours.</p>
+            </div>
+            <button
+              className="btn btn-q btn-sm"
+              disabled={isDefaultCustom}
+              onClick={() => patchCustom(DEFAULT_CUSTOM)}
+            >
+              Reset
             </button>
-          ))}
-        </div>
-        {app.theme.name === "custom" && (
-          <div className="custom-row">
-            <div className="cr">
-              Accent
-              <div className="row">
-                <input type="color" value={custom} onChange={(e) => setCustom(e.target.value)} aria-label="Accent colour" />
+          </div>
+
+          <div className="cust-presets">
+            <span className="cust-presets-lbl">Starters</span>
+            {CUSTOM_PRESETS.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                className="cust-preset press"
+                onClick={() => patchCustom(p.value)}
+              >
+                <span className="cust-dots">
+                  <i style={{ background: p.value.sidebar || (p.value.base === "graphite" ? "#1e2026" : "#f1f2f5") }} />
+                  <i style={{ background: p.value.accent }} />
+                  <i style={{ background: p.value.cta }} />
+                </span>
+                {p.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="cust-row">
+            <div className="cust-row-lbl">
+              <b>Base surface</b>
+              <small>Light or dark cards, tables and backgrounds.</small>
+            </div>
+            <Seg
+              label="Base surface"
+              value={c.base}
+              onChange={(base) => patchCustom({ base })}
+              options={[
+                { v: "porcelain", l: "Porcelain (light)" },
+                { v: "graphite", l: "Graphite (dark)" },
+              ]}
+            />
+          </div>
+
+          <div className="cust-grid">
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Accent</span>
+                <small>Links and focus</small>
+              </div>
+              <div className="cust-pick">
+                <input
+                  type="color"
+                  value={isHex(accentIn) ? accentIn : c.accent}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAccentIn(v);
+                    patchCustom({ accent: v, ...(sameCta ? { cta: v } : {}) });
+                  }}
+                  aria-label="Accent colour"
+                />
                 <div className="field">
-                  <input className="mono" value={custom} onChange={(e) => setCustom(e.target.value)} />
+                  <input
+                    className="mono"
+                    value={accentIn}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAccentIn(v);
+                      if (isHex(v)) patchCustom({ accent: v, ...(sameCta ? { cta: v } : {}) });
+                    }}
+                    placeholder="#2d6a4f"
+                  />
                 </div>
               </div>
-            </div>
-            <div className="cr">
-              Light mode
-              <div className="row">
-                <span className="sw" style={{ background: pair.light }} />
-                <span className="mono">{pair.light}</span>
-                <span className="dim2">{contrast(pair.light, "#f5f5f7").toFixed(1)}:1</span>
-              </div>
-              Dark mode
-              <div className="row">
-                <span className="sw" style={{ background: pair.dark }} />
-                <span className="mono">{pair.dark}</span>
-                <span className="dim2">{contrast(pair.dark, "#0e0e10").toFixed(1)}:1</span>
+              <div className="cust-slot-f">
+                <span>{fittedAccent.toLowerCase() !== c.accent.toLowerCase() ? `Adjusted to ${fittedAccent}` : "Readable on surface"}</span>
+                <span className="cust-badge">{accentRatio.toFixed(1)}:1</span>
               </div>
             </div>
-            <div className="cr" style={{ justifyContent: "flex-end" }}>
-              <span>Adjusted where needed so text stays readable.</span>
-              <button className="btn btn-s btn-sm press" disabled={!/^#[0-9a-fA-F]{6}$/.test(custom) || custom === app.theme.accent} onClick={() => setTheme({ name: "custom", accent: custom })}>
-                Use this colour
-              </button>
+
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Primary button</span>
+                <small>Main actions</small>
+              </div>
+              <div className="cust-pick">
+                <input
+                  type="color"
+                  value={isHex(ctaIn) ? ctaIn : ctaColor}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCtaIn(v);
+                    patchCustom({ cta: v });
+                  }}
+                  aria-label="Primary button colour"
+                />
+                <div className="field">
+                  <input
+                    className="mono"
+                    value={ctaIn}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCtaIn(v);
+                      if (isHex(v)) patchCustom({ cta: v });
+                    }}
+                    placeholder="#d95d39"
+                  />
+                </div>
+              </div>
+              <div className="cust-slot-f">
+                {sameCta ? (
+                  <span>Matches accent</span>
+                ) : (
+                  <button type="button" className="linkish" onClick={() => patchCustom({ cta: c.accent })}>
+                    Match accent
+                  </button>
+                )}
+                <span className="cust-badge">{ctaRatio.toFixed(1)}:1</span>
+              </div>
+            </div>
+
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Sidebar</span>
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => patchCustom({ sidebar: c.sidebar ? "" : sideIn || "#1b4332" })}
+                >
+                  {c.sidebar ? "Match surface" : "Tint sidebar"}
+                </button>
+              </div>
+              {c.sidebar ? (
+                <>
+                  <div className="cust-pick">
+                    <input
+                      type="color"
+                      value={isHex(sideIn) ? sideIn : c.sidebar}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSideIn(v);
+                        patchCustom({ sidebar: v });
+                      }}
+                      aria-label="Sidebar colour"
+                    />
+                    <div className="field">
+                      <input
+                        className="mono"
+                        value={sideIn}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSideIn(v);
+                          if (isHex(v)) patchCustom({ sidebar: v });
+                        }}
+                        placeholder="#1b4332"
+                      />
+                    </div>
+                  </div>
+                  <div className="cust-slot-f">
+                    <span>Sidebar text adapts automatically.</span>
+                  </div>
+                </>
+              ) : (
+                <div className="cust-slot-f" style={{ marginTop: "auto" }}>
+                  <span>Uses the {c.base === "graphite" ? "Graphite" : "Porcelain"} background.</span>
+                </div>
+              )}
             </div>
           </div>
-        )}
-      </section>}
-    </>
+
+          <div className="cust-preview">
+            <span className="cust-preview-lbl">Preview</span>
+            <button type="button" className="btn btn-p btn-sm">Primary action</button>
+            <button type="button" className="btn btn-s btn-sm">Secondary</button>
+            <span className="rbadge admin">Selected</span>
+            <span className="linkish" style={{ cursor: "default" }}>Sample link</span>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -296,7 +489,7 @@ function roleSummary(entries: AccessEntry[], name: string) {
   if (!mine.length) return null;
   const top = mine.reduce((a, b) => (roleRank[b.role] > roleRank[a.role] ? b : a));
   const scoped = mine.length > 1 || !everywhere(top);
-  return { label: roleLabel(top.role), title: mine.map((e) => `${roleLabel(e.role)} on ${e.server === "*" ? "every server" : e.server}, ${e.project === "*" ? "every project" : `project ${e.project}`}`).join("\n"), scoped };
+  return { role: top.role, label: roleLabel(top.role), title: mine.map((e) => `${roleLabel(e.role)} on ${e.server === "*" ? "every server" : e.server}, ${e.project === "*" ? "every project" : `project ${e.project}`}`).join("\n"), scoped };
 }
 
 const saveAccess = (access: AccessEntry[]) => ui("/access", { method: "PUT", body: { access } }).then(() => invalidate("ui-access"));
@@ -337,7 +530,8 @@ function Users() {
       <section className="set-sec">
         <div className="set-sec-h">
           <h2>Local users</h2>
-          <button className="btn btn-s btn-sm press" onClick={() => setAdding(true)}>
+          <span className="sec-count">{users.length}</span>
+          <button className="btn btn-p btn-sm press" onClick={() => setAdding(true)}>
             {ic.plus}Add user
           </button>
         </div>
@@ -347,26 +541,44 @@ function Users() {
             const canReset = !me && (x.totp || !!x.passkeys);
             const canDel = !me && users.length > 1;
             const role = roleSummary(access, x.username);
+            const hasStrongAuth = x.totp || !!x.passkeys;
             return (
-              <div className="snap" key={x.username}>
-                <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-                <span style={{ minWidth: 0 }}>
-                  {x.username}
-                  {me && <span className="dim"> · you</span>}
-                  {x.totp && <span className="dim"> · 2FA</span>}
-                  {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
+              <div className="usr-row" key={x.username}>
+                <span className={"av" + (me ? " me" : "")}>
+                  {x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                 </span>
+                <div className="usr-id">
+                  <div className="usr-name">
+                    <span>{x.username}</span>
+                    {me && <span className="usr-you">You</span>}
+                  </div>
+                  <div className="usr-sec">
+                    {hasStrongAuth ? (
+                      <>
+                        {x.totp && <span className="usr-sec-ok"><i />2FA on</span>}
+                        {!!x.passkeys && (
+                          <span className="usr-sec-ok">
+                            <i />
+                            {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span>Password only</span>
+                    )}
+                  </div>
+                </div>
                 <span className="r usr-r">
                   {role ? (
-                    <span className="tag" title={role.title}>
+                    <span className={`rbadge ${role.role}`} title={role.title}>
                       {role.label}
                       {role.scoped && " +"}
                     </span>
                   ) : (
-                    <span className="dim" title="Only entries for everyone or for groups apply.">No role of their own</span>
+                    <span className="dim" title="Only entries for everyone or for groups apply.">No direct role</span>
                   )}
                   {me ? (
-                    <button className="btn btn-q btn-sm" onClick={() => nav("/settings/security")}>
+                    <button className="btn btn-s btn-sm press" onClick={() => nav("/settings/security")}>
                       Sign-in security
                     </button>
                   ) : (
@@ -379,8 +591,8 @@ function Users() {
                     >
                       {(close) => (
                         <>
-                          <button onClick={() => (close(), setPwFor(x.username))}>Reset password</button>
                           <button onClick={() => (close(), setRoleFor(x.username))}>Change role</button>
+                          <button onClick={() => (close(), setPwFor(x.username))}>Reset password</button>
                           {canReset && <button onClick={() => (close(), resetSignIn(x.username))}>Reset 2FA and passkeys</button>}
                           {canDel && (
                             <button className="danger" onClick={() => (close(), del(x.username))}>
@@ -405,17 +617,36 @@ function Users() {
         <h2>
           Single sign-on <span className="ac">(OIDC)</span>
         </h2>
-        {q.data?.oidc ? (
-          <p>
-            On, with <span className="mono">{q.data.oidc.issuer}</span>.
-            {q.data.oidc.allowed_emails?.length ? ` Allowed: ${q.data.oidc.allowed_emails.join(", ")}.` : ""}
-            {q.data.oidc.allowed_groups?.length ? ` Groups: ${q.data.oidc.allowed_groups.join(", ")}.` : ""}
-          </p>
-        ) : (
-          <p>
-            Off. Add an <span className="mono">oidc</span> block to <span className="mono">config.yaml</span> and restart to turn it on. The install guide shows how.
-          </p>
-        )}
+        <div className="panel oidc-card">
+          {q.data?.oidc ? (
+            <>
+              <div className="oidc-top">
+                <span className="st running">Connected</span>
+                <span className="mono">{q.data.oidc.issuer}</span>
+              </div>
+              {(q.data.oidc.allowed_emails?.length || q.data.oidc.allowed_groups?.length) && (
+                <div className="oidc-meta">
+                  {q.data.oidc.allowed_emails?.map((em) => (
+                    <span className="tag mono" key={`e:${em}`}>{em}</span>
+                  ))}
+                  {q.data.oidc.allowed_groups?.map((g) => (
+                    <span className="tag" key={`g:${g}`}>group: {g}</span>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="oidc-top">
+                <span className="st">Off</span>
+                <b>Not configured</b>
+              </div>
+              <p>
+                Add an <span className="mono">oidc</span> block to <span className="mono">config.yaml</span> and restart to let people sign in with your identity provider.
+              </p>
+            </>
+          )}
+        </div>
       </section>
     </>
   );
@@ -566,6 +797,21 @@ function UserRoleDialog({ name, access, onClose }: { name: string; access: Acces
   );
 }
 
+const roleCards: { v: RoleName; l: string; desc: string }[] = [
+  { v: "viewer", l: "Viewer", desc: "Read-only access to servers and instances." },
+  { v: "operator", l: "Operator", desc: "Start, stop, console and files." },
+  { v: "manager", l: "Manager", desc: "Create, change and delete resources." },
+  { v: "admin", l: "Admin", desc: "Full access, including users and servers." },
+];
+
+function formatWho(who: string) {
+  if (who === "*") return { kind: "All", name: "Everyone who can sign in", plain: true };
+  if (who.startsWith("user:")) return { kind: "Local", name: who.slice(5), plain: false };
+  if (who.startsWith("sso:")) return { kind: "SSO", name: who.slice(4), plain: false };
+  if (who.startsWith("group:")) return { kind: "Group", name: who.slice(6), plain: false };
+  return { kind: "User", name: who, plain: false };
+}
+
 // Roles lists every access entry. Adding and editing happen in a dialog, and
 // each change is saved right away.
 function Roles() {
@@ -591,11 +837,20 @@ function Roles() {
     <section className="set-sec">
       <div className="set-sec-h">
         <h2>Roles</h2>
+        {rows && <span className="sec-count">{rows.length}</span>}
         <button className="btn btn-s btn-sm press" disabled={!rows} onClick={() => setEdit({ i: -1, e: { who: "user:", server: "*", project: "*", role: "viewer" } })}>
           {ic.plus}Add entry
         </button>
       </div>
       <p>Each entry gives someone a role on a server and project. Someone with several entries gets the highest role that fits.</p>
+      <div className="role-legend">
+        {roleCards.map((rc) => (
+          <div className="role-card" key={rc.v}>
+            <span className={`rbadge ${rc.v}`}>{rc.l}</span>
+            <p>{rc.desc}</p>
+          </div>
+        ))}
+      </div>
       <Table<Row>
         rows={rows?.map((e, i) => ({ ...e, i }))}
         loading={!rows}
@@ -604,10 +859,34 @@ function Roles() {
         empty="No entries yet."
         initial={{ k: "who", asc: true }}
         cols={[
-          { k: "who", label: "Who", sort: (r) => r.who, cell: (r) => <span className="mono">{r.who}</span> },
-          { k: "server", label: "Server", cls: "hide-s", sort: (r) => r.server, cell: (r) => (r.server === "*" ? <span className="dim">Every server</span> : r.server) },
-          { k: "project", label: "Project", sort: (r) => r.project, cell: (r) => (r.project === "*" ? <span className="dim">Every project</span> : r.project) },
-          { k: "role", label: "Role", sort: (r) => roleRank[r.role], cell: (r) => <span className="tag">{roleLabel(r.role)}</span> },
+          {
+            k: "who",
+            label: "Who",
+            sort: (r) => r.who,
+            cell: (r) => {
+              const w = formatWho(r.who);
+              return (
+                <span className="who-cell">
+                  <span className="who-kind">{w.kind}</span>
+                  <span className={w.plain ? undefined : "mono"}>{w.name}</span>
+                </span>
+              );
+            },
+          },
+          {
+            k: "server",
+            label: "Server",
+            cls: "hide-s",
+            sort: (r) => r.server,
+            cell: (r) => (r.server === "*" ? <span className="dim">Every server</span> : <span className="scope-pill">{r.server}</span>),
+          },
+          {
+            k: "project",
+            label: "Project",
+            sort: (r) => r.project,
+            cell: (r) => (r.project === "*" ? <span className="dim">Every project</span> : <span className="scope-pill">{r.project}</span>),
+          },
+          { k: "role", label: "Role", sort: (r) => roleRank[r.role], cell: (r) => <span className={`rbadge ${r.role}`}>{roleLabel(r.role)}</span> },
           {
             k: "act",
             label: "",

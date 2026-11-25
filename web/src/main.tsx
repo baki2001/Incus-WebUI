@@ -39,14 +39,12 @@ function Root() {
     setUnauthorizedHandler(() => load());
   }, []);
   useEffect(() => {
-    if (auth) {
-      applyTheme(auth.theme, storedLook() || defaultLook(auth.theme));
-    }
-  }, [auth]);
+    applyTheme(storedLook() || defaultLook());
+  }, []);
   if (!auth) return null;
   if (!auth.user) return <Login info={auth} onDone={load} />;
   return (
-    <AppProvider user={auth.user} method={auth.method || "password"} initialTheme={auth.theme}>
+    <AppProvider user={auth.user} method={auth.method || "password"}>
       <BrowserRouter>
         <Routes>
           <Route element={<Shell />}>
