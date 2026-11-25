@@ -47,6 +47,8 @@ func TestOfferUpdate(t *testing.T) {
 		{channelDev, "v0.7.0-dev.5", "v0.7.0", true},
 		{channelDev, "v0.7.0-dev.5", "v0.7.0-dev.5", false},
 		{channelDev, "v0.7.0-dev.6", "v0.7.0-dev.5", true},
+		{channelDev, "v0.7.1-dev.1", "v0.7.2", false}, // dev build older than the release
+		{channelDev, "v0.7.0-dev.9", "v0.7.0-dev.12", false},
 	}
 	for _, c := range cases {
 		if got := offerUpdate(c.channel, rel(c.latest), c.current); got != c.want {
