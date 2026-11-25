@@ -477,6 +477,10 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		}
 	}
 
+	if p.Type == "virtual-machine" {
+		note += capCPUs(ctx, c, q.Project, p)
+	}
+
 	set(0.85, "Creating the instance: Incus copies the disk into the storage pool")
 	body := map[string]any{
 		"name": p.Name, "type": p.Type, "config": p.Config, "devices": p.Devices,
@@ -508,7 +512,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		// Legacy BIOS needs SeaBIOS, which not every Incus package ships. A
 		// disk with an EFI system partition boots with UEFI just as well.
 		if !proxmox.HasESP(heads[p.BootDisk]) {
-			return "", errors.New("this VM boots with legacy BIOS, and the Incus server has no SeaBIOS firmware for it. Install SeaBIOS on the Incus server (Incus looks for seabios.bin next to its UEFI firmware), then import again")
+			return strings.TrimSpace(note + "It was imported but did not start: it boots with legacy BIOS, and the Incus server has no SeaBIOS firmware for it. Install SeaBIOS on the Incus server (Incus looks for seabios.bin next to its UEFI firmware), then start it."), nil
 		}
 		if _, perr := c.call(ctx, "PATCH", inst, q.Project, map[string]any{"config": map[string]string{"security.csm": "false"}}); perr != nil {
 			return "", perr
@@ -517,7 +521,12 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		err = start()
 	}
 	if err != nil {
-		return "", fmt.Errorf("start: %w", err)
+		// Keep the instance. The copy took long, and the fix is usually a
+		// setting the user can change before starting it again.
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return strings.TrimSpace(note + "It was imported but did not start. Change its settings and start it. Incus said: " + err.Error()), nil
 	}
 
 	set(0.95, "Waiting for a network address")
@@ -812,4 +821,28 @@ func (a *App) ownVolumes(ctx context.Context, s *Session, server, project string
 
 func sharedVolumesMsg(project string) string {
 	return "Project " + project + " keeps its volumes in the default project, so only an admin can import volumes into it."
+}
+
+// capCPUs lowers limits.cpu to the number of CPUs on the Incus server. Incus
+// can't start a VM with more CPUs than the server has, and a Proxmox host
+// often has more. It returns a note for the user when it lowered it.
+func capCPUs(ctx context.Context, c *incusConn, project string, p *proxmox.Plan) string {
+	want, err := strconv.Atoi(p.Config["limits.cpu"])
+	if err != nil || want <= 1 {
+		return ""
+	}
+	raw, err := c.call(ctx, "GET", "/1.0/resources", project, nil)
+	if err != nil {
+		return ""
+	}
+	var res struct {
+		CPU struct {
+			Total int `json:"total"`
+		} `json:"cpu"`
+	}
+	if json.Unmarshal(raw, &res) != nil || res.CPU.Total <= 0 || want <= res.CPU.Total {
+		return ""
+	}
+	p.Config["limits.cpu"] = strconv.Itoa(res.CPU.Total)
+	return fmt.Sprintf("The VM had %d CPUs in Proxmox, but the Incus server has %d, so it gets %d. ", want, res.CPU.Total, res.CPU.Total)
 }
