@@ -476,8 +476,25 @@ tr.empty{display:table-row;padding:0}
 /* ---- version in the sidebar footer, Dev badge next to the logo (neutral, not a call to action) ---- */
 .dev-pill{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;line-height:1;color:var(--ink-2);background:var(--s2);box-shadow:inset 0 0 0 1px var(--line)}
 :root[data-brand="kyoto"] .side .dev-pill{color:var(--side-ink-2);background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
-.side-ver{display:block;padding:0 8px 2px;font-size:11px;color:var(--ink-3);text-decoration:none;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:var(--r-xs)}
-.side-ver:hover{color:var(--ink-2);text-decoration:underline;text-underline-offset:2px}
-:root[data-brand="kyoto"] .side .side-ver{color:var(--side-ink-2);opacity:.75}
-:root[data-brand="kyoto"] .side .side-ver:hover{color:var(--side-ink);opacity:1}
-.rail .dev-pill,.rail .side-ver{display:none}
+.rail .dev-pill{display:none}
+/* ---- account menu at the bottom of the sidebar ---- */
+button.acct{width:100%;border:0;background:none;color:inherit;text-align:left;font:inherit;cursor:pointer}
+button.acct:hover,button.acct[aria-expanded="true"]{background:var(--s2)}
+.acct .chev{margin-left:auto;color:var(--ink-3);flex:none;display:inline-flex}
+.acct-txt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.acct-txt small{display:block;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.av{position:relative}
+.av-dot{position:absolute;right:-1px;top:-1px;width:8px;height:8px;border-radius:50%;background:var(--accent,var(--info));box-shadow:0 0 0 2px var(--bg)}
+.rail .acct .chev{display:none}
+.acct-menu{position:fixed;top:auto;right:auto;z-index:60;transform-origin:bottom left}
+.acct-menu svg{width:16px;height:16px;color:var(--ink-3);flex:none}
+.acct-menu .badge-dot{position:static;margin-left:auto}
+:root[data-brand="kyoto"] .side button.acct:hover,:root[data-brand="kyoto"] .side button.acct[aria-expanded="true"]{background:var(--side-s)}
+:root[data-brand="kyoto"] .side .acct .chev{color:var(--side-ink-2)}
+:root[data-brand="kyoto"] .side .av-dot{background:var(--side-ink);box-shadow:0 0 0 2px var(--side)}
+/* ---- collapsed sidebar: toggle stays in the logo row, no group chevrons ---- */
+.rail .side-top{position:static}
+.rail .collapse{position:static;margin:0}
+.rail .scope{margin-top:0}
+.rail .ngrp .chev2{display:none}
+:root[data-brand="kyoto"] .side .acct-menu .badge-dot.upd{background:var(--accent)}

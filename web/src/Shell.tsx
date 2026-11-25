@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { dateTime, incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
@@ -514,17 +514,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
       </nav>
       </div>
       <div className="side-foot">
-        <NavLink to="/settings" className="ni" title="Settings">
-          {ic.gear}
-          {lbl("Settings")}
-          {upd.data?.newer && <span className="badge-dot upd" title="Update available" />}
-        </NavLink>
-        <Account />
-        {ver && (
-          <Link to="/settings/about" className="side-ver" title="Updates and about">
-            {showVersion(ver)}
-          </Link>
-        )}
+        <Account rail={rail} version={ver} update={!!upd.data?.newer} />
       </div>
     </aside>
   );
@@ -556,29 +546,88 @@ function useWarningCount() {
   return q.data || { n: 0, hot: false };
 }
 
-function Account() {
+// Account is the signed-in user at the bottom of the sidebar. It opens a menu
+// with settings, updates and sign out.
+function Account({ rail, version, update }: { rail: boolean; version?: string; update: boolean }) {
   const { user, method } = useApp();
+  const nav = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<CSSProperties>({});
+  const { mounted, leaving } = usePresence(open);
+  const ref = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  useOutside(ref, () => setOpen(false), open);
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        btn.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", k);
+    return () => document.removeEventListener("keydown", k);
+  }, [open]);
+  const toggle = () => {
+    const r = btn.current?.getBoundingClientRect();
+    if (r) {
+      // Fixed, so the collapsed sidebar doesn't clip it.
+      setPos(
+        rail
+          ? { left: r.right + 8, bottom: window.innerHeight - r.bottom, minWidth: 220 }
+          : { left: r.left, bottom: window.innerHeight - r.top + 6, width: Math.max(r.width, 220) },
+      );
+    }
+    setOpen(!open);
+  };
+  const go = (to: string) => {
+    setOpen(false);
+    nav(to);
+  };
   const initials = user.replace(/@.*/, "").split(/[._\s-]+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
   return (
-    <div className="acct">
-      <span className="av">{initials}</span>
-      <span className="acct-txt">
-        {user}
-        <small>
-          Signed in with {method === "oidc" ? <span className="ac">SSO</span> : "password"}
-        </small>
-      </span>
-      <button
-        className="collapse slop"
-        aria-label="Sign out"
-        title="Sign out"
-        onClick={async () => {
-          await ui("/logout", { method: "POST" });
-          location.href = "/";
-        }}
-      >
-        {ic.out}
+    <div ref={ref}>
+      <button ref={btn} className="acct press" onClick={toggle} aria-haspopup="menu" aria-expanded={open} title={rail ? user : undefined}>
+        <span className="av">
+          {initials}
+          {update && <span className="av-dot" title="Update available" />}
+        </span>
+        <span className="acct-txt">
+          {user}
+          {version && <small>{showVersion(version)}</small>}
+        </span>
+        <span className="chev">{ic.chev}</span>
       </button>
+      {mounted && (
+        <div className={"menu acct-menu" + (leaving ? " leaving" : "")} role="menu" style={pos}>
+          <button role="menuitem" autoFocus onClick={() => go("/settings")}>
+            {ic.gear}
+            Settings
+          </button>
+          {method === "password" && (
+            <button role="menuitem" onClick={() => go("/settings/security")}>
+              {ic.shield}
+              Sign-in security
+            </button>
+          )}
+          <button role="menuitem" onClick={() => go("/settings/about")}>
+            {ic.dl}
+            Updates and about
+            {update && <span className="badge-dot upd" title="Update available" />}
+          </button>
+          <hr />
+          <button
+            role="menuitem"
+            onClick={async () => {
+              await ui("/logout", { method: "POST" });
+              location.href = "/";
+            }}
+          >
+            {ic.out}
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 }

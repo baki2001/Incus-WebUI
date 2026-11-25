@@ -205,6 +205,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/ui/account/totp", auth(a.handleTOTPEnable))
 	mux.Handle("POST /api/ui/account/totp/disable", auth(a.handleTOTPDisable))
 	mux.Handle("POST /api/ui/account/recovery-codes", auth(a.handleRecoveryRenew))
+	mux.Handle("POST /api/ui/account/password", auth(a.handlePasswordChange))
 	mux.Handle("POST /api/ui/account/passkeys/begin", auth(a.handlePasskeyRegisterBegin))
 	mux.Handle("POST /api/ui/account/passkeys/finish", auth(a.handlePasskeyRegisterFinish))
 	mux.Handle("PUT /api/ui/account/passkeys/{id}", auth(a.handlePasskeyRename))
