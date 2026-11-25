@@ -6,7 +6,8 @@ import { useCrumbs } from "../Shell";
 import { BackupSettings } from "./Backups";
 import { Security } from "./Security";
 import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
-import { confirmDialog, CopyBtn, Field, Input, Menu, Seg, Select, usePresence, useThumb } from "../ui";
+import { confirmDialog, CopyBtn, Dialog, Field, Menu, Seg, Select, Table, useThumb } from "../ui";
+import { DlgForm } from "./InstanceDialogs";
 
 type Section = "appearance" | "security" | "servers" | "users" | "backups" | "about";
 const sections: { v: Section; l: string; admin?: boolean; local?: boolean }[] = [
@@ -277,38 +278,39 @@ function Servers() {
   );
 }
 
+type UiUser = { username: string; totp?: boolean; passkeys?: number };
+
+const roleOptions = [
+  { v: "viewer", l: "Viewer: only look" },
+  { v: "operator", l: "Operator: start, stop, console, files" },
+  { v: "manager", l: "Manager: create, change, delete" },
+  { v: "admin", l: "Admin: everything, also users and servers" },
+];
+const roleRank: Record<string, number> = { viewer: 1, operator: 2, manager: 3, admin: 4 };
+const roleLabel = (r: string) => r[0].toUpperCase() + r.slice(1);
+const everywhere = (e: AccessEntry) => e.server === "*" && e.project === "*";
+
+// What a user's own access entries add up to, for the user list.
+function roleSummary(entries: AccessEntry[], name: string) {
+  const mine = entries.filter((e) => e.who === `user:${name}`);
+  if (!mine.length) return null;
+  const top = mine.reduce((a, b) => (roleRank[b.role] > roleRank[a.role] ? b : a));
+  const scoped = mine.length > 1 || !everywhere(top);
+  return { label: roleLabel(top.role), title: mine.map((e) => `${roleLabel(e.role)} on ${e.server === "*" ? "every server" : e.server}, ${e.project === "*" ? "every project" : `project ${e.project}`}`).join("\n"), scoped };
+}
+
+const saveAccess = (access: AccessEntry[]) => ui("/access", { method: "PUT", body: { access } }).then(() => invalidate("ui-access"));
+
 function Users() {
   const app = useApp();
-  const q = useData<{ users: { username: string; totp?: boolean; passkeys?: number }[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
-  const [u, setU] = useState("");
-  const [p, setP] = useState("");
-  const [role, setRole] = useState<RoleName>("viewer");
-  const [err, setErr] = useState("");
-  const [pw, setPw] = useState<{ name: string; pass: string; err: string } | null>(null);
+  const nav = useNavigate();
+  const q = useData<{ users: UiUser[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
+  const acc = useData<{ access: AccessEntry[] }>("ui-access", () => ui("/access"));
+  const [adding, setAdding] = useState(false);
+  const [pwFor, setPwFor] = useState("");
+  const [roleFor, setRoleFor] = useState("");
   const users = q.data?.users || [];
-  const add = async () => {
-    setErr("");
-    try {
-      await ui("/users", { method: "POST", body: { username: u, password: p, role } });
-      app.toast(`${u} added as ${role}`);
-      invalidate("ui-access");
-      setU("");
-      setP("");
-      invalidate("ui-users");
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  };
-  const changePw = async () => {
-    if (!pw) return;
-    try {
-      await ui(`/users/${encodeURIComponent(pw.name)}`, { method: "PUT", body: { password: pw.pass } });
-      app.toast(`Password changed for ${pw.name}`);
-      setPw(null);
-    } catch (e: any) {
-      setPw({ ...pw, err: e.message });
-    }
-  };
+  const access = acc.data?.access || [];
   const resetSignIn = async (name: string) => {
     if (!(await confirmDialog({ title: `Reset sign-in for ${name}?`, body: "Their two-factor sign-in and all their passkeys are removed and they are signed out everywhere. They can sign in with their password and set them up again.", confirm: "Reset", danger: true }))) return;
     try {
@@ -320,9 +322,10 @@ function Users() {
     }
   };
   const del = async (name: string) => {
-    if (!(await confirmDialog({ title: `Remove ${name}?`, body: "They can't sign in with a password any more.", confirm: "Remove", danger: true }))) return;
+    if (!(await confirmDialog({ title: `Remove ${name}?`, body: "They can't sign in with a password any more. Their roles are removed too.", confirm: "Remove", danger: true }))) return;
     try {
       await ui(`/users/${encodeURIComponent(name)}`, { method: "DELETE" });
+      app.toast(`${name} removed`);
       invalidate("ui-users");
       invalidate("ui-access");
     } catch (e: any) {
@@ -332,25 +335,41 @@ function Users() {
   return (
     <>
       <section className="set-sec">
-        <h2>Local users</h2>
+        <div className="set-sec-h">
+          <h2>Local users</h2>
+          <button className="btn btn-s btn-sm press" onClick={() => setAdding(true)}>
+            {ic.plus}Add user
+          </button>
+        </div>
         <div className="panel">
           {users.map((x) => {
-            const canReset = x.username !== app.user && (x.totp || !!x.passkeys);
-            const canDel = x.username !== app.user && users.length > 1;
+            const me = x.username === app.user;
+            const canReset = !me && (x.totp || !!x.passkeys);
+            const canDel = !me && users.length > 1;
+            const role = roleSummary(access, x.username);
             return (
-              <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
+              <div className="snap" key={x.username}>
                 <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-                <span>
+                <span style={{ minWidth: 0 }}>
                   {x.username}
-                  {x.username === app.user && <span className="dim"> · you</span>}
+                  {me && <span className="dim"> · you</span>}
                   {x.totp && <span className="dim"> · 2FA</span>}
                   {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
                 </span>
-                <span className="r" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <button className="btn btn-q btn-sm" onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
-                    Change password
-                  </button>
-                  {(canReset || canDel) && (
+                <span className="r usr-r">
+                  {role ? (
+                    <span className="tag" title={role.title}>
+                      {role.label}
+                      {role.scoped && " +"}
+                    </span>
+                  ) : (
+                    <span className="dim" title="Only entries for everyone or for groups apply.">No role of their own</span>
+                  )}
+                  {me ? (
+                    <button className="btn btn-q btn-sm" onClick={() => nav("/settings/security")}>
+                      Sign-in security
+                    </button>
+                  ) : (
                     <Menu
                       button={(p) => (
                         <button className="btn btn-q ib btn-sm" aria-label={`Actions for ${x.username}`} {...p}>
@@ -360,11 +379,9 @@ function Users() {
                     >
                       {(close) => (
                         <>
-                          {canReset && (
-                            <button onClick={() => (close(), resetSignIn(x.username))}>
-                              Reset 2FA and passkeys
-                            </button>
-                          )}
+                          <button onClick={() => (close(), setPwFor(x.username))}>Reset password</button>
+                          <button onClick={() => (close(), setRoleFor(x.username))}>Change role</button>
+                          {canReset && <button onClick={() => (close(), resetSignIn(x.username))}>Reset 2FA and passkeys</button>}
                           {canDel && (
                             <button className="danger" onClick={() => (close(), del(x.username))}>
                               {ic.trash}Remove
@@ -375,57 +392,14 @@ function Users() {
                     </Menu>
                   )}
                 </span>
-                {pw?.name === x.username && (
-                  <form
-                    style={{ flexBasis: "100%", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", paddingTop: 8 }}
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      changePw();
-                    }}
-                  >
-                    <Field label={`New password for ${x.username}`} hint="At least 10 characters.">
-                      <div className="field">
-                        <input type="password" autoFocus value={pw.pass} onChange={(e) => setPw({ ...pw, pass: e.target.value, err: "" })} autoComplete="new-password" />
-                      </div>
-                    </Field>
-                    <div className="fl">
-                      <button className="btn btn-s press" disabled={!pw.pass}>
-                        Save
-                      </button>
-                      <div className="hint" />
-                    </div>
-                    {pw.err && <div className="bad" style={{ width: "100%" }}>{pw.err}</div>}
-                  </form>
-                )}
               </div>
             );
           })}
         </div>
       </section>
-      <section className="set-sec">
-        <h2>Add a user</h2>
-        <div className="set-form">
-          <Field label="Username">
-            <div className="field">
-              <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
-            </div>
-          </Field>
-          <Field label="Password" hint="At least 10 characters.">
-            <div className="field">
-              <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" />
-            </div>
-          </Field>
-          <Field label="Role" hint="On every server and project. Narrow it under Roles.">
-            <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
-          </Field>
-          <div>
-            <button className="btn btn-s press" disabled={!u || !p} onClick={add}>
-              Add user
-            </button>
-          </div>
-          {err && <div className="bad">{err}</div>}
-        </div>
-      </section>
+      <AddUserDialog open={adding} onClose={() => setAdding(false)} taken={users.map((u) => u.username)} />
+      <PasswordDialog name={pwFor} onClose={() => setPwFor("")} />
+      <UserRoleDialog name={roleFor} access={access} onClose={() => setRoleFor("")} />
       <Roles />
       <section className="set-sec">
         <h2>
@@ -447,95 +421,319 @@ function Users() {
   );
 }
 
-const roleOptions = [
-  { v: "viewer", l: "Viewer: only look" },
-  { v: "operator", l: "Operator: start, stop, console, files" },
-  { v: "manager", l: "Manager: create, change, delete" },
-  { v: "admin", l: "Admin: everything, also users and servers" },
-];
+function AddUserDialog({ open, onClose, taken }: { open: boolean; onClose: () => void; taken: string[] }) {
+  const app = useApp();
+  const [u, setU] = useState("");
+  const [p, setP] = useState("");
+  const [role, setRole] = useState<RoleName>("viewer");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) (setU(""), setP(""), setRole("viewer"), setErr(""));
+  }, [open]);
+  const dup = taken.includes(u.trim()) ? "A user with that name already exists." : "";
+  return (
+    <Dialog open={open} onClose={onClose} size="sm" dirty={!!u || !!p}>
+      <DlgForm
+        title="Add a user"
+        intro="They sign in with this name and password. They can add two-factor sign-in and passkeys themselves."
+        confirm={busy ? "Adding…" : "Add user"}
+        disabled={busy || !u.trim() || p.length < 10 || !!dup}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            await ui("/users", { method: "POST", body: { username: u.trim(), password: p, role } });
+            app.toast(`${u.trim()} added as ${role}`);
+            invalidate("ui-users");
+            invalidate("ui-access");
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="Username" hint={dup} bad={!!dup}>
+          <div className="field">
+            <input autoFocus value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
+          </div>
+        </Field>
+        <Field label="Password" hint="At least 10 characters.">
+          <div className="field">
+            <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" />
+          </div>
+        </Field>
+        <Field label="Role" hint="On every server and project. Narrow it under Roles.">
+          <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
 
-// Roles lists every access entry and saves them in one go.
+function PasswordDialog({ name, onClose }: { name: string; onClose: () => void }) {
+  const app = useApp();
+  const [p, setP] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (name) (setP(""), setErr(""));
+  }, [name]);
+  return (
+    <Dialog open={!!name} onClose={onClose} size="sm" dirty={!!p}>
+      <DlgForm
+        title={`Reset password for ${name}`}
+        intro="They are signed out everywhere and sign in with the new password. Their two-factor sign-in and passkeys stay."
+        confirm={busy ? "Saving…" : "Reset password"}
+        disabled={busy || p.length < 10}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            await ui(`/users/${encodeURIComponent(name)}`, { method: "PUT", body: { password: p } });
+            app.toast(`Password changed for ${name}`);
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="New password" hint="At least 10 characters.">
+          <div className="field">
+            <input type="password" autoFocus value={p} onChange={(e) => (setP(e.target.value), setErr(""))} autoComplete="new-password" />
+          </div>
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
+
+// UserRoleDialog sets the user's role on every server and project. Entries
+// for single servers or projects are left alone and edited under Roles.
+function UserRoleDialog({ name, access, onClose }: { name: string; access: AccessEntry[]; onClose: () => void }) {
+  const app = useApp();
+  const who = `user:${name}`;
+  const cur = access.find((e) => e.who === who && everywhere(e))?.role || "";
+  const scoped = access.filter((e) => e.who === who && !everywhere(e)).length;
+  const [role, setRole] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (name) (setRole(cur), setErr(""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
+  return (
+    <Dialog open={!!name} onClose={onClose} size="sm">
+      <DlgForm
+        title={`Change role for ${name}`}
+        intro={
+          scoped
+            ? `This role holds on every server and project. ${name} also has ${scoped === 1 ? "one entry" : `${scoped} entries`} for single servers or projects. Change those under Roles.`
+            : "This role holds on every server and project. To give a role on one project only, add an entry under Roles."
+        }
+        confirm={busy ? "Saving…" : "Save"}
+        disabled={busy || role === cur}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          const rest = access.filter((e) => !(e.who === who && everywhere(e)));
+          try {
+            await saveAccess(role ? [...rest, { who, server: "*", project: "*", role: role as RoleName }] : rest);
+            app.toast(role ? `${name} is now ${role}` : `Removed the role of ${name}`);
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="Role">
+          <Select value={role} onChange={setRole} options={[...roleOptions, { v: "", l: "None: only roles for everyone or groups" }]} />
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
+
+// Roles lists every access entry. Adding and editing happen in a dialog, and
+// each change is saved right away.
 function Roles() {
   const app = useApp();
   const q = useData<{ access: AccessEntry[] }>("ui-access", () => ui("/access"));
-  const [rows, setRows] = useState<AccessEntry[] | null>(null);
-  const [err, setErr] = useState("");
-  useEffect(() => setRows(q.data?.access || null), [q.data]);
-  const dirty = !!rows && JSON.stringify(rows) !== JSON.stringify(q.data?.access);
-  const bar = usePresence(dirty || !!err);
-  if (!rows) return null;
-  const set = (i: number, k: keyof AccessEntry, v: string) => {
-    setErr("");
-    setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v, ...(k === "role" && v === "admin" ? { server: "*", project: "*" } : {}) } : r)));
-  };
-  const save = async () => {
+  const [edit, setEdit] = useState<{ i: number; e: AccessEntry } | null>(null);
+  const rows = q.data?.access;
+  const remove = async (i: number) => {
+    if (!rows) return;
+    const r = rows[i];
+    const admins = rows.filter((e) => e.role === "admin");
+    const last = r.role === "admin" && admins.length === 1;
+    if (!(await confirmDialog({ title: `Remove the entry for ${r.who}?`, body: last ? "This is the only admin entry. Without it nobody can manage users, roles or servers." : "They lose this role. Other entries that fit them still apply.", confirm: "Remove", danger: true }))) return;
     try {
-      await ui("/access", { method: "PUT", body: { access: rows } });
-      app.toast("Roles saved");
-      invalidate("ui-access");
-    } catch (e: any) {
-      setErr(e.message);
+      await saveAccess(rows.filter((_, j) => j !== i));
+      app.toast("Entry removed");
+    } catch (e) {
+      app.fail(e, "Could not remove the entry.");
     }
   };
-  const servers = ["*", ...app.servers.map((s) => s.name)];
+  type Row = AccessEntry & { i: number };
   return (
     <section className="set-sec">
-      <h2>Roles</h2>
-      <p>
-        Who is <span className="mono">user:name</span> for a local user, <span className="mono">sso:name</span> for a single sign-on user, <span className="mono">group:name</span> for an SSO group, or{" "}
-        <span className="mono">*</span> for everyone who can sign in. Someone with several entries gets the highest role that fits.
-      </p>
-      <div className="panel roles">
-        <div className="roles-h">
-          <span>Who</span>
-          <span>Server</span>
-          <span>Project</span>
-          <span>Role</span>
-          <span />
-        </div>
-        {rows.map((r, i) => (
-          <div className="roles-r" key={i}>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Who</span>
-              <Input mono aria-label="Who" value={r.who} onChange={(v) => set(i, "who", v)} />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Server</span>
-              <Select aria-label="Server" disabled={r.role === "admin"} value={r.server} onChange={(v) => set(i, "server", v)} options={servers.includes(r.server) ? servers : [...servers, r.server]} />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Project</span>
-              <Input mono aria-label="Project" disabled={r.role === "admin"} value={r.project} onChange={(v) => set(i, "project", v)} placeholder="*" />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Role</span>
-              <Select aria-label="Role" value={r.role} onChange={(v) => set(i, "role", v)} options={roleOptions.map((o) => ({ v: o.v, l: o.v[0].toUpperCase() + o.v.slice(1) }))} />
-            </div>
-            <button className="btn btn-q btn-sm" aria-label={`Remove ${r.who}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-              Remove
-            </button>
-          </div>
-        ))}
-        <div className="roles-f">
-          <button className="btn btn-q btn-sm" onClick={() => setRows([...rows, { who: "user:", server: "*", project: "*", role: "viewer" }])}>
-            Add entry
-          </button>
-        </div>
+      <div className="set-sec-h">
+        <h2>Roles</h2>
+        <button className="btn btn-s btn-sm press" disabled={!rows} onClick={() => setEdit({ i: -1, e: { who: "user:", server: "*", project: "*", role: "viewer" } })}>
+          {ic.plus}Add entry
+        </button>
       </div>
-      {bar.mounted && (
-        <div className={"hwbar" + (bar.leaving ? " leaving" : "")}>
-          {err ? <span className="bad">{err}</span> : <b>Unsaved role changes</b>}
-          <button className="btn btn-q btn-sm" onClick={() => (setRows(q.data?.access || []), setErr(""))}>
-            Discard
-          </button>
-          <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
-            Save roles
-          </button>
-        </div>
-      )}
+      <p>Each entry gives someone a role on a server and project. Someone with several entries gets the highest role that fits.</p>
+      <Table<Row>
+        rows={rows?.map((e, i) => ({ ...e, i }))}
+        loading={!rows}
+        rowKey={(r) => String(r.i)}
+        onRow={(r) => setEdit({ i: r.i, e: r })}
+        empty="No entries yet."
+        initial={{ k: "who", asc: true }}
+        cols={[
+          { k: "who", label: "Who", sort: (r) => r.who, cell: (r) => <span className="mono">{r.who}</span> },
+          { k: "server", label: "Server", cls: "hide-s", sort: (r) => r.server, cell: (r) => (r.server === "*" ? <span className="dim">Every server</span> : r.server) },
+          { k: "project", label: "Project", sort: (r) => r.project, cell: (r) => (r.project === "*" ? <span className="dim">Every project</span> : r.project) },
+          { k: "role", label: "Role", sort: (r) => roleRank[r.role], cell: (r) => <span className="tag">{roleLabel(r.role)}</span> },
+          {
+            k: "act",
+            label: "",
+            cls: "right",
+            cell: (r) => (
+              <span onClick={(e) => e.stopPropagation()}>
+                <Menu
+                  button={(p) => (
+                    <button className="btn btn-q ib btn-sm" aria-label={`Actions for ${r.who}`} {...p}>
+                      {ic.more}
+                    </button>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      <button onClick={() => (close(), setEdit({ i: r.i, e: r }))}>{ic.edit}Edit</button>
+                      <button className="danger" onClick={() => (close(), remove(r.i))}>
+                        {ic.trash}Remove
+                      </button>
+                    </>
+                  )}
+                </Menu>
+              </span>
+            ),
+          },
+        ]}
+      />
+      <RoleDialog edit={edit} rows={rows || []} onClose={() => setEdit(null)} />
     </section>
   );
 }
+
+const whoKinds = [
+  { v: "user", l: "Local user" },
+  { v: "sso", l: "Single sign-on user" },
+  { v: "group", l: "SSO group" },
+  { v: "*", l: "Everyone who can sign in" },
+];
+
+function RoleDialog({ edit, rows, onClose }: { edit: { i: number; e: AccessEntry } | null; rows: AccessEntry[]; onClose: () => void }) {
+  const app = useApp();
+  const users = useData<{ users: UiUser[] }>("ui-users", () => ui("/users"));
+  const [kind, setKind] = useState("user");
+  const [name, setName] = useState("");
+  const [server, setServer] = useState("*");
+  const [project, setProject] = useState("*");
+  const [role, setRole] = useState<RoleName>("viewer");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!edit) return;
+    const w = edit.e.who;
+    const k = w === "*" ? "*" : w.includes(":") ? w.slice(0, w.indexOf(":")) : "user";
+    setKind(whoKinds.some((x) => x.v === k) ? k : "user");
+    setName(w === "*" ? "" : w.slice(w.indexOf(":") + 1));
+    setServer(edit.e.server || "*");
+    setProject(edit.e.project || "*");
+    setRole(edit.e.role);
+    setErr("");
+  }, [edit]);
+  const isNew = edit?.i === -1;
+  const who = kind === "*" ? "*" : `${kind}:${name.trim()}`;
+  const admin = role === "admin";
+  const entry: AccessEntry = { who, server: admin ? "*" : server, project: admin ? "*" : project.trim() || "*", role };
+  const same = (a: AccessEntry, b: AccessEntry) => a.who === b.who && a.server === b.server && a.project === b.project && a.role === b.role;
+  const dup = rows.some((r, j) => j !== edit?.i && same(r, entry));
+  const unchanged = !!edit && !isNew && same(edit.e, entry);
+  const servers = ["*", ...app.servers.map((s) => s.name)];
+  const localNames = (users.data?.users || []).map((u) => u.username);
+  return (
+    <Dialog open={!!edit} onClose={onClose} size="sm" dirty={!unchanged && !isNew}>
+      {edit && (
+        <DlgForm
+          title={isNew ? "Add a role entry" : "Edit role entry"}
+          confirm={busy ? "Saving…" : isNew ? "Add entry" : "Save"}
+          disabled={busy || (kind !== "*" && !name.trim()) || dup || unchanged}
+          onClose={onClose}
+          onSubmit={async () => {
+            setBusy(true);
+            setErr("");
+            try {
+              await saveAccess(isNew ? [...rows, entry] : rows.map((r, j) => (j === edit.i ? entry : r)));
+              app.toast(isNew ? "Entry added" : "Entry saved");
+              onClose();
+            } catch (e: any) {
+              setErr(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Field label="Who">
+            <Select value={kind} onChange={setKind} options={whoKinds} />
+          </Field>
+          {kind === "user" && localNames.length > 0 ? (
+            <Field label="User">
+              <Select value={name} onChange={setName} options={[...(localNames.includes(name) ? [] : [{ v: name, l: name || "Pick a user" }]), ...localNames]} />
+            </Field>
+          ) : (
+            kind !== "*" && (
+              <Field label={kind === "group" ? "Group name" : kind === "sso" ? "Email or SSO name" : "Username"}>
+                <div className="field">
+                  <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+                </div>
+              </Field>
+            )
+          )}
+          <Field label="Role">
+            <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
+          </Field>
+          <Field label="Server" hint={admin ? "Admins have their role everywhere." : undefined}>
+            <Select disabled={admin} value={entry.server} onChange={setServer} options={servers.includes(entry.server) ? servers.map((s) => ({ v: s, l: s === "*" ? "Every server" : s })) : [...servers, entry.server]} />
+          </Field>
+          <Field label="Project" hint={admin ? undefined : "A project name, or * for every project."}>
+            <div className="field">
+              <input className="mono" disabled={admin} value={entry.project} onChange={(e) => setProject(e.target.value)} placeholder="*" />
+            </div>
+          </Field>
+          {dup && <div className="bad">This entry already exists.</div>}
+          {err && <div className="bad">{err}</div>}
+        </DlgForm>
+      )}
+    </Dialog>
+  );
+}
+
 
 export type UpdateInfo = {
   current: string;
