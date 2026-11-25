@@ -46,6 +46,8 @@ type Config struct {
 	Access []Access `yaml:"access,omitempty"`
 	// Backups are the backup targets and schedules (see backup.go).
 	Backups Backups `yaml:"backups,omitempty"`
+	// UpdateChannel is "dev" to follow builds of the dev branch. Empty means stable releases.
+	UpdateChannel string `yaml:"update_channel,omitempty"`
 }
 
 type Theme struct {

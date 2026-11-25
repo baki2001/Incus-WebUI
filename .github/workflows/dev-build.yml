@@ -1,0 +1,53 @@
+name: Dev build
+# Every push to dev replaces the "dev" prerelease. Installs on the Dev update
+# channel (Settings > Updates and about) pick it up from there.
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Version
+        # The newest stable tag plus the run number, like v0.7.0-dev.42.
+        run: |
+          base=$(git tag -l 'v*' --sort=-v:refname | grep -v -- - | head -1)
+          echo "VERSION=${base:-v0.0.0}-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+      - run: cd web && npm ci --no-audit --no-fund && npm run build
+      - run: go vet ./...
+      - name: Build
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o dist/incus-webui-linux-$arch .
+          done
+          cd dist && sha256sum incus-webui-* > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev --cleanup-tag --yes 2>/dev/null || true
+          gh release create dev dist/* install/incus-instance.sh install/host-updates.sh \
+            --prerelease --title "$VERSION" --target "$GITHUB_SHA" \
+            --notes "Dev build of ${GITHUB_SHA::7} from the dev branch. Not for production."

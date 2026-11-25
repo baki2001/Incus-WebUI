@@ -228,6 +228,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/remote-images", auth(a.handleRemoteImages))
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
 	mux.Handle("POST /api/ui/update", admin(a.handleUpdateApply))
+	mux.Handle("PUT /api/ui/update/channel", admin(a.handleUpdateChannel))
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleListDir)))
 	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleRemoveAll)))
 	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.requireRole(RoleOperator, a.handleDownload)))

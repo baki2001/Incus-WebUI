@@ -69,6 +69,8 @@ make build                       # builds the UI and the binary
 
 For UI work, keep the binary running and start `npm run dev` in `web/`. Vite forwards API calls to port 8443.
 
+Work happens on the `dev` branch, and every merge there publishes a dev build you can switch to under Settings > Updates and about. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [Apache 2.0](LICENSE)
