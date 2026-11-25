@@ -537,7 +537,12 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		return "", ctx.Err()
 	}
 	// No rollback: the guest may use a static address on another network.
-	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address or a network interface name that changed.", nil
+	if p.Type == "virtual-machine" {
+		// The guest names its NIC after the PCI slot, which differs from
+		// Proxmox, and cloud-init's netplan matches it by MAC address.
+		return note + "It runs, but no address showed up in 3 minutes. Most often the network settings inside the VM still point at the network card it had in Proxmox. In the VM's console, run ip -br link to see the card's new name (often enp5s0). Then use that name in /etc/netplan/ or /etc/network/interfaces inside the VM. If the VM uses a fixed address, check that it fits this network.", nil
+	}
+	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address on another network.", nil
 }
 
 // sendProgress reports an upload to Incus. Once every byte is sent, Incus
