@@ -7,6 +7,10 @@
 .dev .field input:disabled,.dev .field select:disabled{color:var(--ink-3)}
 .dev.n{grid-template-columns:96px minmax(0,1fr) minmax(0,1fr) auto}
 .dev.n.h{grid-template-columns:96px minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto}
+.dev.hw{grid-template-columns:96px minmax(0,1fr) 150px auto}
+.hwname{display:flex;flex-direction:column;min-width:0;font-size:13px;line-height:1.3}
+.hwname b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hwname .mono{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dev.pf{grid-template-columns:24px minmax(0,1fr) auto auto auto}
 .dev.pf .idx{font:12px var(--f-mono);color:var(--ink-3);text-align:center}
 .devgrp{display:flex;flex-direction:column;gap:4px}
@@ -24,6 +28,9 @@
 .hc.devl{container-type:inline-size}
 @container (max-width:620px){
   .dev.dk,.dev.px,.dev.n,.dev.pf{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .dev.hw{grid-template-columns:minmax(0,1fr) 150px auto}
+  .dev.hw>.field.mono-in{display:none}
+  .hwname b{white-space:normal}
   .dev.pf{grid-template-columns:24px minmax(0,1fr) auto auto auto}
   .dev .hdr{display:none}
   .dev.dk .pair,.dev.px .pair{grid-column:1 / -1}

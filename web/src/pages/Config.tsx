@@ -6,6 +6,7 @@ import { invalidate, useApp, useData } from "../state";
 import { Dialog, Seg, shake, Toggle, usePresence } from "../ui";
 import { CONFLICT, cpuCount, cpuOK, fixedIPv4Net, lanNic, lanParents, nicIPv4Error, SizeField, subnetOf, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited, type VmProxy } from "./DeviceEditors";
+import { checkHardware, HardwareEditor, hwTypes } from "./Hardware";
 import "../cfg.css";
 
 type Inst = Instance & { server: string };
@@ -52,7 +53,7 @@ const sched = [
 const expiry = ["", "1d", "3d", "7d", "14d", "4w", "3M"];
 
 
-function validate(d: Put, cores?: number, hostMem?: number, nets?: any[], vm = false) {
+function validate(d: Put, cores?: number, hostMem?: number, nets?: any[], vm = false, running = false, before: Devs = {}) {
   const err: Record<string, string> = {},
     warn: Record<string, string> = {};
   const cpu = d.config["limits.cpu"];
@@ -68,7 +69,7 @@ function validate(d: Put, cores?: number, hostMem?: number, nets?: any[], vm = f
   };
   size(d.config["limits.memory"], "Memory", "mem", hostMem);
   size(d.devices.root?.size, "Disk size", "root");
-  Object.assign(err, checkDevices(d.devices, vm));
+  Object.assign(err, checkDevices(d.devices, vm), checkHardware(d.devices, vm, running, before));
   for (const [n, dev] of Object.entries(d.devices)) {
     const e = dev.type === "nic" && nicIPv4Error(dev, nets);
     if (e) err["dev." + n] = e;
@@ -175,7 +176,8 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
 
   const cores = host.data?.cpu?.total;
   const hostMem = host.data?.memory?.total;
-  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem, nets.data, inst.type === "virtual-machine"), [cd, cores, hostMem, nets.data, inst.type]);
+  const vmRunning = inst.type === "virtual-machine" && srcObj.status === "Running";
+  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem, nets.data, inst.type === "virtual-machine", vmRunning, original.devices), [cd, cores, hostMem, nets.data, inst.type, vmRunning, original.devices]);
   const devErrs = tried ? errs : {};
 
   const parseYaml = (): Put | null => {
@@ -208,7 +210,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
       setYamlErr("");
       d = clean(p);
     }
-    const v = validate(d, cores, hostMem, nets.data, inst.type === "virtual-machine");
+    const v = validate(d, cores, hostMem, nets.data, inst.type === "virtual-machine", vmRunning, original.devices);
     if (Object.keys(v.err).length) {
       setTried(true);
       if (view === "yaml") setYamlErr(Object.values(v.err)[0]);
@@ -624,6 +626,18 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
                 <b title="devices.*.type: proxy">Port forwarding</b>
               </div>
               <ProxyEditor devices={draft.devices} inherited={inh("proxy")} edit={edit} server={server} errors={devErrs} vm={vmProxy} />
+            </div>
+          </section>
+
+          <section className="hsec">
+            <header>
+              <h2>Hardware</h2>
+            </header>
+            <div className="hrow">
+              <div className="hl">
+                <b title="devices.*.type: usb, unix-hotplug, gpu, pci">Host devices{[...new Set([...Object.keys(cd.devices), ...Object.keys(original.devices)])].some((n) => hwTypes.includes(cd.devices[n]?.type || original.devices[n]?.type) && chgDev(n)) && <span className="chg" />}</b>
+              </div>
+              <HardwareEditor devices={draft.devices} inherited={hwTypes.flatMap(inh)} edit={edit} server={server} vm={isVM} errors={devErrs} />
             </div>
           </section>
 
