@@ -8,6 +8,7 @@ import { hasExt, listVolumes, nameOf, useManagedNetworks, useNames } from "../da
 import { Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } from "../ui";
 import { cpuOK, lanNic, lanParents, SizeField, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
+import { checkHardware, HardwareEditor } from "./Hardware";
 import { LocalPicker, ociRegistries, RemotePicker, useImageServers, useRemoteImages, useServerArch } from "./ImagePicker";
 import "../cfg.css";
 
@@ -148,7 +149,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const srcBad = (source === "remote" && !alias) || (source === "local" && !fp) || (source === "oci" && !oci.ref.trim()) || (source === "iso" && !iso);
   const cpuBad = cpu !== "" && !cpuOK(cpu);
   const sizeBad = (v: string) => v !== "" && !((memBytes(v) ?? 0) > 0);
-  const devErrs = checkDevices(devs, isVM);
+  const devErrs = { ...checkDevices(devs, isVM), ...checkHardware(devs, isVM) };
   const hasErr = nameBad || srcBad || !projSel || cpuBad || sizeBad(mem) || sizeBad(disk) || Object.keys(devErrs).length > 0;
   const dirty =
     !!(name || alias || fp || oci.ref || iso || cpu || mem || disk || pool || network || cloudInit || desc || proj) ||
@@ -368,6 +369,10 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
 
         <SheetSec title="Port forwarding">
           <ProxyEditor devices={devs} edit={edit} server={srv} errors={tried ? devErrs : {}} vm={isVM ? { block: "Add port forwarding to a VM after it is created. Its network card needs a fixed IPv4 address on an Incus bridge first." } : undefined} />
+        </SheetSec>
+
+        <SheetSec title="Hardware">
+          <HardwareEditor devices={devs} edit={edit} server={srv} vm={isVM} errors={tried ? devErrs : {}} />
         </SheetSec>
 
         {(source === "remote" || source === "local") && (

@@ -30,7 +30,7 @@
   - Console shows the instance's own screen, the same as `incus console`. VMs get a graphic mode (SPICE) and a text mode. Use it when the network or the OS inside is broken.
   - File Explorer browses, uploads, downloads and edits files, and deletes folders recursively.
   - The terminal keeps running when you switch tabs, and has a key row on phones.
-- Hardware settings as a form (CPU, memory, disks, network cards, port forwards, autostart, snapshot schedule), with a YAML view and a diff to review before anything is applied. If someone else changed the instance meanwhile, you see the conflict before saving.
+- Hardware settings as a form (CPU, memory, disks, network cards, port forwards, USB devices, graphics and PCI cards from the host, autostart, snapshot schedule), with a YAML view and a diff to review before anything is applied. If someone else changed the instance meanwhile, you see the conflict before saving.
 - Several Incus servers in one place. Connect a server by pasting a trust token.
 - Sign in with a password, with single sign-on (OIDC), or both. Signing out ends the session, changing a password ends the user's other sessions, and repeated failed logins lock out that user and address for a while.
 - Each local user can turn on two-factor sign-in with an authenticator app (with one-time recovery codes) and add passkeys to sign in with a fingerprint, face or device PIN, under Settings, Sign-in security. Passkeys need the UI on HTTPS with a domain name and a certificate the browser trusts; set `public_url` when it sits behind a proxy. An admin can reset both for a user who lost their device.
