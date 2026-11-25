@@ -5,7 +5,7 @@ import { ic } from "../icons";
 import { invalidate, useApp, useData } from "../state";
 import { Dialog, Seg, shake, Toggle, usePresence } from "../ui";
 import { CONFLICT, cpuCount, cpuOK, fixedIPv4Net, lanNic, lanParents, nicIPv4Error, SizeField, subnetOf, useNetworkList } from "./cfgutil";
-import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited } from "./DeviceEditors";
+import { checkDevices, DiskEditor, ProxyEditor, type Dev, type Devs, type Inherited, type VmProxy } from "./DeviceEditors";
 import "../cfg.css";
 
 type Inst = Instance & { server: string };
@@ -52,7 +52,7 @@ const sched = [
 const expiry = ["", "1d", "3d", "7d", "14d", "4w", "3M"];
 
 
-function validate(d: Put, cores?: number, hostMem?: number, nets?: any[]) {
+function validate(d: Put, cores?: number, hostMem?: number, nets?: any[], vm = false) {
   const err: Record<string, string> = {},
     warn: Record<string, string> = {};
   const cpu = d.config["limits.cpu"];
@@ -68,7 +68,7 @@ function validate(d: Put, cores?: number, hostMem?: number, nets?: any[]) {
   };
   size(d.config["limits.memory"], "Memory", "mem", hostMem);
   size(d.devices.root?.size, "Disk size", "root");
-  Object.assign(err, checkDevices(d.devices));
+  Object.assign(err, checkDevices(d.devices, vm));
   for (const [n, dev] of Object.entries(d.devices)) {
     const e = dev.type === "nic" && nicIPv4Error(dev, nets);
     if (e) err["dev." + n] = e;
@@ -175,7 +175,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
 
   const cores = host.data?.cpu?.total;
   const hostMem = host.data?.memory?.total;
-  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem, nets.data), [cd, cores, hostMem, nets.data]);
+  const { err: errs, warn: warns } = useMemo(() => validate(cd, cores, hostMem, nets.data, inst.type === "virtual-machine"), [cd, cores, hostMem, nets.data, inst.type]);
   const devErrs = tried ? errs : {};
 
   const parseYaml = (): Put | null => {
@@ -208,7 +208,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
       setYamlErr("");
       d = clean(p);
     }
-    const v = validate(d, cores, hostMem, nets.data);
+    const v = validate(d, cores, hostMem, nets.data, inst.type === "virtual-machine");
     if (Object.keys(v.err).length) {
       setTried(true);
       if (view === "yaml") setYamlErr(Object.values(v.err)[0]);
@@ -286,6 +286,17 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
   const managed = managedNets.map((n) => n.name as string);
   const hostNics = (nets.data || []).filter((n) => !n.managed && n.type !== "loopback").map((n) => n.name as string);
   const lans = lanParents(nets.data);
+  // Incus forwards ports to a VM only through a card on an Incus bridge
+  // that has a fixed IPv4 address.
+  const vmProxy: VmProxy | undefined = !isVM
+    ? undefined
+    : (() => {
+        const fixed = nicRows.find(({ d }) => fixedIPv4Net(d, nets.data));
+        if (fixed?.d["ipv4.address"]) return {};
+        if (fixed) return { block: `Port forwarding to a VM needs a fixed IPv4 address on its network card. Set one on ${fixed.n} first.` };
+        if (nicRows.length) return { block: "This VM is on your LAN, so it has its own address there. Connect to that address directly. It doesn't need port forwarding." };
+        return { block: "Port forwarding to a VM needs a network card on an Incus bridge, with a fixed IPv4 address." };
+      })();
   const autostart = (eff("boot.autostart") || "false") === "true";
   const nesting = (eff("security.nesting") || "false") === "true";
   const schedV = eff("snapshots.schedule");
@@ -612,7 +623,7 @@ export function ConfigTab({ inst, reload }: { inst: Inst; reload: () => void }) 
               <div className="hl">
                 <b title="devices.*.type: proxy">Port forwarding</b>
               </div>
-              <ProxyEditor devices={draft.devices} inherited={inh("proxy")} edit={edit} server={server} errors={devErrs} />
+              <ProxyEditor devices={draft.devices} inherited={inh("proxy")} edit={edit} server={server} errors={devErrs} vm={vmProxy} />
             </div>
           </section>
 
