@@ -444,7 +444,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 			if root := p.Devices["root"]; root != nil {
 				root["size"] = fmt.Sprintf("%dB", need)
 			}
-			note = "The boot disk's last partition ran to the very end of the disk, so the disk is slightly bigger now, which Incus needs for its partition table. "
+			note = "The boot disk is slightly bigger now. Incus needs a little free space after the last partition for its copy of the partition table. "
 		}
 		meta, err := proxmox.VMMetadata(p)
 		if err != nil {
@@ -485,7 +485,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 	}
 	if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {
 		if strings.Contains(err.Error(), "sgdisk") {
-			return "", fmt.Errorf("create the instance: Incus could not fix the partition table of the boot disk. Run sgdisk -v on that disk inside the VM in Proxmox to see what is wrong with it. Incus said: %w", err)
+			return "", fmt.Errorf("create the instance: Incus could not move the backup partition table to the end of the boot disk. sgdisk -v does not catch this. Inside the VM in Proxmox, run sgdisk -p on the boot disk (for example sudo sgdisk -p /dev/sda) and share the output. Incus said: %w", err)
 		}
 		return "", fmt.Errorf("create the instance: %w", err)
 	}
