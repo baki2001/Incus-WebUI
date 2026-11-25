@@ -810,9 +810,11 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
       { group: "Actions", label: "Add server", icon: ic.host, run: go("/settings/servers") },
-      { group: "Actions", label: "Switch to Kyoto", icon: ic.screen, run: () => (app.setMode("kyoto"), onClose()) },
-      { group: "Actions", label: "Switch to Light", icon: ic.screen, run: () => (app.setMode("light"), onClose()) },
-      { group: "Actions", label: "Switch to Graphite", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
+      { group: "Actions", label: "Switch theme to Indigo", icon: ic.screen, run: () => (app.setMode("indigo"), onClose()) },
+      { group: "Actions", label: "Switch theme to Porcelain", icon: ic.screen, run: () => (app.setMode("porcelain"), onClose()) },
+      { group: "Actions", label: "Switch theme to Graphite", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
+      { group: "Actions", label: "Switch theme to Terracotta", icon: ic.screen, run: () => (app.setMode("terracotta"), onClose()) },
+      { group: "Actions", label: "Switch theme to Custom", icon: ic.screen, run: () => (app.setMode("custom"), onClose()) },
     ];
     const where = (project: string | undefined, server: string, always = false) => [project && (always || project !== "default") ? project : "", multi ? server : ""].filter(Boolean).join(" · ");
     for (const r of found.data?.instances || []) {
