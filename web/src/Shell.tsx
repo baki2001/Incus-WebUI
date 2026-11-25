@@ -403,6 +403,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const loc = useLocation();
   const online = app.servers.filter((s) => s.online && s.trusted).length;
   const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"));
+  const ver = useData<{ version: string }>("ui-version", () => ui("/version")).data?.version;
   const warnings = useWarningCount();
   const busy = app.tasks.length + (useJobs().data || []).filter((j) => j.state === "running").length;
   // Hide pins of instances that are gone; pins in other projects stay.
@@ -431,6 +432,11 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
       <div className="side-top">
         <Mark />
         <span className="brand">Incus</span>
+        {ver && isDevBuild(ver) && (
+          <span className="dev-pill" title={`You are running a dev build (${showVersion(ver)})`}>
+            Dev
+          </span>
+        )}
         <button className="collapse" onClick={toggleRail} aria-label={rail ? "Expand sidebar" : "Collapse sidebar"}>
           {ic.side}
         </button>
@@ -514,9 +520,24 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {upd.data?.newer && <span className="badge-dot upd" title="Update available" />}
         </NavLink>
         <Account />
+        {ver && (
+          <Link to="/settings/about" className="side-ver" title="Updates and about">
+            {showVersion(ver)}
+          </Link>
+        )}
       </div>
     </aside>
   );
+}
+
+// showVersion puts a "v" in front of numbered versions. Local builds report "dev".
+export function showVersion(v: string) {
+  return /^\d/.test(v) ? "v" + v : v;
+}
+
+// isDevBuild is true for dev and prerelease builds, like v0.7.2-dev.2 or v0.8.0-beta.1.
+export function isDevBuild(v: string) {
+  return v === "dev" || v.includes("-");
 }
 
 // New warnings across the servers in scope, for the sidebar badge.
