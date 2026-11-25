@@ -352,14 +352,6 @@ tr.empty{display:table-row;padding:0}
   .toolbar .pathbar{order:-1;flex:1 1 100%}
   .toolbar .pathbar .pathedit{white-space:nowrap}
 }
-/* roles editor */
-.roles{padding:8px 16px}
-.roles-h,.roles-r{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(100px,1fr) minmax(100px,1fr) minmax(110px,1fr) auto;gap:8px;align-items:center}
-.roles-h{font-size:12px;color:var(--ink-3);padding:4px 0}
-.roles-r{padding:6px 0;border-top:1px solid var(--line)}
-.roles-f{display:flex;align-items:center;gap:8px;padding:10px 0 4px;border-top:1px solid var(--line)}
-.roles-f .r{margin-left:auto;display:flex;gap:8px}
-@media (max-width:720px){.roles-h{display:none}.roles-r{grid-template-columns:1fr 1fr}}
 /* backend jobs in the task tray */
 .tray .op small{display:flex;gap:10px;align-items:baseline}
 .tray .lnk{margin-left:auto}
@@ -498,6 +490,13 @@ button.acct:hover,button.acct[aria-expanded="true"]{background:var(--s2)}
 .rail .scope{margin-top:0}
 .rail .ngrp .chev2{display:none}
 :root[data-brand="kyoto"] .side .acct-menu .badge-dot.upd{background:var(--accent)}
+
+/* Settings: section heading with an action, user rows */
+.set-sec-h{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.set-sec-h .btn{margin-left:auto}
+.usr-r{display:flex;align-items:center;gap:8px}
+.usr-r .tag{cursor:default}
+@media (max-width:720px){.usr-r>.dim{display:none}}
 /* ---- scope picker in the collapsed sidebar: server icon instead of dots, menu opens to the right ---- */
 .scope-ic{display:none;position:relative;flex:none;width:24px;height:24px;line-height:24px;text-align:center;border-radius:6px;background:var(--s3);color:var(--ink);font-size:12px;font-weight:600}
 .scope-ic i{position:absolute;right:-3px;bottom:-2px;width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--s1)}
