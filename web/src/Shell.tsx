@@ -441,7 +441,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
           {ic.side}
         </button>
       </div>
-      <Scope online={online} />
+      <Scope online={online} rail={rail} />
       <div className={"nav-wrap" + (more ? " more" : "")}>
       <nav className="nav" id="side-nav" ref={navRef}>
         <NavLink to="/" end className="ni" title="Overview">
@@ -632,22 +632,62 @@ function Account({ rail, version, update }: { rail: boolean; version?: string; u
   );
 }
 
-function Scope({ online }: { online: number }) {
+// Scope picks the server and project. In the collapsed sidebar the menu opens
+// to the right of the button, like the account menu.
+function Scope({ online, rail }: { online: number; rail: boolean }) {
   const app = useApp();
   const projects = useProjects();
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<CSSProperties>({ left: 0, right: 0, top: 46 });
   const { mounted, leaving } = usePresence(open);
   const ref = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   useOutside(ref, () => setOpen(false), open);
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        btn.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", k);
+    return () => document.removeEventListener("keydown", k);
+  }, [open]);
+  // Close it when the sidebar changes width, so it never sits in the wrong place.
+  useEffect(() => setOpen(false), [rail]);
+  const toggle = () => {
+    const r = btn.current?.getBoundingClientRect();
+    // Fixed in the collapsed sidebar, so the narrow sidebar doesn't clip it.
+    setPos(
+      rail && r
+        ? { position: "fixed", left: r.right + 8, top: r.top, right: "auto", minWidth: 220, maxHeight: window.innerHeight - r.top - 12 }
+        : { left: 0, right: 0, top: 46 },
+    );
+    setOpen(!open);
+  };
   const label = app.scope === "*" ? "All servers" : app.scope;
   const proj = app.project === "*" ? "all projects" : app.project;
+  const down = app.servers.some((s) => !(s.online && s.trusted));
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="scope press" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button
+        ref={btn}
+        className="scope press"
+        onClick={toggle}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={rail ? `${label}, ${proj}` : undefined}
+        title={rail ? `${label} · ${proj}` : undefined}
+      >
         <span className="health">
           {app.servers.slice(0, 4).map((s) => (
             <i key={s.name} className={s.online && s.trusted ? "" : "off"} />
           ))}
+        </span>
+        <span className="scope-ic">
+          {label.slice(0, 1).toUpperCase()}
+          <i className={down ? "off" : ""} />
         </span>
         <span className="scope-txt">
           <b>{label}</b>
@@ -659,7 +699,7 @@ function Scope({ online }: { online: number }) {
         <span className="chev">{ic.chev}</span>
       </button>
       {mounted && (
-        <div className={"menu" + (leaving ? " leaving" : "")} style={{ left: 0, right: 0, top: 46 }}>
+        <div className={"menu scope-menu" + (rail ? " side-pop" : "") + (leaving ? " leaving" : "")} style={pos}>
           <button onClick={() => (app.setScope("*"), setOpen(false))}>
             All servers{app.scope === "*" && <span className="kbd">✓</span>}
           </button>
