@@ -11,7 +11,7 @@ Two branches matter:
 2. Keep one change per PR. If you find something unrelated, open a second PR.
 3. Open the PR against `dev`. Use the PR title as the release note: say what changes for the user, in plain words.
 4. CI has to pass. It builds the web UI, runs `go vet` and `go test`, and builds the image.
-5. Squash-merge into `dev` yourself once CI is green. Ask the other person to look first when the change touches login, permissions, updates or anything that deletes data.
+5. Squash-merge into `dev` yourself once CI is green. There are no required reviews.
 
 Before you start, check the open PRs so you don't both work on the same screen.
 
@@ -24,10 +24,9 @@ To run it, open Settings > Updates and about, switch the channel to Dev and inst
 ## Releasing
 
 1. Test the latest dev build in the app.
-2. Open a PR from `dev` to `main` titled after the version, like `Release v0.7.0`. List the user-facing changes in the body.
-3. The other person approves it.
-4. Merge with "Create a merge commit". Don't squash: `dev` and `main` then stay in step.
-5. Run the Release workflow (Actions > Release > Run workflow on `main`) with the version, like `v0.7.0`. It builds the binaries and the image and publishes the release. Installs on Stable see it within an hour.
+2. Open a PR from `dev` to `main` titled after the version, like `Release v0.7.0`. List the user-facing changes in the body, and tell the other person you're releasing.
+3. Merge with "Create a merge commit". Don't squash: `dev` and `main` then stay in step.
+4. Run the Release workflow (Actions > Release > Run workflow on `main`) with the version, like `v0.7.0`. It builds the binaries and the image and publishes the release. Installs on Stable see it within an hour.
 
 Version numbers: bump the middle number for new features (`v0.7.0`), the last one for fixes only (`v0.7.1`).
 
