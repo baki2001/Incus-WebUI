@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { dateTime, incus, incusOp, since, ui } from "./api";
 import { ic, Mark } from "./icons";
-import { invalidate, useApp, useData, useScopedServers } from "./state";
+import { invalidate, lastFresh, useApp, useData, useScopedServers } from "./state";
 import { ConfirmHost, Dialog, useOutside, usePresence, useShown, useThumb } from "./ui";
 import { canDo } from "./pages/Instances";
 import { askStop, StopHost } from "./pages/InstanceDialogs";
@@ -135,17 +135,20 @@ function NoServers() {
 }
 
 function Fresh() {
-  const { lastUpdate, tasks } = useApp();
+  const { tasks } = useApp();
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  const s = Math.max(0, Math.round((Date.now() - lastUpdate) / 1000));
+  // The newest good load of what this page shows. Pages without live data show nothing.
+  const at = lastFresh();
+  if (!at) return null;
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
   return (
     <div className={"fresh" + (tasks.length ? " busy" : "")} aria-live="off">
       <i />
-      <span>{s < 3 ? "Updated just now" : s < 60 ? `Updated ${s} s ago` : `Updated ${Math.floor(s / 60)} min ago`}</span>
+      <span>{s < 3 ? "Updated just now" : s < 60 ? `Updated ${s} s ago` : s < 3600 ? `Updated ${Math.floor(s / 60)} min ago` : `Updated ${Math.floor(s / 3600)} h ago`}</span>
     </div>
   );
 }
@@ -157,7 +160,7 @@ export type Job = { id: string; kind: string; title: string; user?: string; mine
 // Tasks page loads the whole history.
 export function useJobs(all = false) {
   const [fast, setFast] = useState(false);
-  const q = useData<Job[]>(all ? "ui-jobs-all" : "ui-jobs", () => ui(all ? "/jobs" : "/jobs?recent=8"), fast ? 2000 : 15000);
+  const q = useData<Job[]>(all ? "ui-jobs-all" : "ui-jobs", () => ui(all ? "/jobs" : "/jobs?recent=8"), fast ? 2000 : 15000, !all);
   const running = (q.data || []).some((j) => j.state === "running");
   useEffect(() => setFast(running), [running]);
   return q;
@@ -402,8 +405,8 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const { data: rows } = useInstances();
   const loc = useLocation();
   const online = app.servers.filter((s) => s.online && s.trusted).length;
-  const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"));
-  const ver = useData<{ version: string }>("ui-version", () => ui("/version")).data?.version;
+  const upd = useData<{ newer?: boolean }>("ui-update", () => ui("/update"), 0, true);
+  const ver = useData<{ version: string }>("ui-version", () => ui("/version"), 0, true).data?.version;
   const warnings = useWarningCount();
   const busy = app.tasks.length + (useJobs().data || []).filter((j) => j.state === "running").length;
   // Hide pins of instances that are gone; pins in other projects stay.
@@ -542,6 +545,7 @@ function useWarningCount() {
       return { n: fresh.length, hot: fresh.some((w) => w.severity === "moderate" || w.severity === "high") };
     },
     60000,
+    true,
   );
   return q.data || { n: 0, hot: false };
 }
@@ -729,7 +733,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
   const app = useApp();
   const servers = useScopedServers();
   const names = servers.map((s) => s.name).join(",");
-  const found = useData<Found>(open && names ? `cmdk:${names}` : null, () => loadFound(names.split(",")));
+  const found = useData<Found>(open && names ? `cmdk:${names}` : null, () => loadFound(names.split(",")), 0, true);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -788,7 +792,6 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
             invalidate("instances:");
             invalidate(`instance:${r.server}:${r.name}`);
             invalidate("cmdk:");
-            app.touch();
           }),
         );
       };
