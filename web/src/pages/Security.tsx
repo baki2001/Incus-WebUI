@@ -11,16 +11,83 @@ type SecurityInfo = { totp: boolean; recovery_left: number; passkeys: PasskeyRow
 const KEY = "ui-security";
 const day = (t?: number) => (t ? new Date(t * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "");
 
-// Security is the signed-in local user's own two-factor sign-in and passkeys.
+// Security is the signed-in local user's own password, two-factor sign-in and passkeys.
 export function Security() {
   const q = useData<SecurityInfo>(KEY, () => ui("/account/security"));
   const [codes, setCodes] = useState<string[] | null>(null);
   if (codes) return <RecoveryCodes codes={codes} onDone={() => setCodes(null)} />;
   return (
     <>
+      <Password />
       <TwoFactor info={q.data} onCodes={setCodes} />
       <Passkeys info={q.data} />
     </>
+  );
+}
+
+function Password() {
+  const app = useApp();
+  const [open, setOpen] = useState(false);
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const close = () => {
+    setOpen(false);
+    setCur("");
+    setNext("");
+    setErr("");
+  };
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await ui("/account/password", { method: "POST", body: { current: cur, new: next } });
+      close();
+      app.toast("Password changed. You're signed out on your other devices.");
+    } catch (e: any) {
+      setErr(e.message);
+      shake(formRef.current);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="set-sec">
+      <h2>Password</h2>
+      <p>Changing your password signs you out on your other devices. This browser stays signed in.</p>
+      {!open ? (
+        <div>
+          <button className="btn btn-s press" onClick={() => setOpen(true)}>
+            Change password
+          </button>
+        </div>
+      ) : (
+        <form ref={formRef} className="set-form" style={{ maxWidth: 420 }} onSubmit={save}>
+          <Field label="Current password">
+            <div className="field">
+              <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} autoFocus />
+            </div>
+          </Field>
+          <Field label="New password" hint="At least 10 characters.">
+            <div className="field">
+              <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+            </div>
+          </Field>
+          {err && <div className="bad">{err}</div>}
+          <div className="sec-btns">
+            <button className="btn btn-p press" disabled={busy || !cur || next.length < 10}>
+              Change password
+            </button>
+            <button type="button" className="btn btn-q" onClick={close}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

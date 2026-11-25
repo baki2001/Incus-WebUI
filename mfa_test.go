@@ -297,3 +297,31 @@ func TestPasskeyNeedsDomain(t *testing.T) {
 		t.Fatalf("public_url: %s %s", o, id)
 	}
 }
+
+func TestChangeOwnPassword(t *testing.T) {
+	a := testApp(t, "admin")
+	login := func(pass string) *httptest.ResponseRecorder {
+		return req(a, "POST", "/api/ui/login", `{"username":"admin","password":"`+pass+`"}`)
+	}
+	c := cookieOf(login("correct-password"), sessionCookie)
+	other := cookieOf(login("correct-password"), sessionCookie)
+	if w := req(a, "POST", "/api/ui/account/password", `{"current":"wrong-password","new":"brand-new-password"}`, c); w.Code != 403 {
+		t.Fatalf("wrong current: %d", w.Code)
+	}
+	if w := req(a, "POST", "/api/ui/account/password", `{"current":"correct-password","new":"short"}`, c); w.Code != 400 {
+		t.Fatalf("short: %d", w.Code)
+	}
+	w := req(a, "POST", "/api/ui/account/password", `{"current":"correct-password","new":"brand-new-password"}`, c)
+	if w.Code != 204 {
+		t.Fatalf("change: %d %s", w.Code, w.Body)
+	}
+	if w := req(a, "GET", "/api/ui/me", ``, cookieOf(w, sessionCookie)); w.Code != 200 {
+		t.Fatalf("this browser signed out: %d", w.Code)
+	}
+	if w := req(a, "GET", "/api/ui/me", ``, other); w.Code != 401 {
+		t.Fatalf("other session still works: %d", w.Code)
+	}
+	if login("correct-password").Code == 200 || login("brand-new-password").Code != 200 {
+		t.Fatal("password not changed")
+	}
+}

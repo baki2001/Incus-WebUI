@@ -315,6 +315,40 @@ func (a *App) handleRecoveryRenew(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"recovery_codes": show})
 }
 
+// handlePasswordChange lets a signed-in local user change their own password.
+// They confirm the current one first. This browser stays signed in; every
+// other session ends.
+func (a *App) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.localUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct{ Current, New string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if err := validateCredentials(u.Username, req.New); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !a.checkPassword(w, r, u, req.Current) {
+		return
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.New), bcrypt.DefaultCost)
+	err := a.updateUser(u.Username, func(x *User) error {
+		x.PasswordHash = string(hash)
+		x.SessionGen = nextGen(x.SessionGen)
+		return nil
+	})
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.setSession(w, r, u.Username, "password")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleUserResetSignIn lets an admin help someone who lost their phone or
 // passkey: two-factor sign-in and all passkeys are removed, and the user's
 // sessions end. Their password stays.
