@@ -402,15 +402,23 @@ func VMDisksRaw(path string, out, raw map[string]io.WriterAt, progress Progress)
 // GPTSize returns a new size, rounded up to 1 MiB, when a disk of the given
 // size is too small for the GPT in head: every partition plus the backup
 // table after it. It is 0 when the disk is big enough or has no GPT.
-// Incus runs sgdisk on a new VM disk, and sgdisk refuses a disk whose last
-// partition reaches into the space of the backup table, though the guest
-// ran fine on it in Proxmox. Growing the disk a little leaves that space.
+//
+// Incus runs sgdisk --move-second-header on every new VM disk. sgdisk then
+// sets the last usable sector to the disk size minus the first usable
+// sector, so the end of the disk mirrors the start. It refuses the disk
+// (exit status 4) when the last partition ends after that sector, though
+// the guest ran fine on it in Proxmox and sgdisk -v finds no problem. That
+// happens when the last partition runs to the end of the disk, and on
+// disks partitioned with fdisk or sfdisk, which put the first usable sector
+// at 2048 but the last one only 34 sectors from the end. Growing the disk a
+// little leaves the room sgdisk wants.
 func GPTSize(head []byte, disk int64) int64 {
 	const sector = 512
 	if len(head) < 2*sector || string(head[sector:sector+8]) != "EFI PART" {
 		return 0
 	}
 	h := head[sector:]
+	first := int64(binary.LittleEndian.Uint64(h[40:]))
 	lba := binary.LittleEndian.Uint64(h[72:])
 	n := int64(binary.LittleEndian.Uint32(h[80:]))
 	size := int64(binary.LittleEndian.Uint32(h[84:]))
@@ -432,8 +440,15 @@ func GPTSize(head []byte, disk int64) int64 {
 	if last == 0 || last > 1<<41 {
 		return 0
 	}
+	// The backup header takes the last sector and the backup table the
+	// sectors before it. sgdisk also keeps the last usable sector at
+	// disk - first, so the disk must have first sectors after the last
+	// partition's end.
 	table := (n*size + sector - 1) / sector
-	need := (int64(last) + 1 + table + 1) * sector
+	if first < 0 || first > 1<<20 {
+		first = 0
+	}
+	need := (int64(last) + max(first, table+2)) * sector
 	if need <= disk {
 		return 0
 	}
@@ -491,7 +506,7 @@ func GPTProblem(head []byte) string {
 }
 
 func gptError(problem string) error {
-	return fmt.Errorf("the boot disk's partition table has a problem that Incus refuses: %s. Fix it in Proxmox (gdisk or sgdisk -v show it), make a new backup and import that", problem)
+	return fmt.Errorf("the boot disk's partition table has a problem that Incus refuses: %s. Fix it in Proxmox (inside the VM, sudo sgdisk -v /dev/sda shows it, with the name of the boot disk), make a new backup and import that", problem)
 }
 
 // HasESP reports whether a disk's first 64 KiB hold a GPT with an EFI
