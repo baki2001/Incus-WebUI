@@ -539,6 +539,7 @@ function Roles() {
 
 export type UpdateInfo = {
   current: string;
+  channel?: "stable" | "dev";
   can_update: boolean;
   reason?: string;
   updating?: boolean;
@@ -565,6 +566,18 @@ function About() {
       else setResult({ text: `Up to date (${d.current}).` });
     } catch (e: any) {
       setResult({ text: `Couldn't check for updates: ${e.message}`, bad: true });
+    }
+    setBusy("");
+  };
+
+  const setChannel = async (channel: "stable" | "dev") => {
+    setBusy("check");
+    setResult(null);
+    try {
+      await ui("/update/channel", { method: "PUT", body: { channel } });
+      invalidate("ui-update");
+    } catch (e: any) {
+      app.fail(e, "Could not change the update channel.");
     }
     setBusy("");
   };
@@ -612,9 +625,29 @@ function About() {
             : u?.newer
               ? `Version ${u.latest!.tag} is available.`
               : u?.latest
-                ? "It's the newest release."
+                ? u.channel === "dev"
+                  ? "It's the newest dev build."
+                  : "It's the newest release."
                 : ""}
         </p>
+        {app.admin && (
+          <div className="upd-chan">
+            <Seg
+              label="Update channel"
+              value={u?.channel || "stable"}
+              onChange={setChannel}
+              options={[
+                { v: "stable", l: "Stable" },
+                { v: "dev", l: "Dev" },
+              ]}
+            />
+            <p className="upd-note">
+              {u?.channel === "dev"
+                ? "Dev builds come from the dev branch and can break. Switch back to Stable to return to the latest release."
+                : "Stable gets releases. Dev gets every change merged into the dev branch, to test it before a release."}
+            </p>
+          </div>
+        )}
         <div className="upd-row">
           {u?.newer && u.can_update && app.admin && (
             <button className="btn btn-p press" disabled={!!busy || u.updating} onClick={update}>

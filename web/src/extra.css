@@ -68,6 +68,8 @@ tbody tr td .qa{min-height:28px}
 
 .badge-dot.upd{background:var(--accent)}
 .upd-row{display:flex;flex-wrap:wrap;gap:8px}
+.upd-chan{margin:0 0 14px}
+.upd-chan .upd-note{margin-top:8px}
 .upd-note{margin:10px 0 0;color:var(--ink-3);font-size:13px;max-width:62ch}
 .upd-body{padding:0 0 16px;display:flex;flex-direction:column;gap:12px}
 .upd-body>p,.upd-body>.upd-row,.upd-body>.cmd{margin:0 16px}

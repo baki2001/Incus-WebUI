@@ -63,13 +63,17 @@ jobs:
           password: ${{ github.token }}
       - name: Image name
         id: img
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: |
+          name=ghcr.io/${GITHUB_REPOSITORY,,}
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          # Only real releases move :latest, not prereleases like v1.0.0-rc1.
+          tags=$name:$VERSION
+          [[ "$VERSION" == *-* ]] || tags="$tags,$name:latest"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: VERSION=${{ env.VERSION }}
-          tags: |
-            ${{ steps.img.outputs.name }}:${{ env.VERSION }}
-            ${{ steps.img.outputs.name }}:latest
+          tags: ${{ steps.img.outputs.tags }}
