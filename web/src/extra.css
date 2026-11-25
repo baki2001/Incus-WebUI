@@ -473,9 +473,9 @@ tr.empty{display:table-row;padding:0}
 .sec-add{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;max-width:640px}
 .sec-add .fl:first-child{flex:1 1 220px}
 .sec-note{color:var(--ink-3);font-size:13.5px}
-/* ---- version in the sidebar footer, Dev badge next to the logo ---- */
-.dev-pill{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;line-height:1;color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warn) 30%,transparent)}
-:root[data-brand="kyoto"] .side .dev-pill{color:#f2c477;background:rgba(242,196,119,.14);box-shadow:inset 0 0 0 1px rgba(242,196,119,.32)}
+/* ---- version in the sidebar footer, Dev badge next to the logo (neutral, not a call to action) ---- */
+.dev-pill{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;line-height:1;color:var(--ink-2);background:var(--s2);box-shadow:inset 0 0 0 1px var(--line)}
+:root[data-brand="kyoto"] .side .dev-pill{color:var(--side-ink-2);background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
 .side-ver{display:block;padding:0 8px 2px;font-size:11px;color:var(--ink-3);text-decoration:none;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:var(--r-xs)}
 .side-ver:hover{color:var(--ink-2);text-decoration:underline;text-underline-offset:2px}
 :root[data-brand="kyoto"] .side .side-ver{color:var(--side-ink-2);opacity:.75}
