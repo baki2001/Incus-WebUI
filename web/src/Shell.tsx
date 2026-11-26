@@ -813,6 +813,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Actions", label: "Switch theme to Indigo", icon: ic.screen, run: () => (app.setMode("indigo"), onClose()) },
       { group: "Actions", label: "Switch theme to Porcelain", icon: ic.screen, run: () => (app.setMode("porcelain"), onClose()) },
       { group: "Actions", label: "Switch theme to Graphite", icon: ic.screen, run: () => (app.setMode("graphite"), onClose()) },
+      { group: "Actions", label: "Switch theme to Graphite Ember", icon: ic.screen, run: () => (app.setMode("ember"), onClose()) },
       { group: "Actions", label: "Switch theme to Terracotta", icon: ic.screen, run: () => (app.setMode("terracotta"), onClose()) },
       { group: "Actions", label: "Switch theme to Custom", icon: ic.screen, run: () => (app.setMode("custom"), onClose()) },
     ];

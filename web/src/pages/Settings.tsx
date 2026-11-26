@@ -122,6 +122,7 @@ function Appearance() {
     { v: "indigo", l: "Indigo", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#ffffff", card: "#ffffff", cardInk: "#101a30", btn: "#db390c" } },
     { v: "porcelain", l: "Porcelain", note: "Crisp light", pv: { page: "#f1f2f5", side: "transparent", sideInk: "#16181d", card: "#ffffff", cardInk: "#16181d", btn: "#3456bd" } },
     { v: "graphite", l: "Graphite", note: "Soft dark", pv: { page: "#16171b", side: "transparent", sideInk: "#c2c6d1", card: "#1e2026", cardInk: "#f1f3f7", btn: "#8fa8f8" } },
+    { v: "ember", l: "Graphite Ember", note: "Soft dark, orange", pv: { page: "#16171b", side: "transparent", sideInk: "#c2c6d1", card: "#1e2026", cardInk: "#f1f3f7", btn: "#db390c" } },
     { v: "terracotta", l: "Terracotta", note: "Sand, clay and teal", pv: { page: "#f3e7dc", side: "#772f10", sideInk: "#fdf7f2", card: "#fffdfb", cardInk: "#2b140a", btn: "#2eb3b2" } },
     { v: "custom", l: "Custom", note: "Your palette", pv: customPv },
   ];

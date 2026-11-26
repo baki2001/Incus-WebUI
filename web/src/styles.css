@@ -448,6 +448,12 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   --side:#142950; --side-ink:rgba(255,255,255,.94); --side-ink-2:#c4c8d6; --side-s:rgba(187,190,203,.13); --side-line:rgba(187,190,203,.18);
   --side-err:#ff8f80; --side-dot:rgba(187,190,203,.34); --side-av:rgba(255,255,255,.15);
 }
+/* Ember: Graphite surfaces with Indigo's vermilion. The call to action uses the vermilion itself;
+   selection and focus use a lighter orange so they stay readable on the dark surfaces. */
+:root[data-brand="ember"]{
+  --accent:#ff8a5c; --accent-ink:#1a0d07; --accent-soft:rgba(255,138,92,.15);
+  --cta:#db390c; --cta-ink:#ffffff;
+}
 /* Terracotta: warm sand (#E8CBB2) surfaces, deep rust (#772F10) structure and sidebar, vibrant teal (#2EB3B2) call to action. */
 :root[data-brand="terracotta"]{
   --bg:#f3e7dc; --s1:#fffdfb; --s2:#e8cbb2; --s3:#dec0a4;
