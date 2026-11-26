@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/baki2001/incus-webui/internal/compose"
 )
+
+// imageSourceKey records where an instance's image came from, as JSON with
+// protocol, server and alias. Create instance and the Compose import set it;
+// Rebuild reads it.
+const imageSourceKey = "user.incus-webui.source"
 
 type composeReq struct {
 	Server     string `json:"server"`
@@ -190,10 +196,17 @@ func runCompose(ctx context.Context, c *incusConn, q *composeReq, p *compose.Pla
 	n := len(p.Services)
 	for i, svc := range p.Services {
 		set(0.1+0.6*float64(i)/float64(n), fmt.Sprintf("Pulling %s for %s", svc.Image, svc.Name))
+		// Rebuild reads where the image came from, to pull its newest version later.
+		src, _ := json.Marshal(map[string]string{"protocol": "oci", "server": svc.Server, "alias": svc.Image})
+		cfg := maps.Clone(svc.Config)
+		if cfg == nil {
+			cfg = map[string]string{}
+		}
+		cfg[imageSourceKey] = string(src)
 		body := map[string]any{
 			"name": svc.Name, "type": "container", "profiles": []string{"default"},
 			"description": "Service " + svc.Service + " of stack " + p.Stack,
-			"config":      svc.Config, "devices": svc.Devices,
+			"config":      cfg, "devices": svc.Devices,
 			"source": map[string]string{"type": "image", "mode": "pull", "protocol": "oci", "server": svc.Server, "alias": svc.Image},
 		}
 		if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import YAML from "yaml";
 import { friendlyError, incus, incusOp, memBytes } from "../api";
 import { ic } from "../icons";
@@ -10,7 +10,10 @@ import { cpuOK, lanNic, lanParents, SizeField, useNetworkList } from "./cfgutil"
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
 import { checkHardware, HardwareEditor } from "./Hardware";
 import { LocalPicker, ociRegistries, RemotePicker, useImageServers, useRemoteImages, useServerArch } from "./ImagePicker";
+import { hasSSHKey, useSSHKeys, withSSHKey } from "./SSHKeys";
 import "../cfg.css";
+
+export type ImageSource = { protocol: "simplestreams" | "oci" | "local"; server: string; alias: string };
 
 const nameRe = /^[a-zA-Z][a-zA-Z0-9-]{0,62}$/;
 type Source = "remote" | "local" | "oci" | "iso" | "none";
@@ -45,6 +48,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const [pool, setPool] = useState("");
   const [network, setNetwork] = useState("");
   const [cloudInit, setCloudInit] = useState("");
+  const [ciErr, setCiErr] = useState("");
+  const [member, setMember] = useState("");
   const [desc, setDesc] = useState("");
   const [start, setStart] = useState(true);
   const [autostart, setAutostart] = useState(false);
@@ -79,6 +84,10 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const isos = useData<any[]>(open && srv && type === "virtual-machine" ? `isos:${srv}:${project}` : null, async () =>
     (await listVolumes(srv, project)).filter((v) => v.content_type === "iso"),
   );
+  const sshKeys = useSSHKeys(open);
+  const clustered = !!info?.environment?.server_clustered;
+  const members = useData<string[]>(open && srv && clustered ? `cluster-members:${srv}` : null, async () => ((await incus<string[]>(srv, "/1.0/cluster/members")) || []).map(nameOf));
+  const groups = useData<string[]>(open && srv && clustered ? `cluster-groups:${srv}` : null, async () => ((await incus<string[]>(srv, "/1.0/cluster/groups").catch(() => [])) || []).map(nameOf));
   // If the image server can't be reached, start on the images already here.
   const imgServers = useImageServers();
   const firstRemote = useRemoteImages(open ? imgServers.data?.[0]?.url : undefined);
@@ -101,6 +110,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
       setPool("");
       setNetwork("");
       setCloudInit("");
+      setCiErr("");
+      setMember("");
       setDesc("");
       setStart(true);
       setAutostart(false);
@@ -170,6 +181,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     if (nesting && !isVM) config["security.nesting"] = "true";
     if (isVM && !secureboot) config["security.secureboot"] = "false";
     if (cloudInit.trim()) config["cloud-init.user-data"] = cloudInit;
+    const from = imageSource();
+    if (from) config["user.incus-webui.source"] = JSON.stringify(from);
     for (const [k, v] of Object.entries(extra)) if (k) config[k] = v;
     const devices: Devs = {};
     if (disk || pool) devices.root = { type: "disk", path: "/", pool: pool || pools.data?.[0] || "default", ...(disk ? { size: disk } : {}) };
@@ -189,6 +202,17 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     return { name: name || undefined, type, profiles, config, devices, start, ephemeral, description: desc, source: src };
   };
 
+  // Where the image comes from, so Rebuild can pull its newest version later.
+  function imageSource(): ImageSource | null {
+    if (source === "remote" && alias) return { protocol: "simplestreams", server: remoteURL, alias };
+    if (source === "oci" && oci.ref.trim()) return { protocol: "oci", server: oci.url, alias: oci.ref.trim() };
+    if (source === "local") {
+      const a = local.data?.find((i) => i.fingerprint === fp)?.aliases?.[0]?.name;
+      if (a) return { protocol: "local", server: "", alias: a };
+    }
+    return null;
+  }
+
   const submit = async () => {
     setTried(true);
     setErr("");
@@ -199,7 +223,8 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     const label = name || "The instance";
     setBusy(true);
     try {
-      const op = await incusOp(srv, "/1.0/instances", { method: "POST", project: projSel, body: request() }, setProgress);
+      const path = member ? `/1.0/instances?target=${encodeURIComponent(member)}` : "/1.0/instances";
+      const op = await incusOp(srv, path, { method: "POST", project: projSel, body: request() }, setProgress);
       invalidate("instances:");
       const made = name || (op?.resources?.instances?.[0] || "").split("/").pop()?.split("?")[0];
       app.toast(`${label} created`);
@@ -272,7 +297,16 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
           </Field>
           {servers.length > 1 && (
             <Field label="Server">
-              <Select value={srv} onChange={setServer} options={servers.map((s) => s.name)} />
+              <Select value={srv} onChange={(v) => (setServer(v), setMember(""))} options={servers.map((s) => s.name)} />
+            </Field>
+          )}
+          {clustered && (
+            <Field label="Cluster member" hint={member.startsWith("@") ? `Incus picks a member of group ${member.slice(1)}.` : member ? undefined : "Incus picks the member with the most room."}>
+              <Select
+                value={member}
+                onChange={setMember}
+                options={[{ v: "", l: "Automatic" }, ...(members.data || []).map((m) => ({ v: m, l: m })), ...(groups.data || []).filter((g) => g !== "default").map((g) => ({ v: "@" + g, l: `Any in group ${g}` }))]}
+              />
             </Field>
           )}
         </div>
@@ -377,16 +411,45 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
 
         {(source === "remote" || source === "local") && (
           <SheetSec title="Cloud-init">
+            {!!sshKeys.data?.length && (
+              <div className="ci-keys">
+                {sshKeys.data.map((k) => (
+                  <label className="check-row" key={k.name}>
+                    <input
+                      type="checkbox"
+                      checked={hasSSHKey(cloudInit, k.key)}
+                      onChange={(e) => {
+                        try {
+                          setCloudInit(withSSHKey(cloudInit, k.key, e.target.checked));
+                          setCiErr("");
+                        } catch (x) {
+                          setCiErr((x as Error).message);
+                        }
+                      }}
+                    />
+                    <span>Add my SSH key {k.name}</span>
+                  </label>
+                ))}
+                <span className="note">Fills in ssh_authorized_keys below, which you can still edit.</span>
+              </div>
+            )}
+            {ciErr && <div className="hint bad">{ciErr}</div>}
             <textarea
               className="yaml box"
               spellCheck={false}
               value={cloudInit}
-              onChange={(e) => setCloudInit(e.target.value)}
+              onChange={(e) => (setCloudInit(e.target.value), setCiErr(""))}
               placeholder={"#cloud-config\npackages:\n  - curl"}
               style={{ minHeight: 110 }}
             />
             <span className="note">
               {variant === "cloud" || source === "local" ? "User data, run on first boot." : "Only images with cloud in the name run this. Pick a cloud variant above."}
+              {!sshKeys.data?.length && (
+                <>
+                  {" "}
+                  Save your SSH keys under <Link to="/settings/ssh">Settings, SSH keys</Link> to add them here with one tick.
+                </>
+              )}
             </span>
           </SheetSec>
         )}

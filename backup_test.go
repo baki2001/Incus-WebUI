@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -216,9 +219,16 @@ func TestBackupIncus(t *testing.T) {
 	name := "iwui-restored"
 	exec.Command("incus", "delete", "-f", name).Run()
 	defer exec.Command("incus", "delete", "-f", name).Run()
-	if err := a.restoreBackup(ctx, c, st, *m, "default", name, ""); err != nil {
+	made, err := a.restoreBackup(ctx, c, st, "", *m, "default", name, "")
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		exec.Command("incus", "delete", "-f", name).Run()
+		for _, pv := range made {
+			exec.Command("incus", "storage", "volume", "delete", strings.Split(pv, "/")[0], strings.Split(pv, "/")[1]).Run()
+		}
+	}()
 	if out, err := exec.Command("incus", "list", name, "-c", "n", "-f", "csv").Output(); err != nil || strings.TrimSpace(string(out)) != name {
 		t.Fatalf("restored instance missing: %s %v", out, err)
 	}
@@ -229,11 +239,104 @@ func TestBackupIncus(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	b[len(b)/2] ^= 0xff
 	os.WriteFile(p, b, 0o600)
-	if err := a.restoreBackup(ctx, c, st, *m, "default", name, ""); err == nil {
+	if _, err := a.restoreBackup(ctx, c, st, "", *m, "default", name, ""); err == nil {
 		t.Error("a damaged backup was restored")
 	}
 	if exec.Command("incus", "info", name).Run() == nil {
 		t.Error("the failed restore left an instance")
+	}
+}
+
+// TestBackupIncusVolumes backs up an instance with a custom volume attached
+// to an encrypted target and restores both under new names.
+func TestBackupIncusVolumes(t *testing.T) {
+	if os.Getenv("INCUS_WEBUI_INCUS") == "" {
+		t.Skip("INCUS_WEBUI_INCUS not set")
+	}
+	inst := os.Getenv("INCUS_WEBUI_BACKUP_INST")
+	if inst == "" {
+		inst = "c1"
+	}
+	run := func(args ...string) string {
+		out, err := exec.Command("incus", args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("incus %v: %s", args, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	exec.Command("incus", "config", "device", "remove", inst, "iwuidata").Run()
+	exec.Command("incus", "storage", "volume", "delete", "default", "iwui-vol").Run()
+	run("storage", "volume", "create", "default", "iwui-vol")
+	run("config", "device", "add", inst, "iwuidata", "disk", "pool=default", "source=iwui-vol", "path=/iwui-data")
+	defer func() {
+		exec.Command("incus", "config", "device", "remove", inst, "iwuidata").Run()
+		exec.Command("incus", "storage", "volume", "delete", "default", "iwui-vol").Run()
+	}()
+
+	a := testApp(t)
+	a.backends = &Backends{transports: map[string]*backend{}}
+	dir := t.TempDir()
+	tgt := BackupTarget{Name: "safe", Type: "dir", Path: dir, Passphrase: "correct horse battery"}
+	_ = a.store.Update(func(c *Config) error {
+		c.Servers = []ServerConfig{{Name: "local", URL: "unix:///var/lib/incus/unix.socket"}}
+		c.Backups.Targets = []BackupTarget{tgt}
+		return nil
+	})
+	c, _ := a.conn("local")
+	st := dirStore{dir}
+	ctx := context.Background()
+	m, err := a.backupInstance(ctx, c, tgt, st, "local", "default", inst, "", "t", func(float64, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vi := slices.IndexFunc(m.Volumes, func(v VolumeMeta) bool { return v.Name == "iwui-vol" })
+	if !m.Encrypted || vi < 0 || m.Volumes[vi].Size == 0 {
+		t.Fatalf("meta = %+v", m)
+	}
+	for _, f := range m.files() {
+		if _, err := os.Stat(st.path(f)); err != nil {
+			t.Errorf("missing %s", f)
+		}
+	}
+	raw, _ := os.ReadFile(st.path(m.dataFile()))
+	if !bytes.HasPrefix(raw, []byte("age-encryption.org/v1")) {
+		t.Error("the backup is not encrypted")
+	}
+
+	name := "iwui-vrestored"
+	exec.Command("incus", "delete", "-f", name).Run()
+	defer exec.Command("incus", "delete", "-f", name).Run()
+	defer exec.Command("incus", "storage", "volume", "delete", "default", name+"-iwui-vol").Run()
+	if _, err := a.restoreBackup(ctx, c, st, "wrong passphrase!", *m, "default", name, ""); err == nil || !strings.Contains(err.Error(), "passphrase") {
+		t.Fatalf("a wrong passphrase: %v", err)
+	}
+	made, err := a.restoreBackup(ctx, c, st, tgt.Passphrase, *m, "default", name, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		exec.Command("incus", "delete", "-f", name).Run()
+		for _, pv := range made {
+			exec.Command("incus", "storage", "volume", "delete", strings.Split(pv, "/")[0], strings.Split(pv, "/")[1]).Run()
+		}
+	}()
+	if len(made) != len(m.Volumes) || !slices.Contains(made, "default/"+name+"-iwui-vol") {
+		t.Errorf("made %v", made)
+	}
+	if got := run("config", "device", "get", name, "iwuidata", "source"); got != name+"-iwui-vol" {
+		t.Errorf("restored instance uses volume %q", got)
+	}
+	if err := a.testRestore(ctx, c, st, tgt.Passphrase, *m); err != nil {
+		t.Errorf("test restore: %v", err)
+	}
+	if out := run("storage", "volume", "list", "default", "-c", "n", "-f", "csv"); strings.Contains(out, "restore-test-") {
+		t.Errorf("the test restore left a volume: %s", out)
+	}
+	if err := deleteBackupFiles(ctx, st, *m); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.list(ctx, ""); len(l) != 0 {
+		t.Errorf("left after delete: %v", l)
 	}
 }
 
@@ -274,5 +377,64 @@ func TestBackupsAllProjects(t *testing.T) {
 	}
 	if code, l := get("/x?project=web&instance=a"); code != 200 || len(l) != 1 {
 		t.Errorf("one instance: %d %+v", code, l)
+	}
+}
+
+func TestEncryptRoundTrip(t *testing.T) {
+	st := dirStore{t.TempDir()}
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("incus "), 200000)
+	n, sum, err := putBackupFile(ctx, st, "a/b.tar.age", bytes.NewReader(data), "a long passphrase")
+	if err != nil || n != int64(len(data)) {
+		t.Fatalf("put: %d %v", n, err)
+	}
+	raw, _ := os.ReadFile(st.path("a/b.tar.age"))
+	if bytes.Contains(raw, []byte("incus incus")) {
+		t.Fatal("stored in the clear")
+	}
+	rc, err := openBackupFile(ctx, st, "a/b.tar.age", true, "a long passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(&checkReader{r: rc, h: sha256.New(), want: sum})
+	rc.Close()
+	if !bytes.Equal(got, data) {
+		t.Fatal("came back different")
+	}
+	if _, err := openBackupFile(ctx, st, "a/b.tar.age", true, "another passphrase"); err == nil || !strings.Contains(err.Error(), "passphrase") {
+		t.Errorf("wrong passphrase: %v", err)
+	}
+	if _, err := openBackupFile(ctx, st, "a/b.tar.age", true, ""); err == nil {
+		t.Error("no passphrase opened it")
+	}
+	// A failing store must not leave the encrypting goroutine stuck.
+	if _, _, err := putBackupFile(ctx, failStore{}, "x", bytes.NewReader(data), "a long passphrase"); err == nil {
+		t.Error("no error from a failing store")
+	}
+}
+
+type failStore struct{ backupStore }
+
+func (failStore) put(ctx context.Context, name string, r io.Reader) (int64, error) {
+	buf := make([]byte, 10)
+	r.Read(buf)
+	return 0, errors.New("disk full")
+}
+
+func TestAttachedVolumes(t *testing.T) {
+	v := attachedVolumes(map[string]map[string]string{
+		"root": {"type": "disk", "path": "/", "pool": "default"},
+		"data": {"type": "disk", "path": "/data", "pool": "fast", "source": "db"},
+		"host": {"type": "disk", "path": "/mnt", "source": "/srv/share"},
+		"snap": {"type": "disk", "path": "/old", "pool": "fast", "source": "db/snap0"},
+		"eth0": {"type": "nic", "network": "incusbr0"},
+		"app":  {"type": "disk", "path": "/app", "pool": "default", "source": "app"},
+	})
+	if len(v) != 2 || v[0].Device != "app" || v[1].Name != "db" || v[1].Pool != "fast" {
+		t.Errorf("%+v", v)
+	}
+	m := BackupMeta{Key: "s/p/i/20260101-000000", Encrypted: true, Volumes: v}
+	if f := m.files(); len(f) != 4 || f[0] != "s/p/i/20260101-000000.tar.age" || f[2] != "s/p/i/20260101-000000.vol1.tar.age" || f[3] != "s/p/i/20260101-000000.json" {
+		t.Errorf("files %v", f)
 	}
 }

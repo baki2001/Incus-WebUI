@@ -1,13 +1,15 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { bytes, dateTime, imageLabel, incus, incusOp, incusRaw, parseBytes, since, ui, type Instance } from "../api";
+import { bytes, dateTime, friendlyError, imageLabel, incus, incusOp, incusRaw, parseBytes, since, ui, type Instance } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, mutateCache, useApp, useData } from "../state";
-import { confirmDialog, CopyBtn, Menu, Seg, Status, Tabs } from "../ui";
+import { confirmDialog, CopyBtn, Menu, Seg, Status, Tabs, Toggle } from "../ui";
 import { isPinned, togglePin, usePins, type Row } from "../data";
 import { canDo, deleteInstance, stateAction, type Act } from "./Instances";
-import { askStop, CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, readable, RenameDialog, SnapRenameDialog } from "./InstanceDialogs";
+import { askStop, canLive, CopyDialog, FromSnapDialog, MoveDialog, nameProblem, PublishDialog, readable, RebuildDialog, RenameDialog, SnapRenameDialog } from "./InstanceDialogs";
+import { saveFile } from "./Backups";
+import { matches, Search } from "./Resource";
 import { ConfigTab } from "./Config";
 import { FilesTab } from "./Files";
 import { ConsoleTab, TerminalTab } from "./Terminal";
@@ -40,7 +42,7 @@ export function InstancePage() {
     4000,
   );
   const [deleting, setDeleting] = useState(false);
-  const [dlg, setDlg] = useState<"" | "rename" | "copy" | "move" | "publish">("");
+  const [dlg, setDlg] = useState<"" | "rename" | "copy" | "move" | "publish" | "rebuild">("");
   const [prevTab, setPrevTab] = useState<Tab>(tab as Tab);
   const [seenTerm, setSeenTerm] = useState(tab === "terminal");
   useEffect(() => {
@@ -75,6 +77,10 @@ export function InstancePage() {
   const stopped = inst.status === "Stopped";
   const status = deleting ? "Deleting…" : inst.status;
   const row = inst as Row;
+  // A VM that can move live may move while it runs, to a cluster member or another server.
+  const here = app.servers.find((x) => x.name === server);
+  const moveRunning = canLive(inst) && (!!here?.clustered || app.servers.length > 1);
+  const canMove = stopped || (running && moveRunning);
   const go = (t: Tab) => {
     setPrevTab(tab as Tab);
     nav(`/instances/${server}/${name}${t === "overview" ? "" : "/" + t}${loc.search}`);
@@ -157,15 +163,18 @@ export function InstancePage() {
                 </button>
                 <button onClick={() => (close(), go("snapshots"))}>{ic.snap}Snapshots</button>
                 <hr />
-                {!stopped && <div className="menu-hint">Stop the instance first to rename or move it.</div>}
+                {!stopped && <div className="menu-hint">{canMove ? "Stop the instance first to rename it." : "Stop the instance first to rename or move it."}</div>}
                 <button disabled={!stopped} title={stopped ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("rename"))}>
                   {ic.edit}Rename
                 </button>
                 <button onClick={() => (close(), setDlg("copy"))}>{ic.copy}Copy</button>
-                <button disabled={!stopped} title={stopped ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("move"))}>
+                <button disabled={!canMove} title={canMove ? "" : "Stop the instance first"} onClick={() => (close(), setDlg("move"))}>
                   {ic.right}Move
                 </button>
                 <button onClick={() => (close(), setDlg("publish"))}>{ic.img}Create image</button>
+                <button disabled={!stopped && !running} onClick={() => (close(), setDlg("rebuild"))}>
+                  {ic.restart}Rebuild
+                </button>
                 <hr />
                 <button className="danger" onClick={async () => (close(), (await deleteInstance(app, row, () => setDeleting(true))) ? nav("/instances") : setDeleting(false))}>
                   {ic.trash}Delete
@@ -176,9 +185,10 @@ export function InstancePage() {
         </div>
       </div>
       <RenameDialog key={"r" + inst.name} inst={inst} open={dlg === "rename"} onClose={() => setDlg("")} onDone={(n) => nav(`/instances/${server}/${n}${loc.search}`, { replace: true })} />
-      <CopyDialog key={"c" + inst.name} inst={inst} open={dlg === "copy"} onClose={() => setDlg("")} onDone={(n, p) => nav(`/instances/${server}/${n}?project=${encodeURIComponent(p)}`)} />
-      <MoveDialog key={"m" + inst.name} inst={inst} open={dlg === "move"} onClose={() => setDlg("")} onDone={(p) => nav(`/instances/${server}/${name}?project=${encodeURIComponent(p)}`, { replace: true })} />
+      <CopyDialog key={"c" + inst.name + dlg} inst={inst} open={dlg === "copy"} onClose={() => setDlg("")} onDone={(n, p) => nav(`/instances/${server}/${n}?project=${encodeURIComponent(p)}`)} />
+      <MoveDialog key={"m" + inst.name + dlg} inst={inst} open={dlg === "move"} onClose={() => setDlg("")} onDone={(p) => nav(`/instances/${server}/${name}?project=${encodeURIComponent(p)}`, { replace: true })} />
       <PublishDialog key={"p" + inst.name} inst={inst} open={dlg === "publish"} onClose={() => setDlg("")} />
+      <RebuildDialog key={"b" + inst.name} inst={inst} open={dlg === "rebuild"} onClose={() => setDlg("")} />
       <Tabs
         value={tab as Tab}
         onChange={go}
@@ -612,31 +622,91 @@ function LogsTab({ inst }: { inst: Instance & { server: string } }) {
   const names = files.data || [];
   const cur = which || (names.includes("lxc.log") ? "lxc.log" : names.includes("qemu.log") ? "qemu.log" : names[0] || "console");
   const [text, setText] = useState<string | null>(null);
-  const load = () => {
-    setText(null);
+  const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [follow, setFollow] = useState(false);
+  const pre = useRef<HTMLPreElement>(null);
+  const load = (quiet = false) => {
+    if (!quiet) setText(null);
     const path = cur === "console" ? base + "/console" : `${base}/logs/${encodeURIComponent(cur)}`;
-    incusRaw(inst.server, path, { project: inst.project })
-      .then((r) => r.text())
-      .then((t) => setText(t || "(empty)"))
-      .catch((e) => setText(String(e)));
+    return incusRaw(inst.server, path, { project: inst.project })
+      .then((r) => (r.ok ? r.text() : r.json().then((j) => Promise.reject(new Error(j.error || r.statusText)))))
+      .then((t) => (setText(t), setErr("")))
+      .catch((e) => {
+        if (!quiet) setText("");
+        setErr(friendlyError(e));
+      });
   };
-  useEffect(load, [cur, inst.server, inst.name]);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, inst.server, inst.name]);
+  // Follow reloads every few seconds and keeps the newest lines in view.
+  useEffect(() => {
+    if (!follow) return;
+    const id = setInterval(() => load(true), 3000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [follow, cur, inst.server, inst.name]);
+  useEffect(() => {
+    if (follow && pre.current) pre.current.scrollTop = pre.current.scrollHeight;
+  }, [text, follow, q]);
+  const all = text ? text.replace(/\n$/, "").split("\n") : [];
+  const shown = q.trim() ? all.filter((l) => matches(q, l)) : all;
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([text || ""], { type: "text/plain" }));
+    saveFile(url, `${inst.name}-${cur === "console" ? "console.log" : cur}`);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
   const opts = [...(isVM ? [] : ["console"]), ...names].map((n) => ({ v: n, l: n === "console" ? "Console output" : n }));
   return (
     <div className="col">
-      <div className="toolbar">
+      <div className="toolbar logs-bar">
         {opts.length > 0 && <Seg value={cur} onChange={setWhich} options={opts} />}
-        <button className="btn btn-q btn-sm" onClick={load}>
-          {ic.restart}Refresh
-        </button>
+        <Search value={q} onChange={setQ} placeholder="Find in the log" />
+        <span className="logs-r">
+          {text != null && q.trim() && <span className="dim logs-count">{`${shown.length} of ${all.length} lines`}</span>}
+          <div className="tgl in">
+            <Toggle on={follow} onChange={setFollow} label="Follow" />
+            <span>Follow</span>
+          </div>
+          {!follow && (
+            <button className="btn btn-q btn-sm" onClick={() => load()}>
+              {ic.restart}Refresh
+            </button>
+          )}
+          <button className="btn btn-q btn-sm" disabled={!text} onClick={download}>
+            {ic.dl}Download
+          </button>
+        </span>
       </div>
       <div className="panel">
-        <pre className="code" style={{ maxHeight: "65vh" }}>
-          {text ?? <span className="sk">loading log</span>}
+        <pre className="code logs" ref={pre} style={{ maxHeight: "65vh" }}>
+          {text == null ? <span className="sk">loading log</span> : !all.length ? <span className="dim">{err || "(empty)"}</span> : q.trim() ? shown.length ? <Marked lines={shown} q={q.trim()} /> : <span className="dim">No lines match.</span> : text}
         </pre>
-        <div className="pfoot">Incus keeps these on the server. Logs from inside the instance live in its own files, see File Explorer.</div>
+        <div className="pfoot">{follow ? (err && all.length ? `Couldn't refresh: ${err}` : "Following: refreshes every 3 seconds.") : "Incus keeps these on the server. Logs from inside the instance live in its own files, see File Explorer."}</div>
       </div>
     </div>
+  );
+}
+
+// Marked shows log lines with the search text highlighted.
+function Marked({ lines, q }: { lines: string[]; q: string }) {
+  const ql = q.toLowerCase();
+  return (
+    <>
+      {lines.map((l, i) => {
+        const parts: React.ReactNode[] = [];
+        let at = 0;
+        const low = l.toLowerCase();
+        for (let j = low.indexOf(ql); j >= 0; j = low.indexOf(ql, at)) {
+          parts.push(l.slice(at, j), <mark key={j}>{l.slice(j, j + q.length)}</mark>);
+          at = j + q.length;
+        }
+        parts.push(l.slice(at) + "\n");
+        return <Fragment key={i}>{parts}</Fragment>;
+      })}
+    </>
   );
 }
 
