@@ -300,6 +300,11 @@ func (a *App) transfer(ctx context.Context, src, dst *incusConn, in transferReq,
 	set(0.95, "Removing the original")
 	path := "/1.0/instances/" + url.PathEscape(in.Name)
 	if cur, err := getInstance(ctx, src, in.Project, in.Name); err == nil && cur.Status != "Stopped" {
+		// Someone started the original during the copy. What it wrote since
+		// isn't in the copy, so keep it.
+		if !live {
+			return fmt.Errorf("the copy on %s is ready, but %s was started meanwhile, so the original was kept", in.TargetServer, in.Name)
+		}
 		_, _ = src.call(ctx, "PUT", path+"/state", in.Project, map[string]any{"action": "stop", "force": true})
 	}
 	if _, err := src.call(ctx, "DELETE", path, in.Project, nil); err != nil {

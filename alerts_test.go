@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -84,12 +85,19 @@ func TestAlertsConfig(t *testing.T) {
 	if saved.Endpoints[0].Token != "secret" || saved.Endpoints[1].Password != "pw" || saved.on(alertUpdate) || !saved.on(alertPool) || saved.poolPercent() != 85 {
 		t.Errorf("saved %+v", saved)
 	}
-	// A new address doesn't get the old secret.
-	al.Endpoints[0].URL = "https://evil.example/x"
+	// A new address doesn't get the old secret; the save is refused instead.
+	moved := al
+	moved.Endpoints = slices.Clone(al.Endpoints)
+	moved.Endpoints[0].URL = "https://evil.example/x"
+	b, _ = json.Marshal(moved)
+	if c := put(string(b)); c != 400 || a.store.Get().Alerts.Endpoints[0].Token != "secret" {
+		t.Errorf("moved endpoint: %d, token %q", c, a.store.Get().Alerts.Endpoints[0].Token)
+	}
+	// A new name at the same address keeps it.
+	al.Endpoints[0].Name = "renamed"
 	b, _ = json.Marshal(al)
-	put(string(b))
-	if a.store.Get().Alerts.Endpoints[0].Token != "" {
-		t.Error("the token followed the endpoint to a new address")
+	if c := put(string(b)); c != 204 || a.store.Get().Alerts.Endpoints[0].Token != "secret" {
+		t.Errorf("renamed endpoint: %d, token %q", c, a.store.Get().Alerts.Endpoints[0].Token)
 	}
 	for _, bad := range []string{
 		`{"endpoints":[{"name":"x","type":"webhook","url":"ftp://x"}]}`,

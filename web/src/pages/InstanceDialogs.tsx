@@ -445,12 +445,18 @@ export function RebuildDialog({ inst, open, onClose }: { inst: Inst; open: boole
                 progress("Stopping");
                 await incusOp(inst.server, base + "/state", { ...o, method: "PUT", body: { action: "stop", timeout: 30 } }).catch(() => incusOp(inst.server, base + "/state", { ...o, method: "PUT", body: { action: "stop", force: true } }));
               }
+              const rebuild = () => incusOp(inst.server, base + "/rebuild", { ...o, method: "POST", body: { source } }, progress);
               try {
-                for (const s of inst.snapshots || []) {
-                  progress(`Deleting snapshot ${s.name}`);
-                  await incusOp(inst.server, `${base}/snapshots/${encodeURIComponent(s.name)}`, { ...o, method: "DELETE" });
-                }
-                await incusOp(inst.server, base + "/rebuild", { ...o, method: "POST", body: { source } }, progress);
+                // Try first: Incus checks the image before it looks at snapshots,
+                // so a wrong image fails here and no snapshot is lost.
+                await rebuild().catch(async (e) => {
+                  if (!nSnaps || !/snapshots/i.test(readable(e))) throw e;
+                  for (const s of inst.snapshots || []) {
+                    progress(`Deleting snapshot ${s.name}`);
+                    await incusOp(inst.server, `${base}/snapshots/${encodeURIComponent(s.name)}`, { ...o, method: "DELETE" });
+                  }
+                  await rebuild();
+                });
               } catch (e) {
                 // The root disk is untouched when the rebuild fails, so bring the instance back up.
                 if (running) await incusOp(inst.server, base + "/state", { ...o, method: "PUT", body: { action: "start" } }).catch(() => {});

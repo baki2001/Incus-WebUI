@@ -155,10 +155,8 @@ export function AlertSettings() {
               label="Pool limit"
               value={String(conf.pool_percent)}
               onChange={(v) => edit((c) => ((c.pool_percent = Number(v)), c))}
-              options={[
-                { v: "85", l: "85%" },
-                { v: "90", l: "90%" },
-              ]}
+              // A limit set by hand in config.yaml shows as a third choice.
+              options={[...new Set([85, 90, q.data?.pool_percent || 90])].sort((a, b) => a - b).map((n) => ({ v: String(n), l: `${n}%` }))}
             />
           </div>
         )}

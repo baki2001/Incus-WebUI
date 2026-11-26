@@ -47,7 +47,9 @@ func putBackupFile(ctx context.Context, st backupStore, name string, r io.Reader
 	}
 	rcp.SetWorkFactor(ageWorkFactor)
 	pr, pw := io.Pipe()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		w, err := age.Encrypt(pw, rcp)
 		if err == nil {
 			_, err = io.Copy(w, src)
@@ -60,7 +62,11 @@ func putBackupFile(ctx context.Context, st backupStore, name string, r io.Reader
 	_, err = st.put(ctx, name, pr)
 	// Stops the encrypting goroutine if put gave up before the end.
 	pr.CloseWithError(errors.New("upload ended"))
-	return cw.n, hex.EncodeToString(h.Sum(nil)), err
+	if err != nil {
+		return 0, "", err
+	}
+	<-done // put read to the end, so the goroutine has finished writing cw and h.
+	return cw.n, hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // openBackupFile reads a file from a target, decrypting it when it was

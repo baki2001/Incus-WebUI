@@ -90,7 +90,7 @@ func (a *App) handlePrefsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p UIPrefs
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&p); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10)).Decode(&p); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}

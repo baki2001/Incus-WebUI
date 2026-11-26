@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -335,13 +336,14 @@ func (a *App) checkAlerts(ctx context.Context) {
 	a.checkUpdate(ctx, add)
 	a.watch.mu.Lock()
 	// Forget servers that were removed.
-	for k := range a.watch.state.Misses {
-		if !slices.ContainsFunc(cfg.Servers, func(s ServerConfig) bool { return s.Name == k }) {
-			delete(a.watch.state.Misses, k)
-			delete(a.watch.state.Down, k)
-			delete(a.watch.state.Known, k)
-		}
+	gone := func(k string) bool {
+		srv, _, _ := strings.Cut(k, "/")
+		return !slices.ContainsFunc(cfg.Servers, func(s ServerConfig) bool { return s.Name == srv })
 	}
+	for _, m := range []map[string]bool{a.watch.state.Down, a.watch.state.Known, a.watch.state.FullPool, a.watch.state.Warnings} {
+		maps.DeleteFunc(m, func(k string, _ bool) bool { return gone(k) })
+	}
+	maps.DeleteFunc(a.watch.state.Misses, func(k string, _ int) bool { return gone(k) })
 	a.watch.save()
 	a.watch.mu.Unlock()
 	for _, m := range msgs {
@@ -393,33 +395,53 @@ func (a *App) checkPools(ctx context.Context, c *incusConn, server string, limit
 	}
 	var urls []string
 	_ = json.Unmarshal(b, &urls)
+	// On a cluster, a local pool (dir, zfs, lvm) fills up on each member on
+	// its own, so ask every member. A member that answers for a shared pool
+	// gives the same numbers, which only alerts once per member.
+	members := []string{""}
+	if mb, err := c.call(ctx, "GET", "/1.0/cluster/members", "", nil); err == nil {
+		var mu []string
+		if json.Unmarshal(mb, &mu) == nil && len(mu) > 1 {
+			members = members[:0]
+			for _, u := range mu {
+				members = append(members, nameFromURL(u))
+			}
+		}
+	}
 	for _, u := range urls {
 		name := nameFromURL(u)
-		rb, err := c.call(ctx, "GET", "/1.0/storage-pools/"+url.PathEscape(name)+"/resources", "", nil)
-		if err != nil {
-			continue
+		for _, member := range members {
+			p, key, where := "/1.0/storage-pools/"+url.PathEscape(name)+"/resources", server+"/"+name, ""
+			if member != "" {
+				p += "?target=" + url.QueryEscape(member)
+				key += "@" + member
+				where = " on " + member
+			}
+			rb, err := c.call(ctx, "GET", p, "", nil)
+			if err != nil {
+				continue
+			}
+			var res struct {
+				Space struct {
+					Used  uint64 `json:"used"`
+					Total uint64 `json:"total"`
+				} `json:"space"`
+			}
+			if json.Unmarshal(rb, &res) != nil || res.Space.Total == 0 {
+				continue
+			}
+			pct := int(res.Space.Used * 100 / res.Space.Total)
+			a.watch.mu.Lock()
+			switch {
+			case pct >= limit && !a.watch.state.FullPool[key]:
+				a.watch.state.FullPool[key] = true
+				add(alertMsg{Kind: alertPool, Title: fmt.Sprintf("Storage pool %s is %d%% full%s", name, pct, where), Body: fmt.Sprintf("%s of %s used on pool %s%s. Instances can stop working when it runs out.", bytesStr(int64(res.Space.Used)), bytesStr(int64(res.Space.Total)), name, where), Server: server, Bad: true})
+			case pct < limit-5 && a.watch.state.FullPool[key]:
+				// A few points below the limit, so a pool that hovers around it doesn't alert over and over.
+				delete(a.watch.state.FullPool, key)
+			}
+			a.watch.mu.Unlock()
 		}
-		var res struct {
-			Space struct {
-				Used  uint64 `json:"used"`
-				Total uint64 `json:"total"`
-			} `json:"space"`
-		}
-		if json.Unmarshal(rb, &res) != nil || res.Space.Total == 0 {
-			continue
-		}
-		pct := int(res.Space.Used * 100 / res.Space.Total)
-		key := server + "/" + name
-		a.watch.mu.Lock()
-		switch {
-		case pct >= limit && !a.watch.state.FullPool[key]:
-			a.watch.state.FullPool[key] = true
-			add(alertMsg{Kind: alertPool, Title: fmt.Sprintf("Storage pool %s is %d%% full", name, pct), Body: fmt.Sprintf("%s of %s used on pool %s. Instances can stop working when it runs out.", bytesStr(int64(res.Space.Used)), bytesStr(int64(res.Space.Total)), name), Server: server, Bad: true})
-		case pct < limit-5 && a.watch.state.FullPool[key]:
-			// A few points below the limit, so a pool that hovers around it doesn't alert over and over.
-			delete(a.watch.state.FullPool, key)
-		}
-		a.watch.mu.Unlock()
 	}
 }
 
@@ -524,13 +546,20 @@ func maskAlerts(al Alerts) Alerts {
 }
 
 // unmask puts back the saved secrets the browser only saw as a mask. A secret
-// stays with its endpoint only while the address it goes to is unchanged.
-func unmask(e *AlertEndpoint, saved []AlertEndpoint) {
-	var old AlertEndpoint
-	for _, o := range saved {
-		if o.Name == e.Name && o.Type == e.Type && o.URL == e.URL && o.Host == e.Host {
-			old = o
+// stays with its endpoint only while the address it goes to is unchanged, so
+// a token can't be sent somewhere new without typing it again.
+func unmask(e *AlertEndpoint, saved []AlertEndpoint) error {
+	if e.Token != secretMask && e.Password != secretMask {
+		return nil
+	}
+	var old *AlertEndpoint
+	for i, o := range saved {
+		if o.Type == e.Type && o.URL == e.URL && o.Host == e.Host && (old == nil || o.Name == e.Name) {
+			old = &saved[i]
 		}
+	}
+	if old == nil {
+		return errors.New("the address changed, so enter the token or password again")
 	}
 	if e.Token == secretMask {
 		e.Token = old.Token
@@ -538,6 +567,7 @@ func unmask(e *AlertEndpoint, saved []AlertEndpoint) {
 	if e.Password == secretMask {
 		e.Password = old.Password
 	}
+	return nil
 }
 
 func (e AlertEndpoint) validate() error {
@@ -586,7 +616,9 @@ func (a *App) handleAlertsPut(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("endpoint name %q is empty, invalid or used twice", e.Name)
 			}
 			names[e.Name] = true
-			unmask(e, c.Alerts.Endpoints)
+			if err := unmask(e, c.Alerts.Endpoints); err != nil {
+				return fmt.Errorf("endpoint %s: %w", e.Name, err)
+			}
 			if err := e.validate(); err != nil {
 				return fmt.Errorf("endpoint %s: %w", e.Name, err)
 			}
@@ -617,8 +649,11 @@ func (a *App) handleAlertsTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := a.store.Get()
-	unmask(&e, cfg.Alerts.Endpoints)
-	if err := e.validate(); err != nil {
+	err := unmask(&e, cfg.Alerts.Endpoints)
+	if err == nil {
+		err = e.validate()
+	}
+	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}

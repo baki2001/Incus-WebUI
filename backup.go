@@ -526,7 +526,15 @@ func (a *App) restoreBackup(ctx context.Context, c *incusConn, st backupStore, p
 	}
 	if len(moved) > 0 {
 		if _, err := c.call(ctx, "PATCH", "/1.0/instances/"+url.PathEscape(name), project, map[string]any{"devices": moved}); err != nil {
-			return made, fmt.Errorf("the instance is back, but attaching its restored volumes failed: %w", err)
+			// The new instance still points at the original volumes. Don't
+			// leave it around where someone could start it on them.
+			cctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if _, derr := c.call(cctx, "DELETE", "/1.0/instances/"+url.PathEscape(name), project, nil); derr != nil {
+				log.Printf("restore: remove %s: %v", name, derr)
+			}
+			undo()
+			return nil, fmt.Errorf("attaching the restored volumes failed, so the restore was undone: %w", err)
 		}
 	}
 	return made, nil
@@ -894,11 +902,20 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("target name %q is empty, invalid or used twice", t.Name)
 			}
 			names[t.Name] = true
+			// A renamed target has no saved secrets to fall back on. Ask for
+			// them again rather than quietly saving it without encryption.
+			prev, had := old[t.Name]
 			if t.SecretKey == secretMask {
-				t.SecretKey = old[t.Name].SecretKey
+				if !had || prev.SecretKey == "" {
+					return fmt.Errorf("target %s: enter the secret key again", t.Name)
+				}
+				t.SecretKey = prev.SecretKey
 			}
 			if t.Passphrase == secretMask {
-				t.Passphrase = old[t.Name].Passphrase
+				if !had || prev.Passphrase == "" {
+					return fmt.Errorf("target %s: enter the passphrase again", t.Name)
+				}
+				t.Passphrase = prev.Passphrase
 			}
 			if t.Passphrase != "" && len(t.Passphrase) < 12 {
 				return fmt.Errorf("target %s: use a passphrase of at least 12 characters", t.Name)
