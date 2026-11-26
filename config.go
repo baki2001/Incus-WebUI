@@ -51,7 +51,7 @@ type Config struct {
 }
 
 type Theme struct {
-	Name   string `yaml:"name" json:"name"`                         // indigo | porcelain | graphite | terracotta | custom
+	Name   string `yaml:"name" json:"name"`                         // indigo | porcelain | graphite | ember | terracotta | custom
 	Accent string `yaml:"accent,omitempty" json:"accent,omitempty"` // hex, for custom
 }
 

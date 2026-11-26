@@ -115,7 +115,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 // ---------- app-wide state ----------
 
 // Mode is the theme one person picks for themselves.
-export type Mode = "indigo" | "porcelain" | "graphite" | "terracotta" | "custom";
+export type Mode = "indigo" | "porcelain" | "graphite" | "ember" | "terracotta" | "custom";
 export type Theme = { name: string; accent?: string };
 export type CustomTheme = {
   base: "porcelain" | "graphite";
@@ -132,7 +132,7 @@ export const DEFAULT_CUSTOM: CustomTheme = {
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 export const isHex = (v: string) => HEX_RE.test(v);
 
-const looks: Mode[] = ["indigo", "porcelain", "graphite", "terracotta", "custom"];
+const looks: Mode[] = ["indigo", "porcelain", "graphite", "ember", "terracotta", "custom"];
 function migrateLook(v: string): Mode | "" {
   if (v === "kyoto" || v === "harbor") return "indigo";
   if (v === "light") return "porcelain";
@@ -224,10 +224,10 @@ const CUSTOM_VARS = [
 export function applyTheme(mode: Mode, custom: CustomTheme = storedCustom()) {
   const html = document.documentElement;
   html.classList.add("switching");
-  const dark = mode === "graphite" || (mode === "custom" && custom.base === "graphite");
+  const dark = mode === "graphite" || mode === "ember" || (mode === "custom" && custom.base === "graphite");
   html.setAttribute("data-theme", dark ? "dark" : "light");
 
-  const brand = mode === "indigo" || mode === "terracotta" || mode === "custom" ? mode : "";
+  const brand = mode === "indigo" || mode === "ember" || mode === "terracotta" || mode === "custom" ? mode : "";
   if (brand) html.setAttribute("data-brand", brand);
   else html.removeAttribute("data-brand");
 
