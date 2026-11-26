@@ -3,19 +3,23 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
-import { BackupSettings } from "./Backups";
+import { BackupSettings, newPassphrase, saveFile } from "./Backups";
+import { AlertSettings } from "./Alerts";
+import { SSHKeySettings } from "./SSHKeys";
 import { Security } from "./Security";
 import { contrast, DEFAULT_CUSTOM, fitAccent, inkFor, invalidate, isHex, useApp, useData, type AccessEntry, type CustomTheme, type Mode, type RoleName } from "../state";
-import { confirmDialog, CopyBtn, Dialog, Field, Menu, Seg, Select, Table, useThumb } from "../ui";
+import { confirmDialog, CopyBtn, Dialog, Field, Input, Menu, Seg, Select, Table, TglRow, useThumb } from "../ui";
 import { DlgForm } from "./InstanceDialogs";
 
-type Section = "appearance" | "security" | "servers" | "users" | "backups" | "about";
+type Section = "appearance" | "security" | "ssh" | "servers" | "users" | "backups" | "alerts" | "about";
 const sections: { v: Section; l: string; admin?: boolean; local?: boolean }[] = [
   { v: "appearance", l: "Appearance" },
   { v: "security", l: "Sign-in security", local: true },
+  { v: "ssh", l: "SSH keys" },
   { v: "servers", l: "Servers", admin: true },
   { v: "users", l: "Users and roles", admin: true },
   { v: "backups", l: "Backups", admin: true },
+  { v: "alerts", l: "Alerts", admin: true },
   { v: "about", l: "Updates and about" },
 ];
 
@@ -49,6 +53,8 @@ export function Settings() {
           {section === "servers" && admin && <Servers />}
           {section === "users" && admin && <Users />}
           {section === "backups" && admin && <BackupSettings />}
+          {section === "ssh" && <SSHKeySettings />}
+          {section === "alerts" && admin && <AlertSettings />}
           {section === "about" && <About />}
         </div>
       </div>
@@ -1148,6 +1154,7 @@ function About() {
         )}
         {u?.newer && !u.can_update && <p className="upd-note">{u.reason}</p>}
       </section>
+      {app.admin && <ExportSettings />}
       <section className="set-sec">
         <h2>About</h2>
         <p>
@@ -1159,5 +1166,56 @@ function About() {
         </p>
       </section>
     </>
+  );
+}
+
+// A download of the UI's own settings, to set it up again after losing the machine it runs on.
+function ExportSettings() {
+  const app = useApp();
+  const [enc, setEnc] = useState(true);
+  const [pass, setPass] = useState(newPassphrase);
+  const [busy, setBusy] = useState(false);
+  const short = enc && pass.length < 12;
+  const download = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/ui/config-export", { method: "POST", headers: { "X-Incus-UI": "1", "Content-Type": "application/json" }, body: JSON.stringify({ passphrase: enc ? pass : "" }), credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || "incus-webui-settings.tar.gz";
+      const url = URL.createObjectURL(await res.blob());
+      saveFile(url, name);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      app.toast(enc ? "Saved. Keep the passphrase with it." : "Saved");
+    } catch (e) {
+      app.fail(e, "Couldn't export the settings.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="set-sec">
+      <h2>Back up this UI</h2>
+      <p>
+        Downloads the UI's own settings: servers and the certificate they trust, users, roles, backup targets, schedules and alerts. To bring them back, unpack the file into the data folder (<span className="mono">/var/lib/incus-webui</span>) while the UI is stopped. The file holds passwords and keys, so keep it safe.
+      </p>
+      <div className="set-form">
+        <div className="tgl-list">
+          <TglRow title="Encrypt the file" note={<>With age. Open it with <span className="mono">age -d</span> and this passphrase.</>} on={enc} onChange={setEnc} />
+        </div>
+        {enc && (
+          <Field label="Passphrase" hint={short ? "Use at least 12 characters." : undefined} bad={short}>
+            <div className="bk-pass">
+              <Input mono value={pass} onChange={setPass} bad={short} aria-label="Passphrase" />
+              <CopyBtn text={pass} />
+            </div>
+          </Field>
+        )}
+        <div>
+          <button className="btn btn-s press" disabled={busy || short} onClick={download}>
+            {busy ? "Preparing…" : "Download settings"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }

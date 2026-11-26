@@ -4,19 +4,50 @@ import { bytes, dateTime, friendlyError, incus, ui, type Instance } from "../api
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Dialog, Empty, Field, Input, Seg, Select, Table, TglRow, useOutside, usePresence } from "../ui";
+import { confirmDialog, CopyBtn, Dialog, Empty, Field, Input, Menu, Seg, Select, Table, TglRow, useOutside, usePresence } from "../ui";
 import { useNames } from "../data";
 import { DlgForm, nameProblem } from "./InstanceDialogs";
 import { matches, PageHead, Search } from "./Resource";
 
-export type Meta = { key: string; target: string; server: string; project: string; instance: string; type: string; created: string; size: number; sha256: string; schedule?: string; by?: string; name?: string };
+export type VolMeta = { device: string; pool: string; name: string; size: number };
+export type Meta = { key: string; target: string; server: string; project: string; instance: string; type: string; created: string; size: number; sha256: string; schedule?: string; by?: string; name?: string; encrypted?: boolean; volumes?: VolMeta[] };
 export type TargetName = { name: string; type: string };
 
 export function useBackupTargets() {
   return useData<TargetName[]>("ui-backup-targets", () => ui("/backup-targets"));
 }
 
-const dlUrl = (m: Meta) => `/api/ui/backup/download?${new URLSearchParams({ target: m.target, key: m.key })}`;
+const dlUrl = (m: Meta, vol?: number) => `/api/ui/backup/download?${new URLSearchParams({ target: m.target, key: m.key, ...(vol != null ? { volume: String(vol) } : {}) })}`;
+const totalSize = (m: Meta) => m.size + (m.volumes || []).reduce((a, v) => a + v.size, 0);
+const volNote = (m: Meta) => (m.volumes?.length ? `With ${m.volumes.length === 1 ? `volume ${m.volumes[0].name}` : `${m.volumes.length} volumes: ${m.volumes.map((v) => v.name).join(", ")}`}` : "");
+
+// saveFile starts a download without leaving the page.
+export function saveFile(href: string, name = "") {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// Small marks after a backup's name: encrypted, and the volumes it holds.
+function BackupMarks({ m }: { m: Meta }) {
+  return (
+    <>
+      {m.encrypted && (
+        <span className="tag" title="Encrypted with the target's passphrase">
+          encrypted
+        </span>
+      )}
+      {!!m.volumes?.length && (
+        <span className="tag" title={volNote(m)}>
+          +{m.volumes.length} volume{m.volumes.length === 1 ? "" : "s"}
+        </span>
+      )}
+    </>
+  );
+}
 const madeBy = (m: Meta) => (m.schedule ? `Schedule ${m.schedule}` : m.by || "");
 
 async function deleteBackup(app: ReturnType<typeof useApp>, m: Meta) {
@@ -37,9 +68,32 @@ function BackupActions({ m, onRestore }: { m: Meta; onRestore: (m: Meta) => void
       <button className="btn btn-q btn-sm" onClick={() => onRestore(m)}>
         Restore
       </button>
-      <a className="btn btn-q ib btn-sm" aria-label="Download" title="Download" href={dlUrl(m)} download>
-        {ic.dl}
-      </a>
+      {m.volumes?.length ? (
+        <Menu
+          button={(p) => (
+            <button className="btn btn-q ib btn-sm" aria-label="Download" title="Download" {...p}>
+              {ic.dl}
+            </button>
+          )}
+        >
+          {(close) => (
+            <>
+              <button onClick={() => (close(), saveFile(dlUrl(m)))}>
+                {ic.dl}Instance {m.instance}
+              </button>
+              {m.volumes!.map((v, i) => (
+                <button key={v.device} onClick={() => (close(), saveFile(dlUrl(m, i)))}>
+                  {ic.dl}Volume {v.name}
+                </button>
+              ))}
+            </>
+          )}
+        </Menu>
+      ) : (
+        <a className="btn btn-q ib btn-sm" aria-label="Download" title="Download" href={dlUrl(m)} download>
+          {ic.dl}
+        </a>
+      )}
       <button className="btn btn-q ib btn-sm" aria-label="Delete" title="Delete" onClick={() => deleteBackup(app, m)}>
         {ic.trash}
       </button>
@@ -120,6 +174,7 @@ export function BackupsPage() {
                   <Link className="nm2" style={{ textDecoration: "none" }} to={`/instances/${encodeURIComponent(m.server)}/${encodeURIComponent(m.instance)}?project=${encodeURIComponent(m.project)}`}>
                     {m.instance}
                     {m.name && <span className="tag">{m.name}</span>}
+                    <BackupMarks m={m} />
                   </Link>
                 ),
               },
@@ -127,7 +182,7 @@ export function BackupsPage() {
               { k: "server", label: "Server", sort: (m) => m.server, cell: (m) => m.server, hide: !multi, cls: "hide-m" },
               { k: "target", label: "Target", sort: (m) => m.target, cell: (m) => m.target },
               { k: "created", label: "Made", sort: (m) => m.created, cell: (m) => dateTime(m.created) },
-              { k: "size", label: "Size", cls: "right hide-s", sort: (m) => m.size, cell: (m) => <span className="mono">{bytes(m.size)}</span> },
+              { k: "size", label: "Size", cls: "right hide-s", sort: totalSize, cell: (m) => <span className="mono" title={volNote(m) || undefined}>{bytes(totalSize(m))}</span> },
               { k: "by", label: "By", sort: madeBy, cell: madeBy, cls: "hide-m" },
               { k: "act", label: "", hide: !anyManage, cell: (m) => (app.can(m.server, m.project, "manager") ? <BackupActions m={m} onRestore={setRestore} /> : null) },
             ]}
@@ -195,9 +250,20 @@ export function BackupsTab({ inst }: { inst: Instance & { server: string } }) {
         initial={{ k: "created", asc: false }}
         empty={q.error ? friendlyError(q.error) : "No backups of this instance yet."}
         cols={[
-          { k: "created", label: "Made", cell: (m) => (m.name ? <>{dateTime(m.created)}<span className="tag" style={{ marginLeft: 8 }}>{m.name}</span></> : dateTime(m.created)), sort: (m) => m.created },
+          {
+            k: "created",
+            label: "Made",
+            cell: (m) => (
+              <span className="bk-made">
+                {dateTime(m.created)}
+                {m.name && <span className="tag">{m.name}</span>}
+                <BackupMarks m={m} />
+              </span>
+            ),
+            sort: (m) => m.created,
+          },
           { k: "target", label: "Target", cell: (m) => m.target, sort: (m) => m.target },
-          { k: "size", label: "Size", cls: "right", cell: (m) => <span className="mono">{bytes(m.size)}</span>, sort: (m) => m.size },
+          { k: "size", label: "Size", cls: "right", cell: (m) => <span className="mono" title={volNote(m) || undefined}>{bytes(totalSize(m))}</span>, sort: totalSize },
           { k: "by", label: "By", cell: madeBy, sort: madeBy },
           { k: "act", label: "", hide: !canManage, cell: (m) => <BackupActions m={m} onRestore={setRestore} /> },
         ]}
@@ -234,7 +300,7 @@ export function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => v
       {m && (
         <DlgForm
           title="Restore backup"
-          intro={`Makes a new instance from the backup of ${m.instance}${m.name ? ` (${m.name})` : ""} made ${dateTime(m.created)}. An instance that still exists stays as it is. The backup's checksum is checked on the way.`}
+          intro={`Makes a new instance from the backup of ${m.instance}${m.name ? ` (${m.name})` : ""} made ${dateTime(m.created)}. An instance that still exists stays as it is. The backup's checksum is checked on the way.${m.volumes?.length ? ` Its ${m.volumes.length === 1 ? "volume comes" : `${m.volumes.length} volumes come`} back too, under the old name if it's free, else with the new instance's name in front.` : ""}`}
           confirm="Restore"
           disabled={!name || !!bad}
           onClose={onClose}
@@ -270,7 +336,46 @@ export function RestoreDialog({ m, onClose }: { m: Meta | null; onClose: () => v
 
 // ---------- Settings: targets and schedules ----------
 
-type Target = { name: string; type: "dir" | "s3"; path?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key?: string; secret_key?: string; virtual_host?: boolean };
+type Target = { name: string; type: "dir" | "s3"; path?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key?: string; secret_key?: string; virtual_host?: boolean; passphrase?: string };
+
+// A random passphrase: 24 characters from a set without look-alikes.
+export function newPassphrase() {
+  const set = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(b, (x) => set[x % set.length]).join("").replace(/(.{6})(?!$)/g, "$1-");
+}
+
+// Encryption for a backup target: off, or on with a passphrase.
+function PassphraseField({ value, saved, onChange }: { value: string; saved: boolean; onChange: (v: string) => void }) {
+  const [show, setShow] = useState(false);
+  const on = value !== "";
+  const changed = saved && value !== "********";
+  return (
+    <div className="bk-sub bk-enc">
+      <TglRow
+        title="Encrypt backups"
+        note="New backups on this target are encrypted with age before they leave the UI. Open one without the UI with age -d. Keep the passphrase safe: without it, nobody can restore these backups."
+        on={on}
+        onChange={(v) => {
+          setShow(v);
+          onChange(v ? newPassphrase() : "");
+        }}
+      />
+      {saved && !on && <p>Backups this target already has stay encrypted. Restoring them needs the old passphrase back here.</p>}
+      {on && (
+        <Field label="Passphrase" hint={changed ? "Backups made with the old passphrase only open with that one. Keep it too, or keep this target as it was." : value.length < 12 ? "Use at least 12 characters." : undefined} bad={value.length < 12}>
+          <div className="bk-pass">
+            <Input mono type={show ? "text" : "password"} value={value} onChange={onChange} bad={value.length < 12} aria-label="Passphrase" />
+            {value !== "********" && <CopyBtn text={value} />}
+            <button type="button" className="btn btn-q btn-sm" onClick={() => setShow(!show)}>
+              {show ? "Hide" : "Show"}
+            </button>
+          </div>
+        </Field>
+      )}
+    </div>
+  );
+}
 type SchedState = { last_run?: string; last_ok: boolean; last_error?: string; running: boolean };
 type Schedule = {
   name: string;
@@ -394,6 +499,7 @@ export function BackupSettings() {
                   </>
                 )}
               </div>
+              <PassphraseField value={t.passphrase || ""} saved={q.data?.targets.find((x) => x.name === t.name)?.passphrase === "********"} onChange={(v) => setT(i, { passphrase: v })} />
               <div className="card-f">
                 <button className="btn btn-q btn-sm" onClick={() => edit((c) => ((c.targets = c.targets.filter((_, j) => j !== i)), c))}>
                   Remove

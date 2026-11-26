@@ -16,6 +16,7 @@ import (
 	"hash"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +51,9 @@ type BackupTarget struct {
 	AccessKey   string `yaml:"access_key,omitempty" json:"access_key,omitempty"`
 	SecretKey   string `yaml:"secret_key,omitempty" json:"secret_key,omitempty"`
 	VirtualHost bool   `yaml:"virtual_host,omitempty" json:"virtual_host,omitempty"`
+	// Passphrase turns on encryption: new backups on this target are
+	// encrypted with age (see backupcrypt.go). Empty means plain files.
+	Passphrase string `yaml:"passphrase,omitempty" json:"passphrase,omitempty"`
 }
 
 type BackupSchedule struct {
@@ -56,9 +61,9 @@ type BackupSchedule struct {
 	Server  string `yaml:"server" json:"server"`
 	Project string `yaml:"project" json:"project"`
 	// Instances to back up; empty means every instance in the project.
-	Instances  []string `yaml:"instances,omitempty" json:"instances"`
-	Target     string   `yaml:"target" json:"target"`
-	At         string   `yaml:"at" json:"at"` // HH:MM, local time of the UI
+	Instances []string `yaml:"instances,omitempty" json:"instances"`
+	Target    string   `yaml:"target" json:"target"`
+	At        string   `yaml:"at" json:"at"` // HH:MM, local time of the UI
 	// Days are the weekdays to run on, 0 for Sunday to 6 for Saturday.
 	// Empty means every day.
 	Days []int `yaml:"days,omitempty" json:"days"`
@@ -95,6 +100,57 @@ type BackupMeta struct {
 	// Optimized is set when the backup is in the storage driver's own
 	// format, which restores only to a pool with the same driver.
 	Optimized bool `json:"optimized,omitempty"`
+	// Encrypted is set when the files are encrypted with the target's passphrase.
+	Encrypted bool `json:"encrypted,omitempty"`
+	// Volumes are the custom storage volumes attached to the instance, kept
+	// next to it as <key>.vol<N>.tar.
+	Volumes []VolumeMeta `json:"volumes,omitempty"`
+}
+
+// VolumeMeta is one custom volume in a backup.
+type VolumeMeta struct {
+	Device string            `json:"device"` // the disk device it was attached as
+	Pool   string            `json:"pool"`
+	Name   string            `json:"name"`
+	Dev    map[string]string `json:"dev"` // the device, to attach the restored volume the same way
+	Size   int64             `json:"size"`
+	SHA256 string            `json:"sha256"`
+}
+
+// dataFile is the name of the instance's backup file on the target.
+func (m *BackupMeta) dataFile() string {
+	if m.Encrypted {
+		return m.Key + ".tar.age"
+	}
+	return m.Key + ".tar"
+}
+
+// volFile is the name of the i'th volume's backup file.
+func (m *BackupMeta) volFile(i int) string {
+	n := fmt.Sprintf("%s.vol%d.tar", m.Key, i)
+	if m.Encrypted {
+		n += ".age"
+	}
+	return n
+}
+
+// files are all the files of a backup, its metadata last.
+func (m *BackupMeta) files() []string {
+	out := []string{m.dataFile()}
+	for i := range m.Volumes {
+		out = append(out, m.volFile(i))
+	}
+	return append(out, m.Key+".json")
+}
+
+func deleteBackupFiles(ctx context.Context, st backupStore, m BackupMeta) error {
+	var first error
+	for _, f := range m.files() {
+		if err := st.del(ctx, f); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 var (
@@ -301,12 +357,14 @@ func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTar
 		return nil, err
 	}
 	var info struct {
-		Type string `json:"type"`
+		Type    string                       `json:"type"`
+		Devices map[string]map[string]string `json:"expanded_devices"`
 	}
 	_ = json.Unmarshal(b, &info)
 
 	now := time.Now().UTC()
-	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by, Name: label, Optimized: optimized}
+	m := &BackupMeta{Key: server + "/" + project + "/" + inst + "/" + now.Format(backupTimeFmt), Target: t.Name, Server: server, Project: project, Instance: inst, Type: info.Type, Created: now, Schedule: schedule, By: by, Name: label, Optimized: optimized, Encrypted: t.Passphrase != ""}
+	m.Volumes = attachedVolumes(info.Devices)
 	if _, _, _, _, ok := splitKey(m.Key); !ok {
 		return nil, fmt.Errorf("can't back up %s: the server, project or instance name doesn't fit a file name", inst)
 	}
@@ -329,28 +387,82 @@ func (a *App) backupInstanceNamed(ctx context.Context, c *incusConn, t BackupTar
 		}
 	}()
 
-	set(0.5, "Copying to "+t.Name)
-	resp, err := c.do(ctx, "GET", base+"/"+bname+"/export", project, nil, nil)
-	if err != nil {
+	// Removes what was written so far when a later step fails.
+	fail := func(err error) (*BackupMeta, error) {
+		for _, f := range m.files() {
+			st.del(context.WithoutCancel(ctx), f)
+		}
 		return nil, err
+	}
+	set(0.3, "Copying to "+t.Name)
+	m.Size, m.SHA256, err = exportTo(ctx, c, base+"/"+bname+"/export", project, st, m.dataFile(), t.Passphrase)
+	if err != nil {
+		return fail(fmt.Errorf("writing to %s: %w", t.Name, err))
+	}
+	for i := range m.Volumes {
+		v := &m.Volumes[i]
+		set(0.5+0.4*float64(i)/float64(len(m.Volumes)), "Backing up volume "+v.Name)
+		v.Size, v.SHA256, err = backupVolume(ctx, c, project, *v, bname, optimized, now, st, m.volFile(i), t.Passphrase)
+		if err != nil {
+			return fail(fmt.Errorf("volume %s: %w", v.Name, err))
+		}
+	}
+	meta, _ := json.MarshalIndent(m, "", "  ")
+	if _, err := st.put(ctx, m.Key+".json", strings.NewReader(string(meta))); err != nil {
+		return fail(fmt.Errorf("writing to %s: %w", t.Name, err))
+	}
+	return m, nil
+}
+
+// attachedVolumes lists the custom volumes among an instance's disks, sorted
+// by device name. Host paths, the root disk and snapshots of volumes are left out.
+func attachedVolumes(devs map[string]map[string]string) []VolumeMeta {
+	var out []VolumeMeta
+	for name, d := range devs {
+		if d["type"] != "disk" || d["pool"] == "" || d["source"] == "" || d["path"] == "/" || strings.Contains(d["source"], "/") {
+			continue
+		}
+		out = append(out, VolumeMeta{Device: name, Pool: d["pool"], Name: d["source"], Dev: d})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Device < out[j].Device })
+	return out
+}
+
+// exportTo streams an Incus backup export to a file on the target.
+func exportTo(ctx context.Context, c *incusConn, path, project string, st backupStore, name, pass string) (int64, string, error) {
+	resp, err := c.do(ctx, "GET", path, project, nil, nil)
+	if err != nil {
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Incus refused the export (%s)", resp.Status)
+		return 0, "", fmt.Errorf("Incus refused the export (%s)", resp.Status)
 	}
-	h := sha256.New()
-	m.Size, err = st.put(ctx, m.Key+".tar", io.TeeReader(resp.Body, h))
+	return putBackupFile(ctx, st, name, resp.Body, pass)
+}
+
+func volumePath(pool, name string) string {
+	return "/1.0/storage-pools/" + url.PathEscape(pool) + "/volumes/custom/" + url.PathEscape(name)
+}
+
+// backupVolume has Incus make a backup of one custom volume and copies it to the target.
+func backupVolume(ctx context.Context, c *incusConn, project string, v VolumeMeta, bname string, optimized bool, now time.Time, st backupStore, file, pass string) (int64, string, error) {
+	base := volumePath(v.Pool, v.Name) + "/backups"
+	_, err := c.call(ctx, "POST", base, project, map[string]any{
+		"name": bname, "volume_only": true, "optimized_storage": optimized,
+		"expires_at": now.Add(24 * time.Hour).Format(time.RFC3339),
+	})
 	if err != nil {
-		st.del(context.WithoutCancel(ctx), m.Key+".tar")
-		return nil, fmt.Errorf("writing to %s: %w", t.Name, err)
+		return 0, "", fmt.Errorf("Incus couldn't make the backup: %w", err)
 	}
-	m.SHA256 = hex.EncodeToString(h.Sum(nil))
-	meta, _ := json.MarshalIndent(m, "", "  ")
-	if _, err := st.put(ctx, m.Key+".json", strings.NewReader(string(meta))); err != nil {
-		st.del(context.WithoutCancel(ctx), m.Key+".tar")
-		return nil, fmt.Errorf("writing to %s: %w", t.Name, err)
-	}
-	return m, nil
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if _, err := c.call(cctx, "DELETE", base+"/"+bname, project, nil); err != nil {
+			log.Printf("backup: delete volume backup %s of %s: %v", bname, v.Name, err)
+		}
+	}()
+	return exportTo(ctx, c, base+"/"+bname+"/export", project, st, file, pass)
 }
 
 // checkReader fails the last read when the data's SHA-256 is not the one
@@ -370,9 +482,93 @@ func (c *checkReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// restoreBackup creates a new instance from a backup.
-func (a *App) restoreBackup(ctx context.Context, c *incusConn, st backupStore, m BackupMeta, project, name, pool string) error {
-	r, err := st.get(ctx, m.Key+".tar")
+// restoreBackup creates a new instance from a backup, with its custom
+// volumes. A volume comes back under its old name when that is free, else as
+// <instance>-<volume>. It returns the volumes it made, as pool/name.
+func (a *App) restoreBackup(ctx context.Context, c *incusConn, st backupStore, pass string, m BackupMeta, project, name, pool string) ([]string, error) {
+	var made []string
+	undo := func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, pv := range made {
+			p, v, _ := strings.Cut(pv, "/")
+			if _, err := c.call(cctx, "DELETE", volumePath(p, v), project, nil); err != nil {
+				log.Printf("restore: remove volume %s: %v", pv, err)
+			}
+		}
+	}
+	// Restored volumes that got another name or pool are attached under the same device name.
+	moved := map[string]map[string]string{}
+	for i, v := range m.Volumes {
+		vpool := v.Pool
+		if pool != "" {
+			vpool = pool
+		}
+		vname, err := freeVolumeName(ctx, c, project, vpool, v.Name, name)
+		if err != nil {
+			undo()
+			return nil, err
+		}
+		if err := restoreVolume(ctx, c, st, pass, m, i, project, vpool, vname); err != nil {
+			undo()
+			return nil, fmt.Errorf("volume %s: %w", v.Name, err)
+		}
+		made = append(made, vpool+"/"+vname)
+		if vname != v.Name || vpool != v.Pool {
+			d := maps.Clone(v.Dev)
+			d["pool"], d["source"] = vpool, vname
+			moved[v.Device] = d
+		}
+	}
+	if err := a.restoreInstance(ctx, c, st, pass, m, project, name, pool); err != nil {
+		undo()
+		return nil, err
+	}
+	if len(moved) > 0 {
+		if _, err := c.call(ctx, "PATCH", "/1.0/instances/"+url.PathEscape(name), project, map[string]any{"devices": moved}); err != nil {
+			return made, fmt.Errorf("the instance is back, but attaching its restored volumes failed: %w", err)
+		}
+	}
+	return made, nil
+}
+
+// freeVolumeName picks a name for a restored volume that isn't used yet.
+func freeVolumeName(ctx context.Context, c *incusConn, project, pool, want, inst string) (string, error) {
+	cands := []string{want, inst + "-" + want}
+	for i := 2; i < 20; i++ {
+		cands = append(cands, fmt.Sprintf("%s-%s-%d", inst, want, i))
+	}
+	for _, n := range cands {
+		_, err := c.call(ctx, "GET", volumePath(pool, n), project, nil)
+		var ie *incusErr
+		if errors.As(err, &ie) && ie.Status == http.StatusNotFound {
+			return n, nil
+		}
+		if err != nil && !errors.As(err, &ie) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("can't find a free name for volume %s", want)
+}
+
+func restoreVolume(ctx context.Context, c *incusConn, st backupStore, pass string, m BackupMeta, i int, project, pool, name string) error {
+	r, err := openBackupFile(ctx, st, m.volFile(i), m.Encrypted, pass)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	body := io.Reader(r)
+	if v := m.Volumes[i]; v.SHA256 != "" {
+		body = &checkReader{r: r, h: sha256.New(), want: v.SHA256}
+	}
+	hdr := map[string]string{"Content-Type": "application/octet-stream", "X-Incus-name": name}
+	_, err = c.send(ctx, "POST", "/1.0/storage-pools/"+url.PathEscape(pool)+"/volumes/custom", project, body, hdr)
+	return err
+}
+
+// restoreInstance imports the instance itself.
+func (a *App) restoreInstance(ctx context.Context, c *incusConn, st backupStore, pass string, m BackupMeta, project, name, pool string) error {
+	r, err := openBackupFile(ctx, st, m.dataFile(), m.Encrypted, pass)
 	if err != nil {
 		return err
 	}
@@ -546,6 +742,13 @@ func (a *App) startSchedule(sc BackupSchedule) *Job {
 
 	return a.jobs.start("backup", "Scheduled backup "+sc.Name, nil, sc.Server, sc.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
 		note, err := a.runSchedule(ctx, sc, set)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			title := "Backup " + sc.Name + " failed"
+			if strings.Contains(err.Error(), "test restore failed") {
+				title = "Test restore of " + sc.Name + " failed"
+			}
+			a.alert(alertMsg{Kind: alertBackup, Title: title, Body: err.Error(), Server: sc.Server, Bad: true})
+		}
 		a.sched.mu.Lock()
 		st.Running, st.LastOK, st.LastError = false, err == nil, ""
 		if err != nil {
@@ -598,13 +801,12 @@ func (a *App) runSchedule(ctx context.Context, sc BackupSchedule, set func(float
 		if err == nil {
 			list = slices.DeleteFunc(list, func(x BackupMeta) bool { return x.Instance != inst })
 			for _, old := range prune(list, sc) {
-				st.del(ctx, old.Key+".tar")
-				st.del(ctx, old.Key+".json")
+				deleteBackupFiles(ctx, st, old)
 			}
 		}
 		if sc.TestRestore && time.Now().Weekday() == testRestoreDay(sc) {
 			step(0.9, "test restore")
-			if err := a.testRestore(ctx, c, st, *m); err != nil {
+			if err := a.testRestore(ctx, c, st, t.Passphrase, *m); err != nil {
 				failed = append(failed, inst+": the test restore failed: "+err.Error())
 			}
 		}
@@ -625,14 +827,22 @@ func testRestoreDay(sc BackupSchedule) time.Weekday {
 }
 
 // testRestore restores a backup under a temporary name and removes it.
-func (a *App) testRestore(ctx context.Context, c *incusConn, st backupStore, m BackupMeta) error {
+func (a *App) testRestore(ctx context.Context, c *incusConn, st backupStore, pass string, m BackupMeta) error {
 	name := "restore-test-" + randHex(3)
-	if err := a.restoreBackup(ctx, c, st, m, m.Project, name, ""); err != nil {
-		return err
-	}
+	made, err := a.restoreBackup(ctx, c, st, pass, m, m.Project, name, "")
 	cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	_, err := c.call(cctx, "DELETE", "/1.0/instances/"+name, m.Project, nil)
+	if err == nil || len(made) > 0 {
+		if _, derr := c.call(cctx, "DELETE", "/1.0/instances/"+name, m.Project, nil); err == nil {
+			err = derr
+		}
+	}
+	for _, pv := range made {
+		p, v, _ := strings.Cut(pv, "/")
+		if _, derr := c.call(cctx, "DELETE", volumePath(p, v), m.Project, nil); err == nil {
+			err = derr
+		}
+	}
 	return err
 }
 
@@ -643,6 +853,9 @@ func (a *App) handleBackupConfigGet(w http.ResponseWriter, r *http.Request) {
 	for i := range b.Targets {
 		if b.Targets[i].SecretKey != "" {
 			b.Targets[i].SecretKey = secretMask
+		}
+		if b.Targets[i].Passphrase != "" {
+			b.Targets[i].Passphrase = secretMask
 		}
 	}
 	for i := range b.PBS {
@@ -681,8 +894,14 @@ func (a *App) handleBackupConfigPut(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("target name %q is empty, invalid or used twice", t.Name)
 			}
 			names[t.Name] = true
-			if t.SecretKey == "********" {
+			if t.SecretKey == secretMask {
 				t.SecretKey = old[t.Name].SecretKey
+			}
+			if t.Passphrase == secretMask {
+				t.Passphrase = old[t.Name].Passphrase
+			}
+			if t.Passphrase != "" && len(t.Passphrase) < 12 {
+				return fmt.Errorf("target %s: use a passphrase of at least 12 characters", t.Name)
 			}
 			if t.Type == "s3" && (t.Bucket == "" || t.AccessKey == "" || t.SecretKey == "") {
 				return fmt.Errorf("target %s needs a bucket, an access key and a secret key", t.Name)
@@ -752,10 +971,13 @@ func (a *App) handleBackupTest(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if t.SecretKey == "********" {
-		for _, o := range a.store.Get().Backups.Targets {
-			if o.Name == t.Name {
+	for _, o := range a.store.Get().Backups.Targets {
+		if o.Name == t.Name {
+			if t.SecretKey == secretMask {
 				t.SecretKey = o.SecretKey
+			}
+			if t.Passphrase == secretMask {
+				t.Passphrase = o.Passphrase
 			}
 		}
 	}
@@ -764,10 +986,15 @@ func (a *App) handleBackupTest(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		name := ".incus-webui-test-" + randHex(4)
-		if _, err = st.put(ctx, name, strings.NewReader("ok")); err == nil {
+		if _, _, err = putBackupFile(ctx, st, name, strings.NewReader("ok"), t.Passphrase); err == nil {
 			var rc io.ReadCloser
-			if rc, err = st.get(ctx, name); err == nil {
+			if rc, err = openBackupFile(ctx, st, name, t.Passphrase != "", t.Passphrase); err == nil {
+				var b []byte
+				b, err = io.ReadAll(rc)
 				rc.Close()
+				if err == nil && string(b) != "ok" {
+					err = errors.New("the test file came back different")
+				}
 			}
 			if derr := st.del(ctx, name); err == nil {
 				err = derr
@@ -877,68 +1104,75 @@ func (a *App) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 
 // backupFor finds a backup by target and key and checks the user's role on
 // the project it came from.
-func (a *App) backupFor(w http.ResponseWriter, r *http.Request, target, key string, min Role) (*BackupMeta, backupStore, bool) {
+func (a *App) backupFor(w http.ResponseWriter, r *http.Request, target, key string, min Role) (*BackupMeta, backupStore, string, bool) {
 	s, _ := a.currentSession(r)
 	server, project, _, _, ok := splitKey(key)
 	if !ok {
 		jsonError(w, http.StatusBadRequest, "bad backup key")
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	if roleFor(a.store.Get().Access, s, server, project) < min {
 		jsonError(w, http.StatusForbidden, deniedMsg(min, project))
-		return nil, nil, false
+		return nil, nil, "", false
 	}
-	_, st, err := a.backupTarget(target)
+	t, st, err := a.backupTarget(target)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	l, err := listBackups(r.Context(), st, target, path.Dir(key)+"/")
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	for _, m := range l {
 		if m.Key == key {
-			return &m, st, true
+			return &m, st, t.Passphrase, true
 		}
 	}
 	jsonError(w, http.StatusNotFound, errNoBackup.Error())
-	return nil, nil, false
+	return nil, nil, "", false
 }
 
 func (a *App) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	m, st, ok := a.backupFor(w, r, q.Get("target"), q.Get("key"), RoleManager)
+	m, st, pass, ok := a.backupFor(w, r, q.Get("target"), q.Get("key"), RoleManager)
 	if !ok {
 		return
 	}
-	rc, err := st.get(r.Context(), m.Key+".tar")
+	file, name, size := m.dataFile(), m.Instance+"-"+m.Created.UTC().Format(backupTimeFmt)+".tar", m.Size
+	if v := q.Get("volume"); v != "" {
+		i, err := strconv.Atoi(v)
+		if err != nil || i < 0 || i >= len(m.Volumes) {
+			jsonError(w, http.StatusNotFound, "no such volume in this backup")
+			return
+		}
+		file, name, size = m.volFile(i), m.Instance+"-"+m.Volumes[i].Name+"-"+m.Created.UTC().Format(backupTimeFmt)+".tar", m.Volumes[i].Size
+	}
+	rc, err := openBackupFile(r.Context(), st, file, m.Encrypted, pass)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	defer rc.Close()
-	name := m.Instance + "-" + m.Created.UTC().Format(backupTimeFmt) + ".tar"
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	if m.Size > 0 {
-		w.Header().Set("Content-Length", fmt.Sprint(m.Size))
+	if size > 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(size))
 	}
 	_, _ = io.Copy(w, rc)
 }
 
 func (a *App) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	m, st, ok := a.backupFor(w, r, q.Get("target"), q.Get("key"), RoleManager)
+	m, st, _, ok := a.backupFor(w, r, q.Get("target"), q.Get("key"), RoleManager)
 	if !ok {
 		return
 	}
-	if err := st.del(r.Context(), m.Key+".tar"); err != nil {
+	if err := deleteBackupFiles(r.Context(), st, *m); err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	_ = st.del(r.Context(), m.Key+".json")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -949,7 +1183,7 @@ func (a *App) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	m, st, ok := a.backupFor(w, r, in.Target, in.Key, RoleManager)
+	m, st, pass, ok := a.backupFor(w, r, in.Target, in.Key, RoleManager)
 	if !ok {
 		return
 	}
@@ -980,10 +1214,15 @@ func (a *App) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	job := a.jobs.start("restore", "Restore "+m.Instance+" as "+in.Name, s, in.Server, in.Project, func(ctx context.Context, set func(float64, string)) (jobResult, error) {
 		set(0.1, "Sending the backup to Incus")
-		if err := a.restoreBackup(ctx, c, st, *m, in.Project, in.Name, in.Pool); err != nil {
+		made, err := a.restoreBackup(ctx, c, st, pass, *m, in.Project, in.Name, in.Pool)
+		if err != nil {
 			return jobResult{}, err
 		}
-		return jobResult{Link: "/instances/" + url.PathEscape(in.Server) + "/" + url.PathEscape(in.Name) + "?project=" + url.QueryEscape(in.Project)}, nil
+		var note string
+		if len(made) > 0 {
+			note = "Restored with its volumes " + strings.Join(made, ", ") + "."
+		}
+		return jobResult{Note: note, Link: "/instances/" + url.PathEscape(in.Server) + "/" + url.PathEscape(in.Name) + "?project=" + url.QueryEscape(in.Project)}, nil
 	})
 	writeJSON(w, map[string]string{"job": job.ID})
 }

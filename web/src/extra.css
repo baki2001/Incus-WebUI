@@ -575,3 +575,23 @@ button.acct:hover,button.acct[aria-expanded="true"]{background:var(--s2)}
 .oidc-top b{font-weight:500;font-size:14px}
 .oidc-card p{margin:0;font-size:13px;color:var(--ink-2);line-height:1.5;max-width:66ch}
 .oidc-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--ink-3)}
+
+/* backup encryption, volumes */
+.bk-enc { display: grid; gap: 12px; border-top: 0; padding-top: 0; }
+.bk-pass { display: flex; align-items: center; gap: 8px; }
+.bk-pass > .field { flex: 1; min-width: 0; }
+.bk-made .tag { margin-left: 8px; }
+.ci-keys { display: grid; gap: 2px; margin-bottom: 10px; }
+.ci-keys .check-row { margin-top: 0; }
+.dlg-fields .dlg-note { font-size: 12.5px; color: var(--ink-3); }
+.dlg-fields > .seg { align-self: flex-start; }
+
+/* logs */
+.logs-bar .fsearch { flex: 1 1 200px; max-width: 320px; }
+.logs-r { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.logs-count { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.logs-r .tgl.in { font-size: 13px; color: var(--ink-2); }
+.code.logs mark { background: var(--accent-soft); color: inherit; border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.tok { position: relative; }
+.tok textarea { width: 100%; resize: none; padding: 8px 34px 8px 10px; border: 0; border-radius: var(--r-sm); background: var(--s2); color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+.tok .copy { position: absolute; top: 6px; right: 6px; }
