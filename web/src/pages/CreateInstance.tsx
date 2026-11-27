@@ -4,7 +4,7 @@ import YAML from "yaml";
 import { friendlyError, incus, incusOp, memBytes } from "../api";
 import { ic } from "../icons";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { hasExt, listVolumes, nameOf, useManagedNetworks, useNames } from "../data";
+import { hasExt, listVolumes, nameOf, setState, useManagedNetworks, useNames, withAgentDisk } from "../data";
 import { Field, Input, KVEditor, Seg, Select, Sheet, SheetSec, shake, TglRow } from "../ui";
 import { cpuOK, lanNic, lanParents, SizeField, useNetworkList } from "./cfgutil";
 import { checkDevices, DiskEditor, ProxyEditor, type Devs } from "./DeviceEditors";
@@ -38,6 +38,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   const [alias, setAlias] = useState("");
   const [remoteURL, setRemoteURL] = useState("");
   const [variant, setVariant] = useState("");
+  const [remoteAgent, setRemoteAgent] = useState(false);
   const [fp, setFp] = useState("");
   const [oci, setOci] = useState({ url: ociRegistries[0].url, ref: "" });
   const [iso, setIso] = useState("");
@@ -155,6 +156,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
   }, [type, source]);
 
   const isVM = type === "virtual-machine";
+  const needsAgent = isVM && (source === "remote" ? remoteAgent : source === "local" && local.data?.find((i) => i.fingerprint === fp)?.properties?.["requirements.cdrom_agent"] === "true");
   const dup = name !== "" && !!taken.data?.includes(name);
   const nameBad = (name !== "" && !nameRe.test(name)) || dup;
   const srcBad = (source === "remote" && !alias) || (source === "local" && !fp) || (source === "oci" && !oci.ref.trim()) || (source === "iso" && !iso);
@@ -199,7 +201,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     else if (source === "local") src = { type: "image", fingerprint: fp };
     else if (source === "oci") src = { type: "image", alias: oci.ref.trim(), server: oci.url, protocol: "oci", mode: "pull" };
     else src = { type: "none" };
-    return { name: name || undefined, type, profiles, config, devices, start, ephemeral, description: desc, source: src };
+    return { name: name || undefined, type, profiles, config, devices: needsAgent ? withAgentDisk(devices) : devices, start, ephemeral, description: desc, source: src };
   };
 
   // Where the image comes from, so Rebuild can pull its newest version later.
@@ -224,10 +226,19 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
     setBusy(true);
     try {
       const path = member ? `/1.0/instances?target=${encodeURIComponent(member)}` : "/1.0/instances";
-      const op = await incusOp(srv, path, { method: "POST", project: projSel, body: request() }, setProgress);
+      // VMs start in a second step, so a start that needs the agent disk can get it.
+      const later = isVM && start;
+      const op = await incusOp(srv, path, { method: "POST", project: projSel, body: { ...request(), start: start && !later } }, setProgress);
       invalidate("instances:");
       const made = name || (op?.resources?.instances?.[0] || "").split("/").pop()?.split("?")[0];
-      app.toast(`${label} created`);
+      let startErr: unknown;
+      if (later && made) {
+        setProgress("Starting");
+        await setState(srv, projSel, made, { action: "start" }).catch((e) => (startErr = e));
+        invalidate("instances:");
+      }
+      if (startErr) app.fail(startErr, `${made} was created but didn't start.`);
+      else app.toast(`${label} created`);
       if (openRef.current) onClose();
       if (made) nav(`/instances/${srv}/${made}?project=${encodeURIComponent(projSel)}`);
     } catch (e) {
@@ -332,6 +343,7 @@ export function CreateInstance({ open, onClose, preset }: { open: boolean; onClo
                   setAlias(a);
                   setRemoteURL(url);
                   setVariant(img.variant);
+                  setRemoteAgent(!!img.agent_disk);
                 }}
               />
               {tried && !alias && <div className="hint bad">Pick an image.</div>}

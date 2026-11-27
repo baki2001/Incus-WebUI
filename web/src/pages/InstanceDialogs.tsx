@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { friendlyError, imageLabel, incus, incusOp, ui, type Instance } from "../api";
-import { nameOf, useNames } from "../data";
+import { nameOf, setState, useNames } from "../data";
 import { invalidate, useApp, useData } from "../state";
 import { Dialog, Field, Input, Seg, Select } from "../ui";
 import type { ImageSource } from "./CreateInstance";
@@ -465,7 +465,7 @@ export function RebuildDialog({ inst, open, onClose }: { inst: Inst; open: boole
               if (pick.protocol !== "local" || !/^[0-9a-f]{64}$/.test(pick.alias)) await incusOp(inst.server, base, { ...o, method: "PATCH", body: { config: { "user.incus-webui.source": JSON.stringify(pick) } } }).catch(() => {});
               if (running) {
                 progress("Starting");
-                await incusOp(inst.server, base + "/state", { ...o, method: "PUT", body: { action: "start" } });
+                await setState(inst.server, inst.project, inst.name, { action: "start" });
               }
               done();
             },

@@ -684,7 +684,7 @@ button.upd{font-size:12px}
 .ss .note{font-size:12.5px;color:var(--ink-3);margin:0}
 .note-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:var(--r-sm);background:var(--s2);color:var(--ink-2);font-size:13px}
 .note-box.bad{color:var(--err)}
-.note-box.stick{position:sticky;top:0;z-index:3;margin:-20px -20px 0;border-radius:0;box-shadow:0 1px 0 var(--line);padding:12px 20px}
+.note-box.stick{position:sticky;top:-20px;z-index:3;margin:-20px -20px 0;border-radius:0;box-shadow:0 1px 0 var(--line);padding:12px 20px}
 .note-box .r{margin-left:auto;display:flex;gap:8px}
 .none{font-size:13px;color:var(--ink-3);margin:0}
 .prow{display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid var(--line);flex-wrap:wrap}

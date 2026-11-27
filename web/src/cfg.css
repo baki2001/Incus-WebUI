@@ -48,4 +48,4 @@
 .step.bad{box-shadow:inset 0 0 0 1px var(--err)}
 .unit .field select{min-width:0;width:100%}
 .unit>.field:first-child{width:128px}
-.cerr.stick{position:sticky;top:0;z-index:3;margin:-20px -20px 0;border-radius:0;box-shadow:0 1px 0 var(--line);padding:12px 20px}
+.cerr.stick{position:sticky;top:-20px;z-index:3;margin:-20px -20px 0;border-radius:0;box-shadow:0 1px 0 var(--line);padding:12px 20px}

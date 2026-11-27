@@ -29,6 +29,21 @@ func TestParseProducts(t *testing.T) {
 	if img.Aliases[0] != "debian/13" {
 		t.Fatalf("shortest alias should come first: %v", img.Aliases)
 	}
+	if img.AgentDisk {
+		t.Fatal("no requirements means no agent disk")
+	}
+}
+
+func TestParseProductsAgentDisk(t *testing.T) {
+	raw := `{"products":{"almalinux:9:amd64:default":{"aliases":"almalinux/9","arch":"amd64","os":"Almalinux","release":"9","variant":"default",
+		"requirements":{"cdrom_agent":"true"},"versions":{"1":{"items":{"b":{"ftype":"disk-kvm.img"}}}}}}}`
+	var p streamsProducts
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	if out := parseProducts(p); len(out) != 1 || !out[0].AgentDisk {
+		t.Fatalf("want an image that needs the agent disk: %+v", out)
+	}
 }
 
 func TestStreamsError(t *testing.T) {

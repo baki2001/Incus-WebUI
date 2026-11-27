@@ -40,6 +40,7 @@ type remoteImage struct {
 	Arch      string   `json:"arch"`
 	Container bool     `json:"container"`
 	VM        bool     `json:"vm"`
+	AgentDisk bool     `json:"agent_disk,omitempty"` // the VM image needs an agent:config disk
 	Size      int64    `json:"size"`
 	Updated   string   `json:"updated"`
 }
@@ -131,12 +132,13 @@ type streamsIndex struct {
 
 type streamsProducts struct {
 	Products map[string]struct {
-		Aliases      string `json:"aliases"`
-		Arch         string `json:"arch"`
-		OS           string `json:"os"`
-		Release      string `json:"release"`
-		ReleaseTitle string `json:"release_title"`
-		Variant      string `json:"variant"`
+		Aliases      string            `json:"aliases"`
+		Arch         string            `json:"arch"`
+		OS           string            `json:"os"`
+		Release      string            `json:"release"`
+		ReleaseTitle string            `json:"release_title"`
+		Variant      string            `json:"variant"`
+		Requirements map[string]string `json:"requirements"`
 		Versions     map[string]struct {
 			Items map[string]struct {
 				Ftype string `json:"ftype"`
@@ -202,6 +204,7 @@ func parseProducts(p streamsProducts) []remoteImage {
 			continue
 		}
 		img := remoteImage{OS: pr.OS, Release: pr.Release, Title: pr.ReleaseTitle, Variant: pr.Variant, Arch: pr.Arch, Updated: latest}
+		img.AgentDisk = pr.Requirements["cdrom_agent"] == "true"
 		for _, it := range pr.Versions[latest].Items {
 			switch it.Ftype {
 			case "squashfs", "root.tar.xz":
