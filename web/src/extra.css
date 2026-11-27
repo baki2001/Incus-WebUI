@@ -595,3 +595,9 @@ button.acct:hover,button.acct[aria-expanded="true"]{background:var(--s2)}
 .tok { position: relative; }
 .tok textarea { width: 100%; resize: none; padding: 8px 34px 8px 10px; border: 0; border-radius: var(--r-sm); background: var(--s2); color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
 .tok .copy { position: absolute; top: 6px; right: 6px; }
+
+/* Sidebar: a dot on a closed group sits next to the chevron; in the icon rail section names become thin lines. */
+.ngrp .badge-dot+.chev2{margin-left:8px}
+.rail .nav .grp{display:block;height:1px;padding:0;margin:8px 14px;font-size:0;background:var(--line)}
+:root[data-side="brand"] .side.rail .grp{background:var(--side-line)}
+.rail .ngrp .badge-dot{position:absolute;right:14px;top:8px;margin:0}

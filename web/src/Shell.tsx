@@ -320,8 +320,8 @@ export function jobResult(j: Job) {
   return taskText(j).detail || "Done";
 }
 
-type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; admin?: boolean };
-type NavGroup = { key: string; label: string; icon: ReactNode; items: NavItem[] };
+type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; admin?: boolean; dot?: string };
+type NavGroup = { key: string; label: string; icon: ReactNode; items: NavItem[]; alert?: boolean };
 const groups: NavGroup[] = [
   {
     key: "net",
@@ -347,33 +347,36 @@ const groups: NavGroup[] = [
   },
 ];
 
+// Groups start closed. The group of the page you are on opens by itself,
+// until you open or close it by hand; that choice is remembered.
 function useOpenGroups() {
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     try {
-      return JSON.parse(localStorage.getItem("iwui.groups") || "{}");
+      return JSON.parse(localStorage.getItem("iwui.nav") || "{}");
     } catch {
       return {};
     }
   });
-  const toggle = (k: string, v?: boolean) =>
+  const set = (k: string, v: boolean) =>
     setOpen((o) => {
-      const n = { ...o, [k]: v ?? !(o[k] ?? true) };
+      const n = { ...o, [k]: v };
       try {
-        localStorage.setItem("iwui.groups", JSON.stringify(n));
+        localStorage.setItem("iwui.nav", JSON.stringify(n));
       } catch {
         /* ignore */
       }
       return n;
     });
-  return [open, toggle] as const;
+  return [open, set] as const;
 }
 
-function Group({ g, open, toggle, rail }: { g: NavGroup; open: boolean; toggle: () => void; rail: boolean }) {
+function Group({ g, stored, set, rail }: { g: NavGroup; stored?: boolean; set: (v: boolean) => void; rail: boolean }) {
   const loc = useLocation();
   const nav = useNavigate();
   const { admin } = useApp();
   g = { ...g, items: g.items.filter((i) => admin || !i.admin) };
   const inside = g.items.some((i) => (i.end ? loc.pathname === i.to : loc.pathname.startsWith(i.to)));
+  const open = stored ?? inside;
   return (
     <>
       <button
@@ -381,16 +384,18 @@ function Group({ g, open, toggle, rail }: { g: NavGroup; open: boolean; toggle: 
         title={g.label}
         aria-expanded={open}
         aria-current={inside && (rail || !open) ? "page" : undefined}
-        onClick={() => (rail ? nav(g.items[0].to) : toggle())}
+        onClick={() => (rail ? nav(g.items[0].to) : set(!open))}
       >
         {g.icon}
         {lbl(g.label)}
+        {g.alert && !open && <span className="badge-dot" />}
         <span className="chev2">{ic.down}</span>
       </button>
       <div className={"nsub" + (open ? "" : " shut")}>
         <div className="sub">
           {g.items.map((i) => (
-            <NavLink key={i.to} to={i.to} end={i.end} className="ni" tabIndex={open ? undefined : -1}>
+            <NavLink key={i.to} to={i.to} end={i.end} className="ni" tabIndex={open ? undefined : -1} title={i.label}>
+              {i.dot !== undefined && <span className="st-dot" data-s={i.dot} />}
               <span className="lbl-t">{i.label}</span>
             </NavLink>
           ))}
@@ -413,7 +418,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
   const inScope = (p: { project: string }) => app.project === "*" || app.project === p.project;
   const pinned = usePins().filter((p) => app.servers.some((s) => s.name === p.server) && (!rows || !inScope(p) || rows.some((r) => r.server === p.server && r.name === p.name)));
   const stateOf = (r: { server: string; name: string }) => rows?.find((x) => x.server === r.server && x.name === r.name)?.status || "";
-  const [openG, toggleG] = useOpenGroups();
+  const [openG, setG] = useOpenGroups();
   // The menu scrolls between the scope picker and the footer; a fade hints at more below.
   const navRef = useRef<HTMLElement>(null);
   useThumb(navRef, '.ni.active, .ni[aria-current="page"]', [loc.pathname, rail, openG, pinned.length, app.servers.length]);
@@ -466,42 +471,49 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
             ))}
           </div>
         )}
-        <NavLink to="/profiles" className="ni" title="Profiles">
-          {ic.prof}
-          {lbl("Profiles")}
-        </NavLink>
-        {groups.map((g) => (
-          <Group key={g.key} g={g} open={openG[g.key] ?? true} toggle={() => toggleG(g.key)} rail={rail} />
-        ))}
         <NavLink to="/images" className="ni" title="Images">
           {ic.img}
           {lbl("Images")}
         </NavLink>
-        <NavLink to="/projects" className="ni" title="Projects">
-          {ic.folder}
-          {lbl("Projects")}
+        <NavLink to="/profiles" className="ni" title="Profiles">
+          {ic.prof}
+          {lbl("Profiles")}
         </NavLink>
+        <div className="grp">Infrastructure</div>
+        {app.servers.length === 1 ? (
+          <NavLink to={`/hosts/${app.servers[0].name}`} className="ni" title={`Host ${app.servers[0].name}`}>
+            {ic.host}
+            {lbl("Hosts")}
+            {!(app.servers[0].online && app.servers[0].trusted) && <span className="badge-dot" />}
+          </NavLink>
+        ) : (
+          app.servers.length > 1 && (
+            <Group
+              g={{
+                key: "hosts",
+                label: "Hosts",
+                icon: ic.host,
+                alert: app.servers.some((s) => !(s.online && s.trusted)),
+                items: app.servers.map((s) => ({ to: `/hosts/${s.name}`, label: s.name, dot: s.online && s.trusted ? "Running" : "Error" })),
+              }}
+              stored={openG.hosts}
+              set={(v) => setG("hosts", v)}
+              rail={rail}
+            />
+          )
+        )}
+        {groups.map((g) => (
+          <Group key={g.key} g={g} stored={openG[g.key]} set={(v) => setG(g.key, v)} rail={rail} />
+        ))}
         <NavLink to="/backups" className="ni" title="Backups">
           {ic.backup}
           {lbl("Backups")}
         </NavLink>
-        {app.servers.length > 0 && <div className="grp">Hosts</div>}
-        {app.servers.map((s) => (
-          <NavLink key={s.name} to={`/hosts/${s.name}`} className="ni" title={s.name}>
-            {ic.host}
-            {lbl(s.name)}
-            {!(s.online && s.trusted) && <span className="badge-dot" />}
-          </NavLink>
-        ))}
         <div className="grp">Activity</div>
-        <NavLink to="/tasks" className="ni" title="Tasks">
+        <NavLink to="/tasks" className={({ isActive }) => "ni" + (isActive || loc.pathname.startsWith("/operations") ? " active" : "")} title="Tasks">
           {ic.tasks}
           {lbl("Tasks")}
           {busy > 0 && <span className="count">{busy}</span>}
-        </NavLink>
-        <NavLink to="/operations" className="ni" title="Incus operations">
-          {ic.pulse}
-          {lbl("Operations")}
         </NavLink>
         <NavLink to="/warnings" className="ni" title="Warnings">
           {ic.warn}
@@ -510,7 +522,7 @@ function Sidebar({ rail, toggleRail }: { rail: boolean; toggleRail: () => void }
         </NavLink>
         {app.admin && (
           <NavLink to="/audit" className="ni" title="Audit log">
-            {ic.shield}
+            {ic.log}
             {lbl("Audit log")}
           </NavLink>
         )}
@@ -640,6 +652,7 @@ function Account({ rail, version, update }: { rail: boolean; version?: string; u
 // to the right of the button, like the account menu.
 function Scope({ online, rail }: { online: number; rail: boolean }) {
   const app = useApp();
+  const nav = useNavigate();
   const projects = useProjects();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<CSSProperties>({ left: 0, right: 0, top: 46 });
@@ -725,6 +738,11 @@ function Scope({ online, rail }: { online: number; rail: boolean }) {
               {app.project === p && <span className="kbd">✓</span>}
             </button>
           ))}
+          <hr />
+          <button onClick={() => (nav("/projects"), setOpen(false))}>
+            {ic.proj}
+            Manage projects
+          </button>
         </div>
       )}
     </div>
@@ -766,7 +784,7 @@ async function loadFound(servers: string[]): Promise<Found> {
 
 const groupOrder = ["Instances", "Instance actions", "Go to", "Actions", "Networks", "Storage pools", "Volumes", "Profiles", "Images", "Projects"];
 const idleOrder = ["Go to", "Actions", "Instances"];
-const groupIcon: Record<string, ReactNode> = { Networks: ic.net, "Storage pools": ic.disk, Volumes: ic.disk, Profiles: ic.prof, Images: ic.img, Projects: ic.folder };
+const groupIcon: Record<string, ReactNode> = { Networks: ic.net, "Storage pools": ic.disk, Volumes: ic.volume, Profiles: ic.prof, Images: ic.img, Projects: ic.proj };
 
 function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nav = useNavigate();
@@ -791,21 +809,21 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       { group: "Go to", label: "Instances", icon: ic.inst, run: go("/instances") },
       { group: "Go to", label: "Profiles", icon: ic.prof, run: go("/profiles") },
       { group: "Go to", label: "Networks", icon: ic.net, run: go("/networks") },
-      { group: "Go to", label: "ACLs", icon: ic.shield, run: go("/networks/acls") },
-      { group: "Go to", label: "IPAM", icon: ic.net, run: go("/networks/ipam") },
-      ...(app.admin ? [{ group: "Go to", label: "Tunnels", icon: ic.net, run: go("/tunnels") }] : []),
+      { group: "Go to", label: "ACLs", icon: ic.acl, run: go("/networks/acls") },
+      { group: "Go to", label: "IPAM", icon: ic.ipam, run: go("/networks/ipam") },
+      ...(app.admin ? [{ group: "Go to", label: "Tunnels", icon: ic.tunnel, run: go("/tunnels") }] : []),
       { group: "Go to", label: "Pools", icon: ic.disk, run: go("/storage") },
-      { group: "Go to", label: "Volumes", icon: ic.disk, run: go("/storage/volumes") },
-      { group: "Go to", label: "Buckets", icon: ic.disk, run: go("/storage/buckets") },
-      { group: "Go to", label: "Custom ISOs", icon: ic.disk, run: go("/storage/isos") },
+      { group: "Go to", label: "Volumes", icon: ic.volume, run: go("/storage/volumes") },
+      { group: "Go to", label: "Buckets", icon: ic.bucket, run: go("/storage/buckets") },
+      { group: "Go to", label: "Custom ISOs", icon: ic.iso, run: go("/storage/isos") },
       { group: "Go to", label: "Images", icon: ic.img, run: go("/images") },
-      { group: "Go to", label: "Projects", icon: ic.folder, run: go("/projects") },
+      { group: "Go to", label: "Projects", icon: ic.proj, run: go("/projects") },
       { group: "Go to", label: "Backups", icon: ic.backup, run: go("/backups") },
       ...app.servers.map((s) => ({ group: "Go to", label: `Host ${s.name}`, icon: ic.host, run: go(`/hosts/${s.name}`) })),
       { group: "Go to", label: "Tasks", icon: ic.tasks, run: go("/tasks") },
       { group: "Go to", label: "Operations", icon: ic.pulse, run: go("/operations") },
       { group: "Go to", label: "Warnings", icon: ic.warn, run: go("/warnings") },
-      ...(app.admin ? [{ group: "Go to", label: "Audit log", icon: ic.shield, run: go("/audit") }] : []),
+      ...(app.admin ? [{ group: "Go to", label: "Audit log", icon: ic.log, run: go("/audit") }] : []),
       { group: "Go to", label: "Settings", icon: ic.gear, run: go("/settings") },
       { group: "Actions", label: "Create instance", icon: ic.plus, run: go("/instances?create=1") },
       { group: "Actions", label: "Pull image", icon: ic.dl, run: go("/images") },
