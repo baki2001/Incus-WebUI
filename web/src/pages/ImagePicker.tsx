@@ -4,7 +4,7 @@ import { ic } from "../icons";
 import { useData } from "../state";
 
 export type ImageServer = { name: string; url: string };
-export type RemoteImage = { aliases: string[]; os: string; release: string; release_title?: string; variant: string; arch: string; container: boolean; vm: boolean; size: number; updated: string };
+export type RemoteImage = { aliases: string[]; os: string; release: string; release_title?: string; variant: string; arch: string; container: boolean; vm: boolean; agent_disk?: boolean; size: number; updated: string };
 
 export const ociRegistries = [
   { name: "Docker Hub", url: "https://docker.io", hint: "library/nginx:latest" },

@@ -1,4 +1,4 @@
-import { incus, type Instance } from "./api";
+import { incus, incusOp, type Instance } from "./api";
 import { useEffect, useState } from "react";
 import { useApp, useData, useScopedServers } from "./state";
 
@@ -151,4 +151,41 @@ export function usedByLabels(list: string[] | undefined) {
     const proj = /project=([^&]+)/.exec(u)?.[1];
     return { kind: k, name, project: proj ? decodeURIComponent(proj) : "default", url: u };
   });
+}
+
+// Non-cloud VM images boot their agent from a small config disk. Incus creates
+// those VMs fine but won't start them without one ("requires an agent:config
+// disk be added"), so add it before we start them.
+const isAgentDisk = (d: any) => d?.type === "disk" && d.source === "agent:config";
+export const needsAgentDisk = (e: unknown) => /agent:config/i.test(e instanceof Error ? e.message : String(e));
+export function withAgentDisk<T extends Record<string, any>>(devices: T, taken: Record<string, any> = devices): T {
+  if (Object.values(taken).some(isAgentDisk) || Object.values(devices).some(isAgentDisk)) return devices;
+  let n = "agent";
+  for (let i = 1; taken[n] || devices[n]; i++) n = `agent${i}`;
+  return { ...devices, [n]: { type: "disk", source: "agent:config" } };
+}
+
+// addAgentDisk adds the agent disk when the instance's image asks for one and it
+// has none yet, from its own config or a profile. Returns true if it added one.
+export async function addAgentDisk(server: string, project: string | undefined, name: string) {
+  const path = `/1.0/instances/${encodeURIComponent(name)}`;
+  const inst = await incus<any>(server, path, { project });
+  if (inst?.type !== "virtual-machine" || inst.config?.["image.requirements.cdrom_agent"] !== "true") return false;
+  const devices = inst.devices || {};
+  const next = withAgentDisk(devices, { ...inst.expanded_devices, ...devices });
+  if (next === devices) return false;
+  await incusOp(server, path, { method: "PATCH", project, body: { devices: next } });
+  return true;
+}
+
+// setState changes an instance's state. A start that fails only for a missing
+// agent disk adds the disk and tries again.
+export async function setState(server: string, project: string | undefined, name: string, body: { action: string; [k: string]: unknown }, onProgress?: (d: string) => void) {
+  const put = () => incusOp(server, `/1.0/instances/${encodeURIComponent(name)}/state`, { method: "PUT", project, body }, onProgress);
+  try {
+    return await put();
+  } catch (e) {
+    if (!/^(start|restart)$/.test(body.action) || !needsAgentDisk(e) || !(await addAgentDisk(server, project, name).catch(() => false))) throw e;
+    return put();
+  }
 }

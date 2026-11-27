@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { dateTime, incus, incusOp, since, ui } from "./api";
+import { dateTime, incus, since, ui } from "./api";
 import { ic, Mark } from "./icons";
 import { invalidate, lastFresh, useApp, useData, useScopedServers } from "./state";
 import { ConfirmHost, Dialog, useOutside, usePresence, useShown, useThumb } from "./ui";
 import { canDo } from "./pages/Instances";
 import { askStop, StopHost } from "./pages/InstanceDialogs";
-import { usePins, useInstances, useProjects } from "./data";
+import { setState, usePins, useInstances, useProjects } from "./data";
 
 // ---------- breadcrumbs, set by each page ----------
 type Crumb = { label: string; to?: string };
@@ -849,7 +849,7 @@ function CmdK({ open, onClose }: { open: boolean; onClose: () => void }) {
       const power = (action: "start" | "stop" | "restart" | "unfreeze", verb: string, force = false) => () => {
         onClose();
         app.run(`${verb} ${r.name}`, () =>
-          incusOp(r.server, `/1.0/instances/${encodeURIComponent(r.name)}/state`, { method: "PUT", project: r.project, body: { action, timeout: 30, force } }).finally(() => {
+          setState(r.server, r.project, r.name, { action, timeout: 30, force }).finally(() => {
             invalidate("instances:");
             invalidate(`instance:${r.server}:${r.name}`);
             invalidate("cmdk:");

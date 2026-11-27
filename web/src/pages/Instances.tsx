@@ -9,7 +9,7 @@ import { PinButton } from "./Instance";
 import { CreateInstance } from "./CreateInstance";
 import { ImportSheet } from "./Import";
 import { askStop } from "./InstanceDialogs";
-import { isPinned, projectFor, togglePin, useInstances, usePins, type Row } from "../data";
+import { isPinned, projectFor, setState, togglePin, useInstances, usePins, type Row } from "../data";
 
 type SortKey = "name" | "project" | "status" | "server" | "ip" | "cpu" | "mem" | "up";
 export type Act = "start" | "stop" | "restart" | "freeze" | "unfreeze";
@@ -37,7 +37,7 @@ function why(status: string) {
 
 async function putState(r: Row, project: string, action: Act, force: boolean) {
   try {
-    await incusOp(r.server, `/1.0/instances/${encodeURIComponent(r.name)}/state`, { method: "PUT", project, body: { action, timeout: 30, force: force || (action === "stop" && r.status === "Frozen") } });
+    await setState(r.server, project, r.name, { action, timeout: 30, force: force || (action === "stop" && r.status === "Frozen") });
   } finally {
     invalidate("instances:");
     invalidate(`instance:${r.server}:${r.name}`);
