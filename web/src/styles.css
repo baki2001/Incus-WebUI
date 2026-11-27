@@ -6,14 +6,14 @@
    B "Instrument": graphite, icon rail, no accent colour at all (ink is the action colour), bento tiles, tick meters, mono figures.
    Dark: never pure black, no shadows, elevation = lighter surface, text at opacity steps. Status colours mean state only. */
 :root{
-  --bg:#f5f5f7; --s1:#ffffff; --s2:#f0f0f3; --s3:#e7e7eb;
-  --line:rgba(20,20,30,.09); --line-2:rgba(20,20,30,.16);
-  --ink:#1c1c1f; --ink-2:#56565d; --ink-3:#73737b;
-  --accent:#3d5fc4; --accent-ink:#ffffff; --accent-soft:rgba(61,95,196,.10);
-  --ok:#56565d; --warn:#9c5a05; --err:#c2352b; --info:#2a6d98; --idle:#8c8c94;
-  --shadow:0 1px 2px rgba(0,0,0,.04),0 0 0 1px var(--line);
-  --pop:0 10px 30px rgba(0,0,0,.10),0 0 0 1px var(--line);
-  --scrim:rgba(20,20,25,.28);
+  --bg:#f1f2f5; --s1:#ffffff; --s2:#eaecef; --s3:#dfe2e7;
+  --line:rgba(18,22,34,.10); --line-2:rgba(18,22,34,.18);
+  --ink:#16181d; --ink-2:#464954; --ink-3:#5d616e;
+  --accent:#3456bd; --accent-ink:#ffffff; --accent-soft:rgba(52,86,189,.11);
+  --ok:#464954; --warn:#9c5a05; --err:#c2352b; --info:#2a6d98; --idle:#7e828f;
+  --shadow:0 1px 2px rgba(15,20,35,.05),0 0 0 1px var(--line);
+  --pop:0 10px 30px rgba(15,20,35,.12),0 0 0 1px var(--line);
+  --scrim:rgba(16,18,24,.32);
   --f-ui:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
   --f-mono:"Geist Mono Variable","Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --r:12px; --r-sm:8px; --r-xs:6px;
@@ -21,20 +21,20 @@
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0e0e10; --s1:#161618; --s2:#1d1d20; --s3:#26262a;
-  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.13);
-  --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#93a8ee; --accent-ink:#0e0e10; --accent-soft:rgba(147,168,238,.12);
-  --ok:rgba(255,255,255,.64); --warn:#dfa54b; --err:#ee7b72; --info:#78b9e0; --idle:#7c7c84;
-  --shadow:0 0 0 1px var(--line); --pop:0 0 0 1px var(--line-2); --scrim:rgba(0,0,0,.5);
+  --bg:#16171b; --s1:#1e2026; --s2:#262932; --s3:#303440;
+  --line:rgba(255,255,255,.10); --line-2:rgba(255,255,255,.18);
+  --ink:#f1f3f7; --ink-2:#c2c6d1; --ink-3:#969ba8;
+  --accent:#8fa8f8; --accent-ink:#11131a; --accent-soft:rgba(143,168,248,.16);
+  --ok:#b5bcc9; --warn:#e8b058; --err:#f28379; --info:#7fc0e8; --idle:#8c92a0;
+  --shadow:0 1px 2px rgba(0,0,0,.22),0 0 0 1px var(--line); --pop:0 12px 32px rgba(0,0,0,.45),0 0 0 1px var(--line-2); --scrim:rgba(0,0,0,.55);
   color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#0e0e10; --s1:#161618; --s2:#1d1d20; --s3:#26262a;
-  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.13);
-  --ink:rgba(255,255,255,.92); --ink-2:rgba(255,255,255,.64); --ink-3:rgba(255,255,255,.50);
-  --accent:#93a8ee; --accent-ink:#0e0e10; --accent-soft:rgba(147,168,238,.12);
-  --ok:rgba(255,255,255,.64); --warn:#dfa54b; --err:#ee7b72; --info:#78b9e0; --idle:#7c7c84;
-  --shadow:0 0 0 1px var(--line); --pop:0 0 0 1px var(--line-2); --scrim:rgba(0,0,0,.5);
+  --bg:#16171b; --s1:#1e2026; --s2:#262932; --s3:#303440;
+  --line:rgba(255,255,255,.10); --line-2:rgba(255,255,255,.18);
+  --ink:#f1f3f7; --ink-2:#c2c6d1; --ink-3:#969ba8;
+  --accent:#8fa8f8; --accent-ink:#11131a; --accent-soft:rgba(143,168,248,.16);
+  --ok:#b5bcc9; --warn:#e8b058; --err:#f28379; --info:#7fc0e8; --idle:#8c92a0;
+  --shadow:0 1px 2px rgba(0,0,0,.22),0 0 0 1px var(--line); --pop:0 12px 32px rgba(0,0,0,.45),0 0 0 1px var(--line-2); --scrim:rgba(0,0,0,.55);
   color-scheme:dark}
 
 *{box-sizing:border-box}
@@ -435,42 +435,57 @@ html[data-theme="dark"] .tip{background:var(--s3);color:var(--ink)}
   dl.kv{grid-template-columns:minmax(0,1fr)} dl.kv dt{padding-bottom:0} dl.kv dd{padding:2px 16px 9px;border-top:0}
 }
 
-/* ---------- product themes (data-brand on html). Mode (light/dark) stays separate. ---------- */
-/* Kyoto: stone grey ground, deep indigo for structure and selection, vermilion only on the main call to action.
+/* ---------- product themes (data-brand on html). Branded sidebars use data-side="brand". ---------- */
+/* Indigo: stone grey ground, deep indigo for structure and selection, vermilion only on the main call to action.
    Healthy states use the brand indigo/stone instead of green; only warnings and errors get their own colour. */
-:root[data-brand="kyoto"]{
+:root[data-brand="indigo"]{
   --bg:#ebecef; --s1:#ffffff; --s2:#e2e4ea; --s3:#d5d8e0;
   --line:rgba(20,41,80,.10); --line-2:rgba(20,41,80,.18);
-  --ink:#101a30; --ink-2:#424c64; --ink-3:#59627a;
-  --accent:#142950; --accent-ink:#ffffff; --accent-soft:rgba(20,41,80,.08);
+  --ink:#101a30; --ink-2:#3f4961; --ink-3:#545d75;
+  --accent:#142950; --accent-ink:#ffffff; --accent-soft:rgba(20,41,80,.09);
   --cta:#db390c; --cta-ink:#ffffff;
-  --ok:#142950; --info:#3b5180; --idle:#9599aa; --warn:#9c5a05; --err:#b3261e;
-  --side:#142950; --side-ink:rgba(255,255,255,.92); --side-ink-2:#bbbecb; --side-s:rgba(187,190,203,.12); --side-line:rgba(187,190,203,.16);
-  --side-err:#ff8f80; --side-dot:rgba(187,190,203,.32); --side-av:rgba(255,255,255,.14);
+  --ok:#142950; --info:#3b5180; --idle:#8b90a3; --warn:#9c5a05; --err:#b3261e;
+  --side:#142950; --side-ink:rgba(255,255,255,.94); --side-ink-2:#c4c8d6; --side-s:rgba(187,190,203,.13); --side-line:rgba(187,190,203,.18);
+  --side-err:#ff8f80; --side-dot:rgba(187,190,203,.34); --side-av:rgba(255,255,255,.15);
 }
-/* Kyoto carries the indigo into the sidebar */
-:root[data-brand="kyoto"] .side{background:var(--side);border-right-color:var(--side-line);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .brand,:root[data-brand="kyoto"] .side .acct-txt{color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .ni{color:var(--side-ink-2)}
-:root[data-brand="kyoto"] .side .ni svg,:root[data-brand="kyoto"] .side .grp,:root[data-brand="kyoto"] .side .count,:root[data-brand="kyoto"] .side .acct-txt small,:root[data-brand="kyoto"] .side .scope-txt span,:root[data-brand="kyoto"] .side .collapse,:root[data-brand="kyoto"] .side .scope .chev{color:var(--side-ink-2)}
-:root[data-brand="kyoto"] .side .ni:hover{background:var(--side-s);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .ni[aria-current="page"]{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .ni[aria-current="page"] svg{color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .scope{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .sub::before,:root[data-brand="kyoto"] .side .sub .ni::before{background:var(--side-line)}
-:root[data-brand="kyoto"] .side .av{background:var(--side-av);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .mark rect:nth-child(1),:root[data-brand="kyoto"] .side .mark rect:nth-child(2){fill:var(--side-ink)}
-:root[data-brand="kyoto"] .side .collapse:hover{background:var(--side-s);color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .side-foot{border-top-color:var(--side-line)}
-:root[data-brand="kyoto"] .side .badge-dot.upd{background:var(--side-ink)}
-:root[data-brand="kyoto"] .side :focus-visible{outline-color:var(--side-ink)}
-:root[data-brand="kyoto"] .side .st-dot,:root[data-brand="kyoto"] .side .st-dot[data-s="Frozen"]{background:var(--side-dot)}
-:root[data-brand="kyoto"] .side .st-dot[data-s="Running"],:root[data-brand="kyoto"] .side .health i:not(.off){background:var(--side-ink)}
-:root[data-brand="kyoto"] .side .st-dot[data-s="Error"],:root[data-brand="kyoto"] .side .health i.off,:root[data-brand="kyoto"] .side .badge-dot:not(.upd){background:var(--side-err)}
-/* custom: only the accent changes; JS sets --cl/--cd and their text colours */
-:root[data-brand="custom"]{--accent:var(--cl);--accent-ink:var(--cli);--accent-soft:color-mix(in srgb,var(--cl) 11%,transparent)}
-@media (prefers-color-scheme: dark){:root[data-brand="custom"]:not([data-theme="light"]){--accent:var(--cd);--accent-ink:var(--cdi);--accent-soft:color-mix(in srgb,var(--cd) 13%,transparent)}}
-:root[data-brand="custom"][data-theme="dark"]{--accent:var(--cd);--accent-ink:var(--cdi);--accent-soft:color-mix(in srgb,var(--cd) 13%,transparent)}
+/* Ember: Graphite surfaces with Indigo's vermilion. The call to action uses the vermilion itself;
+   selection and focus use a lighter orange so they stay readable on the dark surfaces. */
+:root[data-brand="ember"]{
+  --accent:#ff8a5c; --accent-ink:#1a0d07; --accent-soft:rgba(255,138,92,.15);
+  --cta:#db390c; --cta-ink:#ffffff;
+}
+/* Terracotta: warm sand (#E8CBB2) surfaces, deep rust (#772F10) structure and sidebar, vibrant teal (#2EB3B2) call to action. */
+:root[data-brand="terracotta"]{
+  --bg:#f3e7dc; --s1:#fffdfb; --s2:#e8cbb2; --s3:#dec0a4;
+  --line:rgba(119,47,16,.13); --line-2:rgba(119,47,16,.24);
+  --ink:#2b140a; --ink-2:#5c311d; --ink-3:#784730;
+  --accent:#772f10; --accent-ink:#fffdfb; --accent-soft:rgba(119,47,16,.11);
+  --cta:#2eb3b2; --cta-ink:#0b2222;
+  --ok:#1f7f7e; --info:#1d7675; --idle:#9a7866; --warn:#9c5604; --err:#b8291e;
+  --side:#772f10; --side-ink:#fdf7f2; --side-ink-2:#e8cbb2; --side-s:rgba(232,203,178,.14); --side-line:rgba(232,203,178,.22);
+  --side-err:#ffb09c; --side-dot:rgba(232,203,178,.36); --side-av:rgba(253,247,242,.16);
+}
+/* Shared branded sidebar rules (Indigo, Terracotta, and Custom with a tinted sidebar) */
+:root[data-side="brand"] .side{background:var(--side);border-right-color:var(--side-line);color:var(--side-ink)}
+:root[data-side="brand"] .side .brand,:root[data-side="brand"] .side .acct-txt{color:var(--side-ink)}
+:root[data-side="brand"] .side .ni{color:var(--side-ink-2)}
+:root[data-side="brand"] .side .ni svg,:root[data-side="brand"] .side .grp,:root[data-side="brand"] .side .count,:root[data-side="brand"] .side .acct-txt small,:root[data-side="brand"] .side .scope-txt span,:root[data-side="brand"] .side .collapse,:root[data-side="brand"] .side .scope .chev{color:var(--side-ink-2)}
+:root[data-side="brand"] .side .ni:hover{background:var(--side-s);color:var(--side-ink)}
+:root[data-side="brand"] .side .ni[aria-current="page"]{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
+:root[data-side="brand"] .side .ni[aria-current="page"] svg{color:var(--side-ink)}
+:root[data-side="brand"] .side .scope{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line);color:var(--side-ink)}
+:root[data-side="brand"] .side .sub::before,:root[data-side="brand"] .side .sub .ni::before{background:var(--side-line)}
+:root[data-side="brand"] .side .av{background:var(--side-av);color:var(--side-ink)}
+:root[data-side="brand"] .side .mark rect:nth-child(1),:root[data-side="brand"] .side .mark rect:nth-child(2){fill:var(--side-ink)}
+:root[data-side="brand"] .side .collapse:hover{background:var(--side-s);color:var(--side-ink)}
+:root[data-side="brand"] .side .side-foot{border-top-color:var(--side-line)}
+:root[data-side="brand"] .side .badge-dot.upd{background:var(--side-ink)}
+:root[data-side="brand"] .side :focus-visible{outline-color:var(--side-ink)}
+:root[data-side="brand"] .side .st-dot,:root[data-side="brand"] .side .st-dot[data-s="Frozen"]{background:var(--side-dot)}
+:root[data-side="brand"] .side .st-dot[data-s="Running"],:root[data-side="brand"] .side .health i:not(.off){background:var(--side-ink)}
+:root[data-side="brand"] .side .st-dot[data-s="Error"],:root[data-side="brand"] .side .health i.off,:root[data-side="brand"] .side .badge-dot:not(.upd){background:var(--side-err)}
+/* Custom theme: JS computes --c-accent, --c-accent-ink, --c-cta, --c-cta-ink (and optional --side* vars) */
+:root[data-brand="custom"]{--accent:var(--c-accent);--accent-ink:var(--c-accent-ink);--accent-soft:color-mix(in srgb,var(--c-accent) 13%,transparent);--cta:var(--c-cta);--cta-ink:var(--c-cta-ink)}
 
 /* ---------- settings / appearance ---------- */
 .set{display:grid;grid-template-columns:200px minmax(0,1fr);gap:32px;align-items:start}
@@ -606,9 +621,9 @@ textarea.yaml{width:100%;min-height:520px;border:0;outline:0;resize:vertical;pad
 .side .nav>.thumb{border-radius:var(--r-xs)}
 #side-nav .ni.active,#side-nav .ni[aria-current="page"]{background:none;box-shadow:none}
 #side-nav .ni.active:hover,#side-nav .ni[aria-current="page"]:hover{background:none}
-:root[data-brand="kyoto"] .side .nav>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
-:root[data-brand="kyoto"] #side-nav .ni.active,:root[data-brand="kyoto"] #side-nav .ni[aria-current="page"]{background:none;box-shadow:none}
-@media (max-width:860px){.side .nav>.thumb{background:var(--s2);box-shadow:none}:root[data-brand="kyoto"] .side .nav>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}}
+:root[data-side="brand"] .side .nav>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}
+:root[data-side="brand"] #side-nav .ni.active,:root[data-side="brand"] #side-nav .ni[aria-current="page"]{background:none;box-shadow:none}
+@media (max-width:860px){.side .nav>.thumb{background:var(--s2);box-shadow:none}:root[data-side="brand"] .side .nav>.thumb{background:var(--side-s);box-shadow:inset 0 0 0 1px var(--side-line)}}
 .seg>.thumb{border-radius:calc(var(--r-sm) - 2px)}
 
 /* ---------- page bits ---------- */

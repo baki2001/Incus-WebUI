@@ -35,6 +35,7 @@ type App struct {
 	jobs       jobs
 	metrics    *metricStore
 	sched      scheduler
+	watch      alertWatch
 	wa         waPending
 }
 
@@ -77,6 +78,8 @@ func main() {
 	app.sched.load(filepath.Join(*dataDir, "backup-schedules.json"))
 	app.jobs.load(filepath.Join(*dataDir, "tasks.json"))
 	go app.runSchedules(context.Background())
+	app.watch.load(filepath.Join(*dataDir, "alerts-state.json"))
+	go app.runAlertChecks(context.Background())
 	go app.cleanImports(context.Background())
 
 	// Running on the Incus host itself: use the local socket automatically.
@@ -205,6 +208,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/ui/account/totp", auth(a.handleTOTPEnable))
 	mux.Handle("POST /api/ui/account/totp/disable", auth(a.handleTOTPDisable))
 	mux.Handle("POST /api/ui/account/recovery-codes", auth(a.handleRecoveryRenew))
+	mux.Handle("POST /api/ui/account/password", auth(a.handlePasswordChange))
 	mux.Handle("POST /api/ui/account/passkeys/begin", auth(a.handlePasskeyRegisterBegin))
 	mux.Handle("POST /api/ui/account/passkeys/finish", auth(a.handlePasskeyRegisterFinish))
 	mux.Handle("PUT /api/ui/account/passkeys/{id}", auth(a.handlePasskeyRename))
@@ -229,6 +233,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /api/ui/update", auth(a.handleUpdateInfo))
 	mux.Handle("POST /api/ui/update", admin(a.handleUpdateApply))
 	mux.Handle("PUT /api/ui/update/channel", admin(a.handleUpdateChannel))
+	mux.Handle("POST /api/ui/config-export", admin(a.handleConfigExport))
 	mux.Handle("GET /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleListDir)))
 	mux.Handle("DELETE /api/ui/files/{server}/{name}", auth(a.requireRole(RoleOperator, a.handleRemoveAll)))
 	mux.Handle("GET /api/ui/files/{server}/{name}/download", auth(a.requireRole(RoleOperator, a.handleDownload)))
@@ -246,11 +251,15 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /api/ui/backup-targets/test", admin(a.handleBackupTest))
 	mux.Handle("GET /api/ui/backup-targets", auth(a.handleBackupTargets))
 	mux.Handle("POST /api/ui/backup-schedules/{name}/run", admin(a.handleScheduleRun))
+	mux.Handle("GET /api/ui/alerts", admin(a.handleAlertsGet))
+	mux.Handle("PUT /api/ui/alerts", admin(a.handleAlertsPut))
+	mux.Handle("POST /api/ui/alerts/test", admin(a.handleAlertsTest))
 	mux.Handle("GET /api/ui/backups/{server}", auth(a.handleBackups))
 	mux.Handle("POST /api/ui/backups/{server}", auth(a.handleBackupRun))
 	mux.Handle("GET /api/ui/backup/download", auth(a.handleBackupDownload))
 	mux.Handle("DELETE /api/ui/backup", auth(a.handleBackupDelete))
 	mux.Handle("POST /api/ui/backup/restore", auth(a.handleBackupRestore))
+	mux.Handle("POST /api/ui/transfer", auth(a.handleTransfer))
 	mux.Handle("POST /api/ui/compose/plan", auth(a.handleComposePlan))
 	mux.Handle("POST /api/ui/compose/run", auth(a.handleComposeRun))
 	mux.Handle("GET /api/ui/imports", auth(a.handleImports))
@@ -278,11 +287,14 @@ func (a *App) handleTheme(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if t.Name == "harbor" { // replaced by Kyoto; old browser tabs may still send it
-		t.Name = "kyoto"
+	switch t.Name {
+	case "harbor", "kyoto":
+		t.Name = "indigo"
+	case "light":
+		t.Name = "porcelain"
 	}
 	switch t.Name {
-	case "kyoto", "light", "graphite":
+	case "indigo", "porcelain", "graphite", "ember", "terracotta":
 		t.Accent = ""
 	case "custom":
 		if !hexColor.MatchString(t.Accent) {

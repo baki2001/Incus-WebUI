@@ -1,11 +1,26 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { dateTime, incus, opProgress, since, ui } from "../api";
 import { ic } from "../icons";
 import { cancelJob, taskText, useCrumbs, useJobs, type Job } from "../Shell";
 import { invalidate, useApp, useData, useScopedServers } from "../state";
-import { confirmDialog, Menu, Seg, Select, Table } from "../ui";
+import { confirmDialog, Menu, Seg, Select, Table, Tabs } from "../ui";
 import { matches, PageHead, Search } from "./Resource";
+
+// Tasks and Incus operations share one sidebar entry; tabs switch between them.
+function TaskTabs({ at }: { at: "tasks" | "operations" }) {
+  const nav = useNavigate();
+  return (
+    <Tabs
+      value={at}
+      onChange={(v) => nav(v === "tasks" ? "/tasks" : "/operations")}
+      tabs={[
+        { v: "tasks", l: "Tasks" },
+        { v: "operations", l: "Incus operations" },
+      ]}
+    />
+  );
+}
 
 type Op = { id: string; class: string; description: string; created_at: string; updated_at: string; status: string; status_code: number; resources: Record<string, string[]> | null; metadata: any; may_cancel: boolean; err: string; location: string; server: string; project?: string };
 
@@ -26,6 +41,7 @@ export function Tasks() {
   return (
     <>
       <PageHead title="Tasks" />
+      <TaskTabs at="tasks" />
       <div className="fbar">
         <Search value={search} onChange={setSearch} placeholder="Filter by task or user" />
         <Seg
@@ -117,7 +133,7 @@ function took(j: Job, raw?: boolean): number | string {
 
 // Operations: what Incus is doing or did lately, on every server in scope.
 export function Operations() {
-  useCrumbs([{ label: "Operations" }]);
+  useCrumbs([{ label: "Tasks", to: "/tasks" }, { label: "Incus operations" }]);
   const app = useApp();
   const servers = useScopedServers();
   const names = servers.map((s) => s.name).join(",");
@@ -150,7 +166,8 @@ export function Operations() {
   const failed = q.data?.filter((o) => o.status_code >= 400).length || 0;
   return (
     <>
-      <PageHead title="Operations" />
+      <PageHead title="Tasks" />
+      <TaskTabs at="operations" />
       <div className="fbar">
         <Search value={search} onChange={setSearch} placeholder="Filter by what it does" />
         <Seg

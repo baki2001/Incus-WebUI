@@ -444,7 +444,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 			if root := p.Devices["root"]; root != nil {
 				root["size"] = fmt.Sprintf("%dB", need)
 			}
-			note = "The boot disk's last partition ran to the very end of the disk, so the disk is slightly bigger now, which Incus needs for its partition table. "
+			note = "The boot disk is slightly bigger now. Incus needs a little free space after the last partition for its copy of the partition table. "
 		}
 		meta, err := proxmox.VMMetadata(p)
 		if err != nil {
@@ -477,6 +477,10 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		}
 	}
 
+	if p.Type == "virtual-machine" {
+		note += capCPUs(ctx, c, q.Project, p)
+	}
+
 	set(0.85, "Creating the instance: Incus copies the disk into the storage pool")
 	body := map[string]any{
 		"name": p.Name, "type": p.Type, "config": p.Config, "devices": p.Devices,
@@ -485,7 +489,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 	}
 	if _, err := c.call(ctx, "POST", "/1.0/instances", q.Project, body); err != nil {
 		if strings.Contains(err.Error(), "sgdisk") {
-			return "", fmt.Errorf("create the instance: Incus could not fix the partition table of the boot disk. Run sgdisk -v on that disk inside the VM in Proxmox to see what is wrong with it. Incus said: %w", err)
+			return "", fmt.Errorf("create the instance: Incus could not move the backup partition table to the end of the boot disk. sgdisk -v does not catch this. Inside the VM in Proxmox, run sgdisk -p on the boot disk (for example sudo sgdisk -p /dev/sda) and share the output. Incus said: %w", err)
 		}
 		return "", fmt.Errorf("create the instance: %w", err)
 	}
@@ -508,7 +512,7 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		// Legacy BIOS needs SeaBIOS, which not every Incus package ships. A
 		// disk with an EFI system partition boots with UEFI just as well.
 		if !proxmox.HasESP(heads[p.BootDisk]) {
-			return "", errors.New("this VM boots with legacy BIOS, and the Incus server has no SeaBIOS firmware for it. Install SeaBIOS on the Incus server (Incus looks for seabios.bin next to its UEFI firmware), then import again")
+			return strings.TrimSpace(note + "It was imported but did not start: it boots with legacy BIOS, and the Incus server has no SeaBIOS firmware for it. Install SeaBIOS on the Incus server (Incus looks for seabios.bin next to its UEFI firmware), then start it."), nil
 		}
 		if _, perr := c.call(ctx, "PATCH", inst, q.Project, map[string]any{"config": map[string]string{"security.csm": "false"}}); perr != nil {
 			return "", perr
@@ -517,7 +521,12 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		err = start()
 	}
 	if err != nil {
-		return "", fmt.Errorf("start: %w", err)
+		// Keep the instance. The copy took long, and the fix is usually a
+		// setting the user can change before starting it again.
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return strings.TrimSpace(note + "It was imported but did not start. Change its settings and start it. Incus said: " + err.Error()), nil
 	}
 
 	set(0.95, "Waiting for a network address")
@@ -528,7 +537,12 @@ func (a *App) runImport(ctx context.Context, c *incusConn, src importSource, p *
 		return "", ctx.Err()
 	}
 	// No rollback: the guest may use a static address on another network.
-	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address or a network interface name that changed.", nil
+	if p.Type == "virtual-machine" {
+		// The guest names its NIC after the PCI slot, which differs from
+		// Proxmox, and cloud-init's netplan matches it by MAC address.
+		return note + "It runs, but no address showed up in 3 minutes. Most often the network settings inside the VM still point at the network card it had in Proxmox. In the VM's console, run ip -br link to see the card's new name (often enp5s0). Then use that name in /etc/netplan/ or /etc/network/interfaces inside the VM. If the VM uses a fixed address, check that it fits this network.", nil
+	}
+	return note + "It runs, but no address showed up in 3 minutes. Check its console: the guest may use a fixed address on another network.", nil
 }
 
 // sendProgress reports an upload to Incus. Once every byte is sent, Incus
@@ -812,4 +826,28 @@ func (a *App) ownVolumes(ctx context.Context, s *Session, server, project string
 
 func sharedVolumesMsg(project string) string {
 	return "Project " + project + " keeps its volumes in the default project, so only an admin can import volumes into it."
+}
+
+// capCPUs lowers limits.cpu to the number of CPUs on the Incus server. Incus
+// can't start a VM with more CPUs than the server has, and a Proxmox host
+// often has more. It returns a note for the user when it lowered it.
+func capCPUs(ctx context.Context, c *incusConn, project string, p *proxmox.Plan) string {
+	want, err := strconv.Atoi(p.Config["limits.cpu"])
+	if err != nil || want <= 1 {
+		return ""
+	}
+	raw, err := c.call(ctx, "GET", "/1.0/resources", project, nil)
+	if err != nil {
+		return ""
+	}
+	var res struct {
+		CPU struct {
+			Total int `json:"total"`
+		} `json:"cpu"`
+	}
+	if json.Unmarshal(raw, &res) != nil || res.CPU.Total <= 0 || want <= res.CPU.Total {
+		return ""
+	}
+	p.Config["limits.cpu"] = strconv.Itoa(res.CPU.Total)
+	return fmt.Sprintf("The VM had %d CPUs in Proxmox, but the Incus server has %d, so it gets %d. ", want, res.CPU.Total, res.CPU.Total)
 }

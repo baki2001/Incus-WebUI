@@ -252,7 +252,18 @@ function ProxmoxBody({ open, onClose, setSheet }: { open: boolean; onClose: () =
                 <Select value={storage} onChange={setPool} options={pools.data || []} />
               </Field>
             </div>
-            <TglRow title="Keep the MAC address" note="The guest keeps its DHCP reservations and its network interface names." on={keepMAC} onChange={setKeepMAC} />
+            <TglRow
+              title="Keep the MAC address"
+              note={
+                keepMAC
+                  ? "The guest keeps its DHCP reservations and its network settings. Turn the original off first if both are on the same network."
+                  : p?.type === "virtual-machine"
+                    ? "Guests set up by cloud-init or netplan find their network card by its MAC address. With a new one they start without a network until you change their settings."
+                    : "The guest gets a new MAC address, so DHCP reservations for the old one no longer apply."
+              }
+              on={keepMAC}
+              onChange={setKeepMAC}
+            />
             <TglRow title="Start after the import" note="The import waits up to 3 minutes for a network address." on={start} onChange={setStart} />
           </SheetSec>
 

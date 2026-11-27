@@ -35,6 +35,18 @@ func TestGPTSize(t *testing.T) {
 	if got := GPTSize(make([]byte, 64<<10), disk); got != 0 {
 		t.Errorf("no GPT: got %d", got)
 	}
+	// fdisk and sfdisk start the usable sectors at 2048 but end them 34
+	// sectors from the end. sgdisk --move-second-header, which Incus runs,
+	// wants 2048 sectors after the last partition and exits with status 4.
+	fdisk := gptHead(sectors - 34)
+	binary.LittleEndian.PutUint64(fdisk[512+40:], 2048)
+	if got := GPTSize(fdisk, disk); got != disk+1<<20 {
+		t.Errorf("fdisk layout: got %d, want %d", got, disk+1<<20)
+	}
+	binary.LittleEndian.PutUint64(fdisk[1024+40:], sectors-2048)
+	if got := GPTSize(fdisk, disk); got != 0 {
+		t.Errorf("fdisk layout with room: got %d", got)
+	}
 	// A disk that is not a whole number of MiB with a normal GPT.
 	odd := int64(disk + 7*512)
 	if got := GPTSize(gptHead(uint64(odd/512)-34), odd); got != 0 {

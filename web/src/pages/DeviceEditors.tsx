@@ -139,7 +139,13 @@ const scopeNote = {
   host: "Only programs on the host itself can connect.",
 };
 
-export function ProxyEditor({ devices, inherited = [], edit, server, errors = {} }: { devices: Devs; inherited?: Inherited; edit: Edit; server: string; errors?: Record<string, string> }) {
+// VmProxy is set for a virtual machine. Incus forwards ports to a VM only
+// in NAT mode: it listens on one host address (not every address) and
+// forwards to the fixed IPv4 address of the VM's network card. block says
+// why a forward can't be added yet.
+export type VmProxy = { block?: string };
+
+export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}, vm }: { devices: Devs; inherited?: Inherited; edit: Edit; server: string; errors?: Record<string, string>; vm?: VmProxy }) {
   const info = useServerInfo(server);
   const lanAddr = ((info.data?.environment?.addresses as string[]) || []).map((a) => a.replace(/:\d+$/, "")).find((a) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a)) || "";
   const rows: [string, Dev, string | null][] = [
@@ -149,7 +155,9 @@ export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}
   const set = (n: string, f: Fwd) =>
     edit((x) => {
       x[n].listen = `${f.proto}:${f.laddr}:${f.lport}`;
-      x[n].connect = `${f.proto}:${f.caddr}:${f.cport}`;
+      // A VM can't be reached on 127.0.0.1; 0.0.0.0 means its fixed IPv4 address.
+      x[n].connect = `${f.proto}:${vm && scopeOf(f.caddr) === "host" ? "0.0.0.0" : f.caddr}:${f.cport}`;
+      if (vm) x[n].nat = "true";
     });
   return (
     <div className="hc devl">
@@ -197,6 +205,11 @@ export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}
                 </select>
               </div>
               <div className="pair one">
+                {vm ? (
+                  <div className="field mono-in">
+                    <input aria-label={`Host address of ${n}`} disabled={dis} value={sc === "any" ? "" : f.laddr} placeholder={lanAddr || "Host address"} onChange={(e) => set(n, { ...f, laddr: e.target.value })} />
+                  </div>
+                ) : (
                 <div className="field">
                   <select
                     aria-label={`Reachable from, ${n}`}
@@ -209,7 +222,8 @@ export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}
                     <option value="host">This host only</option>
                   </select>
                 </div>
-                {sc === "lan" && (
+                )}
+                {!vm && sc === "lan" && (
                   <div className="field mono-in">
                     <input aria-label={`Host address of ${n}`} disabled={dis} value={f.laddr} placeholder="Host address" onChange={(e) => set(n, { ...f, laddr: e.target.value })} />
                   </div>
@@ -232,7 +246,7 @@ export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}
               )}
             </div>
             <span className="note">
-              {scopeNote[sc]}
+              {vm ? "Reachable on this host address. Incus sends the traffic to the VM's fixed IPv4 address." : scopeNote[sc]}
               {dis ? ` From profile ${from}.` : ""}
             </span>
             {errors["dev." + n] && (
@@ -247,17 +261,27 @@ export function ProxyEditor({ devices, inherited = [], edit, server, errors = {}
       <div>
         <button
           className="btn btn-s btn-sm press"
-          onClick={() => edit((x) => void (x[nextName(x, "proxy", inherited.map((i) => i[0]))] = { type: "proxy", listen: "tcp:0.0.0.0:", connect: "tcp:127.0.0.1:" }))}
+          disabled={!!vm?.block}
+          onClick={() =>
+            edit(
+              (x) =>
+                void (x[nextName(x, "proxy", inherited.map((i) => i[0]))] = vm
+                  ? // As the connect address, 0.0.0.0 means the NIC's fixed IPv4 address.
+                    { type: "proxy", nat: "true", listen: `tcp:${lanAddr}:`, connect: "tcp:0.0.0.0:" }
+                  : { type: "proxy", listen: "tcp:0.0.0.0:", connect: "tcp:127.0.0.1:" }),
+            )
+          }
         >
           {ic.plus}Add port forward
         </button>
       </div>
+      {vm?.block && <span className="note">{vm.block}</span>}
     </div>
   );
 }
 
 // Returns a message per bad device, keyed "dev.<name>".
-export function checkDevices(devices: Devs): Record<string, string> {
+export function checkDevices(devices: Devs, vm = false): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [n, d] of Object.entries(devices)) {
     if (d.type === "disk" && n !== "root") {
@@ -273,6 +297,8 @@ export function checkDevices(devices: Devs): Record<string, string> {
       const ports = (v: string) => v !== "" && v.split(",").every(portsOK);
       if (!ports(f.lport)) out["dev." + n] = "Enter the host port, from 1 to 65535.";
       else if (!ports(f.cport)) out["dev." + n] = "Enter the instance port, from 1 to 65535.";
+      else if (vm && d.nat !== "true") out["dev." + n] = "A VM needs NAT mode for port forwarding. Enter the host address again to switch this forward to it.";
+      else if (vm && scopeOf(f.laddr) !== "lan") out["dev." + n] = "A VM can only forward from one host address. Enter it, like 192.168.1.10.";
       else if (scopeOf(f.laddr) === "lan" && !/^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])$/i.test(f.laddr)) out["dev." + n] = "Enter the host address to listen on, like 192.168.1.10.";
     }
   }

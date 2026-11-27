@@ -112,17 +112,17 @@ func (a *App) updateChannel() string {
 	return channelStable
 }
 
-// offerUpdate says whether to offer rel on this channel. Dev follows whatever
-// the newest dev build is. Stable offers newer releases, and also the latest
-// release when a dev build runs, so switching back to stable works.
+// offerUpdate says whether to offer rel on this channel. Both channels only
+// move forward. Stable also offers the latest release when a dev build runs,
+// so switching back to stable works.
 func offerUpdate(channel string, rel *releaseInfo, current string) bool {
 	if rel == nil || rel.Tag == "" || rel.Tag == current {
 		return false
 	}
-	if channel == channelDev {
+	if channel == channelStable && isDevBuild(current) {
 		return true
 	}
-	return newerVersion(rel.Tag, current) || isDevBuild(current)
+	return newerVersion(rel.Tag, current)
 }
 
 // updateTarget returns where a new binary goes and whether that is possible.

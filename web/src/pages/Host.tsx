@@ -10,6 +10,7 @@ import { useApp, useData, cacheGet, invalidate } from "../state";
 import { hostBusy, HostUpdates } from "./HostUpdates";
 import { MetricsPanel } from "./Charts";
 import { instanceTypes } from "./ImagePicker";
+import { ClusterPanel, TrustPanel } from "./HostCluster";
 
 // Incus has no host uptime or load average in its API, so show how long Incus itself has been running.
 function dur(sec: number) {
@@ -117,6 +118,7 @@ export function Host() {
                 )}
               </dl>
             </div>
+            {s.clustered && <ClusterPanel server={server} />}
             {!!nics.data?.length && (
               <div className="panel">
                 <div className="ptitle">
@@ -214,6 +216,7 @@ export function Host() {
             <MetricsPanel server={server} />
             {info.data && app.admin && <HostUpdates server={server} incusOS={!!s.incus_os} config={info.data.config || {}} />}
             {info.data && app.admin && <ServerConfig server={server} config={info.data.config || {}} onSaved={() => info.reload()} />}
+            {app.admin && <TrustPanel server={server} />}
           </div>
         </div>
       )}

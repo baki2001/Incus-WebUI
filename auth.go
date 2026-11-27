@@ -552,7 +552,7 @@ func (a *App) saveUser(w http.ResponseWriter, r *http.Request, name string, crea
 			if c.Users[i].Username == name {
 				if create {
 					code = http.StatusConflict
-					return errors.New("A user with that name already exists. Use Change password on their row instead.")
+					return errors.New("A user with that name already exists. Use Reset password in their row's menu instead.")
 				}
 				c.Users[i].PasswordHash = string(hash)
 				c.Users[i].SessionGen = nextGen(c.Users[i].SessionGen) // ends their other sessions

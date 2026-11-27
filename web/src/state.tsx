@@ -4,9 +4,20 @@ import { friendlyError, ui, type ServerStatus } from "./api";
 
 // ---------- data fetching with a shared cache (stale-while-revalidate) ----------
 
-type Entry = { data?: any; error?: string; at: number; loading: boolean; p?: Promise<void>; stale?: boolean };
+// okAt is when the last load succeeded. at also moves on a failed load, so it can't tell freshness.
+type Entry = { data?: any; error?: string; at: number; okAt?: number; loading: boolean; p?: Promise<void>; stale?: boolean };
 const cache = new Map<string, Entry>();
 const subs = new Map<string, Set<() => void>>();
+// Keys that the open page shows, with how many hooks use each. The top bar's own
+// data (tasks, update check, badges) is left out, so "Updated x ago" is about the page.
+const shown = new Map<string, number>();
+
+// lastFresh is when data on the open page last loaded fine, or 0 if it has none yet.
+export function lastFresh() {
+  let t = 0;
+  for (const k of shown.keys()) t = Math.max(t, cache.get(k)?.okAt || 0);
+  return t;
+}
 function notify(key: string) {
   subs.get(key)?.forEach((f) => f());
 }
@@ -36,7 +47,8 @@ export function mutateCache(key: string, fn: (d: any) => any) {
   }
 }
 
-export function useData<T>(key: string | null, fetcher: () => Promise<T>, interval = 0) {
+// quiet marks data the top bar loads for itself; it doesn't count for "Updated x ago".
+export function useData<T>(key: string | null, fetcher: () => Promise<T>, interval = 0, quiet = false) {
   const [, force] = useState(0);
   const fRef = useRef(fetcher);
   fRef.current = fetcher;
@@ -56,6 +68,7 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
       (d) => {
         entry.data = d;
         entry.error = undefined;
+        entry.okAt = Date.now();
       },
       (err) => {
         entry.error = err instanceof Error ? err.message : String(err);
@@ -75,15 +88,21 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
     const f = () => force((n) => n + 1);
     if (!subs.has(key)) subs.set(key, new Set());
     subs.get(key)!.add(f);
+    if (!quiet) shown.set(key, (shown.get(key) || 0) + 1);
     const e = cache.get(key);
     if (!e || Date.now() - e.at > 2000) load();
     let t: number | undefined;
     if (interval) t = window.setInterval(() => !document.hidden && load(), interval);
     return () => {
       subs.get(key)?.delete(f);
+      if (!quiet) {
+        const n = (shown.get(key) || 1) - 1;
+        if (n) shown.set(key, n);
+        else shown.delete(key);
+      }
       if (t) clearInterval(t);
     };
-  }, [key, interval, load]);
+  }, [key, interval, load, quiet]);
 
   // reload when invalidated
   const e = key ? cache.get(key) : undefined;
@@ -95,21 +114,58 @@ export function useData<T>(key: string | null, fetcher: () => Promise<T>, interv
 
 // ---------- app-wide state ----------
 
-// Mode is the look one person picks: Kyoto (stone + indigo), plain Light, or Graphite (dark).
-export type Mode = "kyoto" | "light" | "graphite";
-// Theme is the server-wide default look, or a custom accent on top of Light and Graphite.
-export type Theme = { name: "kyoto" | "light" | "graphite" | "custom"; accent?: string };
-const looks: Mode[] = ["kyoto", "light", "graphite"];
-export function defaultLook(t: Theme): Mode {
-  return t.name === "custom" ? "light" : looks.includes(t.name as Mode) ? (t.name as Mode) : "kyoto";
+// Mode is the theme one person picks for themselves.
+export type Mode = "indigo" | "porcelain" | "graphite" | "ember" | "terracotta" | "custom";
+export type Theme = { name: string; accent?: string };
+export type CustomTheme = {
+  base: "porcelain" | "graphite";
+  accent: string;
+  cta: string;
+  sidebar: string; // hex colour, or "" to match the surface
+};
+export const DEFAULT_CUSTOM: CustomTheme = {
+  base: "porcelain",
+  accent: "#2d6a4f",
+  cta: "#d95d39",
+  sidebar: "#1b4332",
+};
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+export const isHex = (v: string) => HEX_RE.test(v);
+
+const looks: Mode[] = ["indigo", "porcelain", "graphite", "ember", "terracotta", "custom"];
+function migrateLook(v: string): Mode | "" {
+  if (v === "kyoto" || v === "harbor") return "indigo";
+  if (v === "light") return "porcelain";
+  if (v === "dark") return "graphite";
+  return looks.includes(v as Mode) ? (v as Mode) : "";
 }
-// storedLook is this browser's own pick, or "" to follow the server default.
-// Older versions stored a light/dark mode instead.
+// defaultLook is the product default on a fresh install: Indigo (formerly Kyoto).
+export function defaultLook(_t?: Theme): Mode {
+  return "indigo";
+}
+// storedLook is this browser's own pick, or "" to use the product default.
 export function storedLook(): Mode | "" {
-  const v = ls("iwui.look", "");
-  if (looks.includes(v as Mode)) return v as Mode;
+  const v = migrateLook(ls("iwui.look", ""));
+  if (v) return v;
   const old = ls("iwui.mode", "");
-  return old === "dark" ? "graphite" : old === "light" ? "light" : "";
+  return old === "dark" ? "graphite" : old === "light" ? "porcelain" : "";
+}
+export function storedCustom(): CustomTheme {
+  const raw = ls("iwui.custom", "");
+  if (raw) {
+    try {
+      const p = JSON.parse(raw);
+      return {
+        base: p.base === "graphite" ? "graphite" : "porcelain",
+        accent: isHex(p.accent) ? p.accent : DEFAULT_CUSTOM.accent,
+        cta: isHex(p.cta) ? p.cta : isHex(p.accent) ? p.accent : DEFAULT_CUSTOM.cta,
+        sidebar: p.sidebar === "" ? "" : isHex(p.sidebar) ? p.sidebar : DEFAULT_CUSTOM.sidebar,
+      };
+    } catch {
+      /* ignore corrupt storage */
+    }
+  }
+  return DEFAULT_CUSTOM;
 }
 type Toast = { id: number; msg: string; err?: boolean; title?: string; action?: { label: string; fn: () => void }; out?: boolean };
 type Task = { id: number; label: string; detail?: string };
@@ -134,14 +190,12 @@ type Ctx = {
   setProject: (p: string) => void;
   mode: Mode;
   setMode: (m: Mode) => void;
-  theme: Theme;
-  setTheme: (t: Theme) => void;
+  custom: CustomTheme;
+  setCustom: (c: CustomTheme) => void;
   toast: (msg: string, action?: Toast["action"]) => void;
   fail: (err: unknown, title?: string) => void;
   tasks: Task[];
   run: <T>(label: string, fn: (progress: (detail: string) => void) => Promise<T>, done?: string) => Promise<T | undefined>;
-  lastUpdate: number;
-  touch: () => void;
 };
 
 const AppCtx = createContext<Ctx>(null as any);
@@ -162,24 +216,50 @@ function lsSet(key: string, v: string) {
   }
 }
 
-export function applyTheme(theme: Theme, mode: Mode) {
+const CUSTOM_VARS = [
+  "--c-accent", "--c-accent-ink", "--c-cta", "--c-cta-ink",
+  "--side", "--side-ink", "--side-ink-2", "--side-s", "--side-line", "--side-av", "--side-dot", "--side-err",
+];
+
+export function applyTheme(mode: Mode, custom: CustomTheme = storedCustom()) {
   const html = document.documentElement;
   html.classList.add("switching");
-  html.setAttribute("data-theme", mode === "graphite" ? "dark" : "light");
-  const brand = mode === "kyoto" ? "kyoto" : theme.name === "custom" ? "custom" : "";
+  const dark = mode === "graphite" || mode === "ember" || (mode === "custom" && custom.base === "graphite");
+  html.setAttribute("data-theme", dark ? "dark" : "light");
+
+  const brand = mode === "indigo" || mode === "ember" || mode === "terracotta" || mode === "custom" ? mode : "";
   if (brand) html.setAttribute("data-brand", brand);
   else html.removeAttribute("data-brand");
-  if (theme.name === "custom" && theme.accent) {
-    const { light, dark } = accentPair(theme.accent);
-    html.style.setProperty("--cl", light);
-    html.style.setProperty("--cd", dark);
-    html.style.setProperty("--cli", inkFor(light));
-    html.style.setProperty("--cdi", inkFor(dark));
+
+  const hasSide = mode === "indigo" || mode === "terracotta" || (mode === "custom" && isHex(custom.sidebar));
+  if (hasSide) html.setAttribute("data-side", "brand");
+  else html.removeAttribute("data-side");
+
+  for (const v of CUSTOM_VARS) html.style.removeProperty(v);
+
+  if (mode === "custom") {
+    const accent = fitAccent(custom.accent, custom.base);
+    const cta = isHex(custom.cta) ? custom.cta : accent;
+    html.style.setProperty("--c-accent", accent);
+    html.style.setProperty("--c-accent-ink", inkFor(accent));
+    html.style.setProperty("--c-cta", cta);
+    html.style.setProperty("--c-cta-ink", inkFor(cta));
+    if (isHex(custom.sidebar)) {
+      const lightSide = lum(custom.sidebar) > 0.38;
+      html.style.setProperty("--side", custom.sidebar);
+      html.style.setProperty("--side-ink", lightSide ? "rgba(18,22,30,.92)" : "rgba(255,255,255,.94)");
+      html.style.setProperty("--side-ink-2", lightSide ? "rgba(18,22,30,.68)" : "rgba(255,255,255,.74)");
+      html.style.setProperty("--side-s", lightSide ? "rgba(18,22,30,.09)" : "rgba(255,255,255,.13)");
+      html.style.setProperty("--side-line", lightSide ? "rgba(18,22,30,.15)" : "rgba(255,255,255,.18)");
+      html.style.setProperty("--side-av", lightSide ? "rgba(18,22,30,.13)" : "rgba(255,255,255,.16)");
+      html.style.setProperty("--side-dot", lightSide ? "rgba(18,22,30,.32)" : "rgba(255,255,255,.34)");
+      html.style.setProperty("--side-err", lightSide ? "#b8291e" : "#ff9b8f");
+    }
   }
   requestAnimationFrame(() => requestAnimationFrame(() => html.classList.remove("switching")));
 }
 
-// --- contrast helpers for the custom accent ---
+// --- contrast helpers for the customizer ---
 function hexToRgb(h: string) {
   const n = parseInt(h.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
@@ -198,30 +278,30 @@ export function contrast(a: string, b: string) {
 function mix(h: string, to: number, t: number) {
   return "#" + hexToRgb(h).map((v) => Math.round(v + (to - v) * t).toString(16).padStart(2, "0")).join("");
 }
-// accentPair darkens the colour for light mode and lightens it for dark mode
-// until it reaches 4.5:1 against the page background.
-export function accentPair(hex: string) {
-  let light = hex;
-  for (let i = 0; i < 20 && contrast(light, "#f5f5f7") < 4.5; i++) light = mix(light, 0, 0.08);
-  let dark = hex;
-  for (let i = 0; i < 20 && contrast(dark, "#0e0e10") < 4.5; i++) dark = mix(dark, 255, 0.1);
-  return { light, dark };
+// fitAccent adjusts a chosen accent so it stays readable (>= 4.5:1) against the base surface.
+export function fitAccent(hex: string, base: "porcelain" | "graphite") {
+  if (!isHex(hex)) return base === "graphite" ? "#8fa8f8" : "#3456bd";
+  const bg = base === "graphite" ? "#1e2026" : "#f1f2f5";
+  const target = base === "graphite" ? 255 : 0;
+  let out = hex;
+  for (let i = 0; i < 22 && contrast(out, bg) < 4.5; i++) out = mix(out, target, 0.09);
+  return out;
 }
-function inkFor(bg: string) {
-  return contrast(bg, "#ffffff") >= contrast(bg, "#0e0e10") ? "#ffffff" : "#0e0e10";
+export function inkFor(bg: string) {
+  if (!isHex(bg)) return "#ffffff";
+  return contrast(bg, "#ffffff") >= contrast(bg, "#11131a") ? "#ffffff" : "#11131a";
 }
 
-export function AppProvider({ user, method, initialTheme, children }: { user: string; method: string; initialTheme: Theme; children: ReactNode }) {
+export function AppProvider({ user, method, children }: { user: string; method: string; children: ReactNode }) {
   const [servers, setServers] = useState<ServerStatus[]>([]);
   const [serversLoaded, setLoaded] = useState(false);
   const [scope, setScopeS] = useState(ls("iwui.scope", "*"));
   const [project, setProjectS] = useState(ls("iwui.project", "default"));
   const [look, setLook] = useState<Mode | "">(storedLook);
-  const [theme, setThemeS] = useState<Theme>(initialTheme);
-  const mode = look || defaultLook(theme);
+  const [custom, setCustomS] = useState<CustomTheme>(storedCustom);
+  const mode = look || defaultLook();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [lastUpdate, setLast] = useState(Date.now());
   const seq = useRef(1);
   const [me, setMe] = useState<{ admin: boolean; access: AccessEntry[] }>({ admin: false, access: [] });
   useEffect(() => {
@@ -249,7 +329,7 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
     return () => clearInterval(t);
   }, [reloadServers]);
 
-  useEffect(() => applyTheme(theme, mode), [theme, mode]);
+  useEffect(() => applyTheme(mode, custom), [mode, custom]);
 
   const dismiss = useCallback((id: number) => {
     setToasts((t) => t.map((x) => (x.id === id ? { ...x, out: true } : x)));
@@ -321,14 +401,15 @@ export function AppProvider({ user, method, initialTheme, children }: { user: st
       setLook(m);
       lsSet("iwui.look", m);
     },
-    theme,
-    setTheme: setThemeS,
+    custom,
+    setCustom: (c) => {
+      setCustomS(c);
+      lsSet("iwui.custom", JSON.stringify(c));
+    },
     toast,
     fail,
     tasks,
     run,
-    lastUpdate,
-    touch: () => setLast(Date.now()),
   };
 
   return (

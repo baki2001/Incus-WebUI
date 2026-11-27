@@ -46,12 +46,15 @@ type Config struct {
 	Access []Access `yaml:"access,omitempty"`
 	// Backups are the backup targets and schedules (see backup.go).
 	Backups Backups `yaml:"backups,omitempty"`
+	// Alerts are where messages about failed backups, offline servers and
+	// full pools go (see alerts.go).
+	Alerts Alerts `yaml:"alerts,omitempty"`
 	// UpdateChannel is "dev" to follow builds of the dev branch. Empty means stable releases.
 	UpdateChannel string `yaml:"update_channel,omitempty"`
 }
 
 type Theme struct {
-	Name   string `yaml:"name" json:"name"`                         // kyoto | light | graphite | custom
+	Name   string `yaml:"name" json:"name"`                         // indigo | porcelain | graphite | ember | terracotta | custom
 	Accent string `yaml:"accent,omitempty" json:"accent,omitempty"` // hex, for custom
 }
 
@@ -136,13 +139,12 @@ func loadStore(dataDir string) (*Store, error) {
 		s.cfg.SessionSecret = randHex(32)
 		changed = true
 	}
-	if s.cfg.Theme.Name == "" {
-		s.cfg.Theme.Name = "kyoto"
+	if s.cfg.Theme.Name == "" || s.cfg.Theme.Name == "harbor" || s.cfg.Theme.Name == "kyoto" {
+		s.cfg.Theme.Name = "indigo"
 		changed = true
 	}
-	// Harbor (teal) was replaced by Kyoto in 0.6.
-	if s.cfg.Theme.Name == "harbor" {
-		s.cfg.Theme.Name = "kyoto"
+	if s.cfg.Theme.Name == "light" {
+		s.cfg.Theme.Name = "porcelain"
 		changed = true
 	}
 	if len(s.cfg.Access) == 0 {
@@ -191,6 +193,8 @@ func (s *Store) Get() Config {
 	c.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
 	c.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
 	c.Backups.PBS = append([]PBSServer(nil), s.cfg.Backups.PBS...)
+	c.Alerts.Endpoints = append([]AlertEndpoint(nil), s.cfg.Alerts.Endpoints...)
+	c.Alerts.Off = append([]string(nil), s.cfg.Alerts.Off...)
 	return c
 }
 
@@ -206,6 +210,8 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	next.Backups.Targets = append([]BackupTarget(nil), s.cfg.Backups.Targets...)
 	next.Backups.Schedules = append([]BackupSchedule(nil), s.cfg.Backups.Schedules...)
 	next.Backups.PBS = append([]PBSServer(nil), s.cfg.Backups.PBS...)
+	next.Alerts.Endpoints = append([]AlertEndpoint(nil), s.cfg.Alerts.Endpoints...)
+	next.Alerts.Off = append([]string(nil), s.cfg.Alerts.Off...)
 	if err := fn(&next); err != nil {
 		return err
 	}

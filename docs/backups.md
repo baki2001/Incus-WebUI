@@ -1,6 +1,6 @@
 # Backups
 
-The UI backs up instances with Incus's own backup format and stores the files on a target you choose. A backup holds the whole instance (its config and root disk, without snapshots) and restores on any Incus server.
+The UI backs up instances with Incus's own backup format and stores the files on a target you choose. A backup holds the whole instance (its config and root disk, without snapshots) and the custom volumes attached to it, and restores on any Incus server.
 
 ## Targets
 
@@ -9,7 +9,19 @@ Add targets under Settings, Backups. The Test button writes, reads and deletes a
 - **Directory**: an absolute path on the machine that runs the UI. A mounted NAS share works. When the UI runs as an Incus container, give it the folder with a disk device first, for example `incus config device add incus-webui backups disk source=/srv/backups path=/backups shift=true`, and use `/backups`.
 - **S3**: any S3-compatible store, such as AWS, Backblaze B2, MinIO, Garage or Ceph. Fill in the endpoint, bucket, access key and secret key. The region can stay empty for stores that don't use one. The secret key is kept in `config.yaml` and never sent back to the browser.
 
-Backups land under `<server>/<project>/<instance>/` on the target. Each backup is a `.tar` file with a `.json` file next to it that holds its size and SHA-256 checksum.
+Backups land under `<server>/<project>/<instance>/` on the target. Each backup is a `.tar` file with a `.json` file next to it that holds its size and SHA-256 checksum. Each attached custom volume gets its own file next to it, like `<backup>.vol0.tar`.
+
+## Encryption
+
+Turn on **Encrypt backups** on a target to encrypt everything the UI writes there. The UI encrypts while it streams, so it needs no temporary disk space. The files use [age](https://age-encryption.org) with a passphrase and end in `.tar.age`. The `.json` file next to each one stays readable, so the list still shows names and sizes.
+
+The UI makes a long random passphrase for you. Copy it somewhere safe, like a password manager. Without it nobody can restore these backups, the UI included. To open a file by hand:
+
+```sh
+age -d -o backup.tar backup.tar.age
+```
+
+Changing the passphrase or turning encryption off only affects new backups. Older backups still need the passphrase they were made with, so keep it.
 
 ## Back up and restore
 
@@ -20,8 +32,10 @@ The Snapshots tab of an instance can also keep a snapshot on a backup target ins
 For each backup you can:
 
 - **Restore** it as a new instance, in the same project or another one, and on another storage pool if you like. An instance that still exists is not touched; when the original is gone, the restore offers its old name. The UI checks the checksum on the way, and a damaged file is refused without leaving a half-made instance behind.
-- **Download** it. `incus import` reads the file on any Incus server.
+- **Download** it. `incus import` reads the file on any Incus server. A backup with volumes lets you pick the instance or one of its volumes; `incus storage volume import` reads a volume file. Encrypted backups download already decrypted.
 - **Delete** it.
+
+A restore brings the custom volumes back first. A volume keeps its old name when that's free, and otherwise gets `<instance>-<volume>`. The restored instance points at the restored volumes, never at the originals.
 
 These need the manager role on the instance's project, because a backup holds all of the instance's data.
 

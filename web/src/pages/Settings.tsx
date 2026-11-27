@@ -3,18 +3,23 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ui } from "../api";
 import { ic } from "../icons";
 import { useCrumbs } from "../Shell";
-import { BackupSettings } from "./Backups";
+import { BackupSettings, newPassphrase, saveFile } from "./Backups";
+import { AlertSettings } from "./Alerts";
+import { SSHKeySettings } from "./SSHKeys";
 import { Security } from "./Security";
-import { accentPair, contrast, invalidate, useApp, useData, type AccessEntry, type Mode, type RoleName, type Theme } from "../state";
-import { confirmDialog, CopyBtn, Field, Input, Menu, Seg, Select, usePresence, useThumb } from "../ui";
+import { contrast, DEFAULT_CUSTOM, fitAccent, inkFor, invalidate, isHex, useApp, useData, type AccessEntry, type CustomTheme, type Mode, type RoleName } from "../state";
+import { confirmDialog, CopyBtn, Dialog, Field, Input, Menu, Seg, Select, Table, TglRow, useThumb } from "../ui";
+import { DlgForm } from "./InstanceDialogs";
 
-type Section = "appearance" | "security" | "servers" | "users" | "backups" | "about";
+type Section = "appearance" | "security" | "ssh" | "servers" | "users" | "backups" | "alerts" | "about";
 const sections: { v: Section; l: string; admin?: boolean; local?: boolean }[] = [
   { v: "appearance", l: "Appearance" },
   { v: "security", l: "Sign-in security", local: true },
+  { v: "ssh", l: "SSH keys" },
   { v: "servers", l: "Servers", admin: true },
   { v: "users", l: "Users and roles", admin: true },
   { v: "backups", l: "Backups", admin: true },
+  { v: "alerts", l: "Alerts", admin: true },
   { v: "about", l: "Updates and about" },
 ];
 
@@ -48,6 +53,8 @@ export function Settings() {
           {section === "servers" && admin && <Servers />}
           {section === "users" && admin && <Users />}
           {section === "backups" && admin && <BackupSettings />}
+          {section === "ssh" && <SSHKeySettings />}
+          {section === "alerts" && admin && <AlertSettings />}
           {section === "about" && <About />}
         </div>
       </div>
@@ -55,104 +62,298 @@ export function Settings() {
   );
 }
 
+type CustomPreset = { name: string; value: CustomTheme };
+const CUSTOM_PRESETS: CustomPreset[] = [
+  { name: "Forest", value: { base: "porcelain", accent: "#2d6a4f", cta: "#d95d39", sidebar: "#1b4332" } },
+  { name: "Ocean", value: { base: "porcelain", accent: "#1d5fa7", cta: "#0f9d9a", sidebar: "#0f2c4c" } },
+  { name: "Plum", value: { base: "porcelain", accent: "#6d3b7d", cta: "#c94c4c", sidebar: "#3b1d47" } },
+  { name: "Amber", value: { base: "porcelain", accent: "#9a5b13", cta: "#2a7b88", sidebar: "#3e2716" } },
+  { name: "Midnight", value: { base: "graphite", accent: "#74b3ff", cta: "#38bdf8", sidebar: "#101828" } },
+  { name: "Ember", value: { base: "graphite", accent: "#f59e6c", cta: "#2eb3b2", sidebar: "#2a1712" } },
+];
+
 function Appearance() {
   const app = useApp();
-  const [custom, setCustom] = useState(app.theme.accent || "#7a4fd6");
-  const setTheme = async (t: Theme) => {
-    const prev = app.theme;
-    app.setTheme(t);
-    try {
-      await ui("/theme", { method: "PUT", body: t });
-      app.toast(`Default look set to ${t.name[0].toUpperCase() + t.name.slice(1)}`, { label: "Undo", fn: () => setTheme(prev) });
-    } catch (e: any) {
-      app.setTheme(prev);
-      app.fail(e, "Could not change the theme.");
-    }
+  const c = app.custom;
+  const [accentIn, setAccentIn] = useState(c.accent);
+  const [ctaIn, setCtaIn] = useState(c.cta);
+  const [sideIn, setSideIn] = useState(c.sidebar || "#1b4332");
+  useEffect(() => {
+    setAccentIn(c.accent);
+    setCtaIn(c.cta);
+    if (c.sidebar) setSideIn(c.sidebar);
+  }, [c.accent, c.cta, c.sidebar]);
+
+  const patchCustom = (next: Partial<CustomTheme>) => {
+    const merged = { ...c, ...next };
+    app.setCustom(merged);
+    if (app.mode !== "custom") app.setMode("custom");
   };
-  const pair = accentPair(custom);
+
+  const fittedAccent = fitAccent(c.accent, c.base);
+  const baseBg = c.base === "graphite" ? "#1e2026" : "#f1f2f5";
+  const accentRatio = contrast(fittedAccent, baseBg);
+  const ctaColor = isHex(c.cta) ? c.cta : fittedAccent;
+  const ctaInk = inkFor(ctaColor);
+  const ctaRatio = contrast(ctaColor, ctaInk);
+  const sameCta = c.cta.toLowerCase() === c.accent.toLowerCase();
+  const isDefaultCustom =
+    c.base === DEFAULT_CUSTOM.base &&
+    c.accent.toLowerCase() === DEFAULT_CUSTOM.accent.toLowerCase() &&
+    c.cta.toLowerCase() === DEFAULT_CUSTOM.cta.toLowerCase() &&
+    c.sidebar.toLowerCase() === DEFAULT_CUSTOM.sidebar.toLowerCase();
+
   // Preview colours: page, sidebar, sidebar lines, card, card lines, button.
   type Pv = { page: string; side: string; sideInk: string; card: string; cardInk: string; btn: string };
-  const themes: { v: Theme["name"]; l: string; note: string; pv: Pv }[] = [
-    { v: "kyoto", l: "Kyoto", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#fff", card: "#fff", cardInk: "#101a30", btn: "#db390c" } },
-    { v: "light", l: "Light", note: "Plain light", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: "#3d5fc4" } },
-    { v: "graphite", l: "Graphite", note: "Dark", pv: { page: "#0e0e10", side: "transparent", sideInk: "rgba(255,255,255,.7)", card: "#1d1d20", cardInk: "rgba(255,255,255,.8)", btn: "#93a8ee" } },
-    { v: "custom", l: "Custom", note: "Your accent", pv: { page: "#f5f5f7", side: "transparent", sideInk: "#1c1c1f", card: "#fff", cardInk: "#1c1c1f", btn: pair.light } },
+  const customPv: Pv =
+    c.base === "graphite"
+      ? {
+          page: "#16171b",
+          side: c.sidebar || "transparent",
+          sideInk: c.sidebar ? inkFor(c.sidebar) : "#c2c6d1",
+          card: "#1e2026",
+          cardInk: "#f1f3f7",
+          btn: ctaColor,
+        }
+      : {
+          page: "#f1f2f5",
+          side: c.sidebar || "transparent",
+          sideInk: c.sidebar ? inkFor(c.sidebar) : "#16181d",
+          card: "#ffffff",
+          cardInk: "#16181d",
+          btn: ctaColor,
+        };
+
+  const themes: { v: Mode; l: string; note: string; pv: Pv }[] = [
+    { v: "indigo", l: "Indigo", note: "Stone and indigo", pv: { page: "#ebecef", side: "#142950", sideInk: "#ffffff", card: "#ffffff", cardInk: "#101a30", btn: "#db390c" } },
+    { v: "porcelain", l: "Porcelain", note: "Crisp light", pv: { page: "#f1f2f5", side: "transparent", sideInk: "#16181d", card: "#ffffff", cardInk: "#16181d", btn: "#3456bd" } },
+    { v: "graphite", l: "Graphite", note: "Soft dark", pv: { page: "#16171b", side: "transparent", sideInk: "#c2c6d1", card: "#1e2026", cardInk: "#f1f3f7", btn: "#8fa8f8" } },
+    { v: "ember", l: "Graphite Ember", note: "Soft dark, orange", pv: { page: "#16171b", side: "transparent", sideInk: "#c2c6d1", card: "#1e2026", cardInk: "#f1f3f7", btn: "#db390c" } },
+    { v: "terracotta", l: "Terracotta", note: "Sand, clay and teal", pv: { page: "#f3e7dc", side: "#772f10", sideInk: "#fdf7f2", card: "#fffdfb", cardInk: "#2b140a", btn: "#2eb3b2" } },
+    { v: "custom", l: "Custom", note: "Your palette", pv: customPv },
   ];
+
   return (
-    <>
-      <section className="set-sec">
-        <h2>
-          Look<span className="scope-tag">Just for you, on this browser</span>
-        </h2>
-        <Seg value={app.mode} onChange={(m: Mode) => app.setMode(m)} options={[{ v: "kyoto", l: "Kyoto" }, { v: "light", l: "Light" }, { v: "graphite", l: "Graphite" }]} />
-      </section>
-      {app.admin && <section className="set-sec">
-        <h2>
-          Default look<span className="scope-tag">For everyone using this server</span>
-        </h2>
-        <p>What people see until they pick their own look.</p>
-        <div className="tcards">
-          {themes.map((t) => (
-            <button key={t.v} className="tcard press" aria-pressed={app.theme.name === t.v} onClick={() => setTheme(t.v === "custom" ? { name: "custom", accent: custom } : { name: t.v })}>
-              <div className="prev one">
-                <div className="pv" style={{ background: t.pv.page }}>
-                  <div className="ps" style={{ background: t.pv.side }}>
-                    <i style={{ background: t.pv.sideInk }} />
-                    <i style={{ background: t.pv.sideInk }} />
-                    <i style={{ background: t.pv.sideInk }} />
+    <section className="set-sec">
+      <h2>
+        Theme<span className="scope-tag">Just for you, in this browser</span>
+      </h2>
+      <p>Pick the look you prefer. Changes apply right away and only affect you.</p>
+      <div className="tcards">
+        {themes.map((t) => (
+          <button key={t.v} className="tcard press" aria-pressed={app.mode === t.v} onClick={() => app.setMode(t.v)}>
+            <div className="prev one">
+              <div className="pv" style={{ background: t.pv.page }}>
+                <div className="ps" style={{ background: t.pv.side }}>
+                  <i style={{ background: t.pv.sideInk }} />
+                  <i style={{ background: t.pv.sideInk }} />
+                  <i style={{ background: t.pv.sideInk }} />
+                </div>
+                <div className="pm">
+                  <div className="c" style={{ background: t.pv.card }}>
+                    <i style={{ background: t.pv.cardInk }} />
+                    <i style={{ background: t.pv.cardInk }} />
                   </div>
-                  <div className="pm">
-                    <div className="c" style={{ background: t.pv.card }}>
-                      <i style={{ background: t.pv.cardInk }} />
-                      <i style={{ background: t.pv.cardInk }} />
-                    </div>
-                    <div className="b" style={{ background: t.pv.btn }} />
-                  </div>
+                  <div className="b" style={{ background: t.pv.btn }} />
                 </div>
               </div>
-              <span className="nm">
-                <span className="ck" />
-                {t.l}
-                <small>{t.note}</small>
-              </span>
+            </div>
+            <span className="nm">
+              <span className="ck" />
+              {t.l}
+              <small>{t.note}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {app.mode === "custom" && (
+        <div className="cust-card">
+          <div className="cust-head">
+            <div>
+              <h3>Custom palette</h3>
+              <p>Pick a base surface, then tune the sidebar, accent and main button colours.</p>
+            </div>
+            <button
+              className="btn btn-q btn-sm"
+              disabled={isDefaultCustom}
+              onClick={() => patchCustom(DEFAULT_CUSTOM)}
+            >
+              Reset
             </button>
-          ))}
-        </div>
-        {app.theme.name === "custom" && (
-          <div className="custom-row">
-            <div className="cr">
-              Accent
-              <div className="row">
-                <input type="color" value={custom} onChange={(e) => setCustom(e.target.value)} aria-label="Accent colour" />
+          </div>
+
+          <div className="cust-presets">
+            <span className="cust-presets-lbl">Starters</span>
+            {CUSTOM_PRESETS.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                className="cust-preset press"
+                onClick={() => patchCustom(p.value)}
+              >
+                <span className="cust-dots">
+                  <i style={{ background: p.value.sidebar || (p.value.base === "graphite" ? "#1e2026" : "#f1f2f5") }} />
+                  <i style={{ background: p.value.accent }} />
+                  <i style={{ background: p.value.cta }} />
+                </span>
+                {p.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="cust-row">
+            <div className="cust-row-lbl">
+              <b>Base surface</b>
+              <small>Light or dark cards, tables and backgrounds.</small>
+            </div>
+            <Seg
+              label="Base surface"
+              value={c.base}
+              onChange={(base) => patchCustom({ base })}
+              options={[
+                { v: "porcelain", l: "Porcelain (light)" },
+                { v: "graphite", l: "Graphite (dark)" },
+              ]}
+            />
+          </div>
+
+          <div className="cust-grid">
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Accent</span>
+                <small>Links and focus</small>
+              </div>
+              <div className="cust-pick">
+                <input
+                  type="color"
+                  value={isHex(accentIn) ? accentIn : c.accent}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAccentIn(v);
+                    patchCustom({ accent: v, ...(sameCta ? { cta: v } : {}) });
+                  }}
+                  aria-label="Accent colour"
+                />
                 <div className="field">
-                  <input className="mono" value={custom} onChange={(e) => setCustom(e.target.value)} />
+                  <input
+                    className="mono"
+                    value={accentIn}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAccentIn(v);
+                      if (isHex(v)) patchCustom({ accent: v, ...(sameCta ? { cta: v } : {}) });
+                    }}
+                    placeholder="#2d6a4f"
+                  />
                 </div>
               </div>
-            </div>
-            <div className="cr">
-              Light mode
-              <div className="row">
-                <span className="sw" style={{ background: pair.light }} />
-                <span className="mono">{pair.light}</span>
-                <span className="dim2">{contrast(pair.light, "#f5f5f7").toFixed(1)}:1</span>
-              </div>
-              Dark mode
-              <div className="row">
-                <span className="sw" style={{ background: pair.dark }} />
-                <span className="mono">{pair.dark}</span>
-                <span className="dim2">{contrast(pair.dark, "#0e0e10").toFixed(1)}:1</span>
+              <div className="cust-slot-f">
+                <span>{fittedAccent.toLowerCase() !== c.accent.toLowerCase() ? `Adjusted to ${fittedAccent}` : "Readable on surface"}</span>
+                <span className="cust-badge">{accentRatio.toFixed(1)}:1</span>
               </div>
             </div>
-            <div className="cr" style={{ justifyContent: "flex-end" }}>
-              <span>Adjusted where needed so text stays readable.</span>
-              <button className="btn btn-s btn-sm press" disabled={!/^#[0-9a-fA-F]{6}$/.test(custom) || custom === app.theme.accent} onClick={() => setTheme({ name: "custom", accent: custom })}>
-                Use this colour
-              </button>
+
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Primary button</span>
+                <small>Main actions</small>
+              </div>
+              <div className="cust-pick">
+                <input
+                  type="color"
+                  value={isHex(ctaIn) ? ctaIn : ctaColor}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCtaIn(v);
+                    patchCustom({ cta: v });
+                  }}
+                  aria-label="Primary button colour"
+                />
+                <div className="field">
+                  <input
+                    className="mono"
+                    value={ctaIn}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCtaIn(v);
+                      if (isHex(v)) patchCustom({ cta: v });
+                    }}
+                    placeholder="#d95d39"
+                  />
+                </div>
+              </div>
+              <div className="cust-slot-f">
+                {sameCta ? (
+                  <span>Matches accent</span>
+                ) : (
+                  <button type="button" className="linkish" onClick={() => patchCustom({ cta: c.accent })}>
+                    Match accent
+                  </button>
+                )}
+                <span className="cust-badge">{ctaRatio.toFixed(1)}:1</span>
+              </div>
+            </div>
+
+            <div className="cust-slot">
+              <div className="cust-slot-h">
+                <span>Sidebar</span>
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => patchCustom({ sidebar: c.sidebar ? "" : sideIn || "#1b4332" })}
+                >
+                  {c.sidebar ? "Match surface" : "Tint sidebar"}
+                </button>
+              </div>
+              {c.sidebar ? (
+                <>
+                  <div className="cust-pick">
+                    <input
+                      type="color"
+                      value={isHex(sideIn) ? sideIn : c.sidebar}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSideIn(v);
+                        patchCustom({ sidebar: v });
+                      }}
+                      aria-label="Sidebar colour"
+                    />
+                    <div className="field">
+                      <input
+                        className="mono"
+                        value={sideIn}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSideIn(v);
+                          if (isHex(v)) patchCustom({ sidebar: v });
+                        }}
+                        placeholder="#1b4332"
+                      />
+                    </div>
+                  </div>
+                  <div className="cust-slot-f">
+                    <span>Sidebar text adapts automatically.</span>
+                  </div>
+                </>
+              ) : (
+                <div className="cust-slot-f" style={{ marginTop: "auto" }}>
+                  <span>Uses the {c.base === "graphite" ? "Graphite" : "Porcelain"} background.</span>
+                </div>
+              )}
             </div>
           </div>
-        )}
-      </section>}
-    </>
+
+          <div className="cust-preview">
+            <span className="cust-preview-lbl">Preview</span>
+            <button type="button" className="btn btn-p btn-sm">Primary action</button>
+            <button type="button" className="btn btn-s btn-sm">Secondary</button>
+            <span className="rbadge cust-sel">Selected</span>
+            <span className="linkish" style={{ cursor: "default" }}>Sample link</span>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -277,38 +478,39 @@ function Servers() {
   );
 }
 
+type UiUser = { username: string; totp?: boolean; passkeys?: number };
+
+const roleOptions = [
+  { v: "viewer", l: "Viewer: only look" },
+  { v: "operator", l: "Operator: start, stop, console, files" },
+  { v: "manager", l: "Manager: create, change, delete" },
+  { v: "admin", l: "Admin: everything, also users and servers" },
+];
+const roleRank: Record<string, number> = { viewer: 1, operator: 2, manager: 3, admin: 4 };
+const roleLabel = (r: string) => r[0].toUpperCase() + r.slice(1);
+const everywhere = (e: AccessEntry) => e.server === "*" && e.project === "*";
+
+// What a user's own access entries add up to, for the user list.
+function roleSummary(entries: AccessEntry[], name: string) {
+  const mine = entries.filter((e) => e.who === `user:${name}`);
+  if (!mine.length) return null;
+  const top = mine.reduce((a, b) => (roleRank[b.role] > roleRank[a.role] ? b : a));
+  const scoped = mine.length > 1 || !everywhere(top);
+  return { role: top.role, label: roleLabel(top.role), title: mine.map((e) => `${roleLabel(e.role)} on ${e.server === "*" ? "every server" : e.server}, ${e.project === "*" ? "every project" : `project ${e.project}`}`).join("\n"), scoped };
+}
+
+const saveAccess = (access: AccessEntry[]) => ui("/access", { method: "PUT", body: { access } }).then(() => invalidate("ui-access"));
+
 function Users() {
   const app = useApp();
-  const q = useData<{ users: { username: string; totp?: boolean; passkeys?: number }[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
-  const [u, setU] = useState("");
-  const [p, setP] = useState("");
-  const [role, setRole] = useState<RoleName>("viewer");
-  const [err, setErr] = useState("");
-  const [pw, setPw] = useState<{ name: string; pass: string; err: string } | null>(null);
+  const nav = useNavigate();
+  const q = useData<{ users: UiUser[]; oidc?: { issuer: string; allowed_emails?: string[]; allowed_groups?: string[] } }>("ui-users", () => ui("/users"));
+  const acc = useData<{ access: AccessEntry[] }>("ui-access", () => ui("/access"));
+  const [adding, setAdding] = useState(false);
+  const [pwFor, setPwFor] = useState("");
+  const [roleFor, setRoleFor] = useState("");
   const users = q.data?.users || [];
-  const add = async () => {
-    setErr("");
-    try {
-      await ui("/users", { method: "POST", body: { username: u, password: p, role } });
-      app.toast(`${u} added as ${role}`);
-      invalidate("ui-access");
-      setU("");
-      setP("");
-      invalidate("ui-users");
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  };
-  const changePw = async () => {
-    if (!pw) return;
-    try {
-      await ui(`/users/${encodeURIComponent(pw.name)}`, { method: "PUT", body: { password: pw.pass } });
-      app.toast(`Password changed for ${pw.name}`);
-      setPw(null);
-    } catch (e: any) {
-      setPw({ ...pw, err: e.message });
-    }
-  };
+  const access = acc.data?.access || [];
   const resetSignIn = async (name: string) => {
     if (!(await confirmDialog({ title: `Reset sign-in for ${name}?`, body: "Their two-factor sign-in and all their passkeys are removed and they are signed out everywhere. They can sign in with their password and set them up again.", confirm: "Reset", danger: true }))) return;
     try {
@@ -320,9 +522,10 @@ function Users() {
     }
   };
   const del = async (name: string) => {
-    if (!(await confirmDialog({ title: `Remove ${name}?`, body: "They can't sign in with a password any more.", confirm: "Remove", danger: true }))) return;
+    if (!(await confirmDialog({ title: `Remove ${name}?`, body: "They can't sign in with a password any more. Their roles are removed too.", confirm: "Remove", danger: true }))) return;
     try {
       await ui(`/users/${encodeURIComponent(name)}`, { method: "DELETE" });
+      app.toast(`${name} removed`);
       invalidate("ui-users");
       invalidate("ui-access");
     } catch (e: any) {
@@ -332,25 +535,60 @@ function Users() {
   return (
     <>
       <section className="set-sec">
-        <h2>Local users</h2>
+        <div className="set-sec-h">
+          <h2>Local users</h2>
+          <span className="sec-count">{users.length}</span>
+          <button className="btn btn-p btn-sm press" onClick={() => setAdding(true)}>
+            {ic.plus}Add user
+          </button>
+        </div>
         <div className="panel">
           {users.map((x) => {
-            const canReset = x.username !== app.user && (x.totp || !!x.passkeys);
-            const canDel = x.username !== app.user && users.length > 1;
+            const me = x.username === app.user;
+            const canReset = !me && (x.totp || !!x.passkeys);
+            const canDel = !me && users.length > 1;
+            const role = roleSummary(access, x.username);
+            const hasStrongAuth = x.totp || !!x.passkeys;
             return (
-              <div className="snap" key={x.username} style={{ flexWrap: "wrap" }}>
-                <span className="av">{x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-                <span>
-                  {x.username}
-                  {x.username === app.user && <span className="dim"> · you</span>}
-                  {x.totp && <span className="dim"> · 2FA</span>}
-                  {!!x.passkeys && <span className="dim"> · {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}</span>}
+              <div className="usr-row" key={x.username}>
+                <span className="av">
+                  {x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                 </span>
-                <span className="r" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <button className="btn btn-q btn-sm" onClick={() => setPw(pw?.name === x.username ? null : { name: x.username, pass: "", err: "" })}>
-                    Change password
-                  </button>
-                  {(canReset || canDel) && (
+                <div className="usr-id">
+                  <div className="usr-name">
+                    <span>{x.username}</span>
+                    {me && <span className="usr-you">You</span>}
+                  </div>
+                  <div className="usr-sec">
+                    {hasStrongAuth ? (
+                      <>
+                        {x.totp && <span className="usr-sec-ok"><i />2FA on</span>}
+                        {!!x.passkeys && (
+                          <span className="usr-sec-ok">
+                            <i />
+                            {x.passkeys === 1 ? "1 passkey" : `${x.passkeys} passkeys`}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span>Password only</span>
+                    )}
+                  </div>
+                </div>
+                <span className="r usr-r">
+                  {role ? (
+                    <span className={`rbadge ${role.role}`} title={role.title}>
+                      {role.label}
+                      {role.scoped && " +"}
+                    </span>
+                  ) : (
+                    <span className="dim" title="Only entries for everyone or for groups apply.">No direct role</span>
+                  )}
+                  {me ? (
+                    <button className="btn btn-s btn-sm press" onClick={() => nav("/settings/security")}>
+                      Sign-in security
+                    </button>
+                  ) : (
                     <Menu
                       button={(p) => (
                         <button className="btn btn-q ib btn-sm" aria-label={`Actions for ${x.username}`} {...p}>
@@ -360,11 +598,9 @@ function Users() {
                     >
                       {(close) => (
                         <>
-                          {canReset && (
-                            <button onClick={() => (close(), resetSignIn(x.username))}>
-                              Reset 2FA and passkeys
-                            </button>
-                          )}
+                          <button onClick={() => (close(), setRoleFor(x.username))}>Change role</button>
+                          <button onClick={() => (close(), setPwFor(x.username))}>Reset password</button>
+                          {canReset && <button onClick={() => (close(), resetSignIn(x.username))}>Reset 2FA and passkeys</button>}
                           {canDel && (
                             <button className="danger" onClick={() => (close(), del(x.username))}>
                               {ic.trash}Remove
@@ -375,167 +611,415 @@ function Users() {
                     </Menu>
                   )}
                 </span>
-                {pw?.name === x.username && (
-                  <form
-                    style={{ flexBasis: "100%", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", paddingTop: 8 }}
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      changePw();
-                    }}
-                  >
-                    <Field label={`New password for ${x.username}`} hint="At least 10 characters.">
-                      <div className="field">
-                        <input type="password" autoFocus value={pw.pass} onChange={(e) => setPw({ ...pw, pass: e.target.value, err: "" })} autoComplete="new-password" />
-                      </div>
-                    </Field>
-                    <div className="fl">
-                      <button className="btn btn-s press" disabled={!pw.pass}>
-                        Save
-                      </button>
-                      <div className="hint" />
-                    </div>
-                    {pw.err && <div className="bad" style={{ width: "100%" }}>{pw.err}</div>}
-                  </form>
-                )}
               </div>
             );
           })}
         </div>
       </section>
-      <section className="set-sec">
-        <h2>Add a user</h2>
-        <div className="set-form">
-          <Field label="Username">
-            <div className="field">
-              <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
-            </div>
-          </Field>
-          <Field label="Password" hint="At least 10 characters.">
-            <div className="field">
-              <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" />
-            </div>
-          </Field>
-          <Field label="Role" hint="On every server and project. Narrow it under Roles.">
-            <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
-          </Field>
-          <div>
-            <button className="btn btn-s press" disabled={!u || !p} onClick={add}>
-              Add user
-            </button>
-          </div>
-          {err && <div className="bad">{err}</div>}
-        </div>
-      </section>
+      <AddUserDialog open={adding} onClose={() => setAdding(false)} taken={users.map((u) => u.username)} />
+      <PasswordDialog name={pwFor} onClose={() => setPwFor("")} />
+      <UserRoleDialog name={roleFor} access={access} onClose={() => setRoleFor("")} />
       <Roles />
       <section className="set-sec">
         <h2>
           Single sign-on <span className="ac">(OIDC)</span>
         </h2>
-        {q.data?.oidc ? (
-          <p>
-            On, with <span className="mono">{q.data.oidc.issuer}</span>.
-            {q.data.oidc.allowed_emails?.length ? ` Allowed: ${q.data.oidc.allowed_emails.join(", ")}.` : ""}
-            {q.data.oidc.allowed_groups?.length ? ` Groups: ${q.data.oidc.allowed_groups.join(", ")}.` : ""}
-          </p>
-        ) : (
-          <p>
-            Off. Add an <span className="mono">oidc</span> block to <span className="mono">config.yaml</span> and restart to turn it on. The install guide shows how.
-          </p>
-        )}
+        <div className="panel oidc-card">
+          {q.data?.oidc ? (
+            <>
+              <div className="oidc-top">
+                <span className="st running">Connected</span>
+                <span className="mono">{q.data.oidc.issuer}</span>
+              </div>
+              {(q.data.oidc.allowed_emails?.length || q.data.oidc.allowed_groups?.length) && (
+                <div className="oidc-meta">
+                  {q.data.oidc.allowed_emails?.map((em) => (
+                    <span className="tag mono" key={`e:${em}`}>{em}</span>
+                  ))}
+                  {q.data.oidc.allowed_groups?.map((g) => (
+                    <span className="tag" key={`g:${g}`}>group: {g}</span>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="oidc-top">
+                <span className="st">Off</span>
+                <b>Not configured</b>
+              </div>
+              <p>
+                Add an <span className="mono">oidc</span> block to <span className="mono">config.yaml</span> and restart to let people sign in with your identity provider.
+              </p>
+            </>
+          )}
+        </div>
       </section>
     </>
   );
 }
 
-const roleOptions = [
-  { v: "viewer", l: "Viewer: only look" },
-  { v: "operator", l: "Operator: start, stop, console, files" },
-  { v: "manager", l: "Manager: create, change, delete" },
-  { v: "admin", l: "Admin: everything, also users and servers" },
+function AddUserDialog({ open, onClose, taken }: { open: boolean; onClose: () => void; taken: string[] }) {
+  const app = useApp();
+  const [u, setU] = useState("");
+  const [p, setP] = useState("");
+  const [role, setRole] = useState<RoleName>("viewer");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) (setU(""), setP(""), setRole("viewer"), setErr(""));
+  }, [open]);
+  const dup = taken.includes(u.trim()) ? "A user with that name already exists." : "";
+  return (
+    <Dialog open={open} onClose={onClose} size="sm" dirty={!!u || !!p}>
+      <DlgForm
+        title="Add a user"
+        intro="They sign in with this name and password. They can add two-factor sign-in and passkeys themselves."
+        confirm={busy ? "Adding…" : "Add user"}
+        disabled={busy || !u.trim() || p.length < 10 || !!dup}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            await ui("/users", { method: "POST", body: { username: u.trim(), password: p, role } });
+            app.toast(`${u.trim()} added as ${role}`);
+            invalidate("ui-users");
+            invalidate("ui-access");
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="Username" hint={dup} bad={!!dup}>
+          <div className="field">
+            <input autoFocus value={u} onChange={(e) => setU(e.target.value)} autoComplete="off" />
+          </div>
+        </Field>
+        <Field label="Password" hint="At least 10 characters.">
+          <div className="field">
+            <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" />
+          </div>
+        </Field>
+        <Field label="Role" hint="On every server and project. Narrow it under Roles.">
+          <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
+
+function PasswordDialog({ name, onClose }: { name: string; onClose: () => void }) {
+  const app = useApp();
+  const [p, setP] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (name) (setP(""), setErr(""));
+  }, [name]);
+  return (
+    <Dialog open={!!name} onClose={onClose} size="sm" dirty={!!p}>
+      <DlgForm
+        title={`Reset password for ${name}`}
+        intro="They are signed out everywhere and sign in with the new password. Their two-factor sign-in and passkeys stay."
+        confirm={busy ? "Saving…" : "Reset password"}
+        disabled={busy || p.length < 10}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          try {
+            await ui(`/users/${encodeURIComponent(name)}`, { method: "PUT", body: { password: p } });
+            app.toast(`Password changed for ${name}`);
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="New password" hint="At least 10 characters.">
+          <div className="field">
+            <input type="password" autoFocus value={p} onChange={(e) => (setP(e.target.value), setErr(""))} autoComplete="new-password" />
+          </div>
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
+
+// UserRoleDialog sets the user's role on every server and project. Entries
+// for single servers or projects are left alone and edited under Roles.
+function UserRoleDialog({ name, access, onClose }: { name: string; access: AccessEntry[]; onClose: () => void }) {
+  const app = useApp();
+  const who = `user:${name}`;
+  const cur = access.find((e) => e.who === who && everywhere(e))?.role || "";
+  const scoped = access.filter((e) => e.who === who && !everywhere(e)).length;
+  const [role, setRole] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (name) (setRole(cur), setErr(""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
+  return (
+    <Dialog open={!!name} onClose={onClose} size="sm">
+      <DlgForm
+        title={`Change role for ${name}`}
+        intro={
+          scoped
+            ? `This role holds on every server and project. ${name} also has ${scoped === 1 ? "one entry" : `${scoped} entries`} for single servers or projects. Change those under Roles.`
+            : "This role holds on every server and project. To give a role on one project only, add an entry under Roles."
+        }
+        confirm={busy ? "Saving…" : "Save"}
+        disabled={busy || role === cur}
+        onClose={onClose}
+        onSubmit={async () => {
+          setBusy(true);
+          setErr("");
+          const rest = access.filter((e) => !(e.who === who && everywhere(e)));
+          try {
+            await saveAccess(role ? [...rest, { who, server: "*", project: "*", role: role as RoleName }] : rest);
+            app.toast(role ? `${name} is now ${role}` : `Removed the role of ${name}`);
+            onClose();
+          } catch (e: any) {
+            setErr(e.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="Role">
+          <Select value={role} onChange={setRole} options={[...roleOptions, { v: "", l: "None: only roles for everyone or groups" }]} />
+        </Field>
+        {err && <div className="bad">{err}</div>}
+      </DlgForm>
+    </Dialog>
+  );
+}
+
+const roleCards: { v: RoleName; l: string; desc: string }[] = [
+  { v: "viewer", l: "Viewer", desc: "Read-only access to servers and instances." },
+  { v: "operator", l: "Operator", desc: "Start, stop, console and files." },
+  { v: "manager", l: "Manager", desc: "Create, change and delete resources." },
+  { v: "admin", l: "Admin", desc: "Full access, including users and servers." },
 ];
 
-// Roles lists every access entry and saves them in one go.
+function formatWho(who: string) {
+  if (who === "*") return { kind: "All", name: "Everyone who can sign in", plain: true };
+  if (who.startsWith("user:")) return { kind: "Local", name: who.slice(5), plain: false };
+  if (who.startsWith("sso:")) return { kind: "SSO", name: who.slice(4), plain: false };
+  if (who.startsWith("group:")) return { kind: "Group", name: who.slice(6), plain: false };
+  return { kind: "User", name: who, plain: false };
+}
+
+// Roles lists every access entry. Adding and editing happen in a dialog, and
+// each change is saved right away.
 function Roles() {
   const app = useApp();
   const q = useData<{ access: AccessEntry[] }>("ui-access", () => ui("/access"));
-  const [rows, setRows] = useState<AccessEntry[] | null>(null);
-  const [err, setErr] = useState("");
-  useEffect(() => setRows(q.data?.access || null), [q.data]);
-  const dirty = !!rows && JSON.stringify(rows) !== JSON.stringify(q.data?.access);
-  const bar = usePresence(dirty || !!err);
-  if (!rows) return null;
-  const set = (i: number, k: keyof AccessEntry, v: string) => {
-    setErr("");
-    setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v, ...(k === "role" && v === "admin" ? { server: "*", project: "*" } : {}) } : r)));
-  };
-  const save = async () => {
+  const [edit, setEdit] = useState<{ i: number; e: AccessEntry } | null>(null);
+  const rows = q.data?.access;
+  const remove = async (i: number) => {
+    if (!rows) return;
+    const r = rows[i];
+    const admins = rows.filter((e) => e.role === "admin");
+    const last = r.role === "admin" && admins.length === 1;
+    if (!(await confirmDialog({ title: `Remove the entry for ${r.who}?`, body: last ? "This is the only admin entry. Without it nobody can manage users, roles or servers." : "They lose this role. Other entries that fit them still apply.", confirm: "Remove", danger: true }))) return;
     try {
-      await ui("/access", { method: "PUT", body: { access: rows } });
-      app.toast("Roles saved");
-      invalidate("ui-access");
-    } catch (e: any) {
-      setErr(e.message);
+      await saveAccess(rows.filter((_, j) => j !== i));
+      app.toast("Entry removed");
+    } catch (e) {
+      app.fail(e, "Could not remove the entry.");
     }
   };
-  const servers = ["*", ...app.servers.map((s) => s.name)];
+  type Row = AccessEntry & { i: number };
   return (
     <section className="set-sec">
-      <h2>Roles</h2>
-      <p>
-        Who is <span className="mono">user:name</span> for a local user, <span className="mono">sso:name</span> for a single sign-on user, <span className="mono">group:name</span> for an SSO group, or{" "}
-        <span className="mono">*</span> for everyone who can sign in. Someone with several entries gets the highest role that fits.
-      </p>
-      <div className="panel roles">
-        <div className="roles-h">
-          <span>Who</span>
-          <span>Server</span>
-          <span>Project</span>
-          <span>Role</span>
-          <span />
-        </div>
-        {rows.map((r, i) => (
-          <div className="roles-r" key={i}>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Who</span>
-              <Input mono aria-label="Who" value={r.who} onChange={(v) => set(i, "who", v)} />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Server</span>
-              <Select aria-label="Server" disabled={r.role === "admin"} value={r.server} onChange={(v) => set(i, "server", v)} options={servers.includes(r.server) ? servers : [...servers, r.server]} />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Project</span>
-              <Input mono aria-label="Project" disabled={r.role === "admin"} value={r.project} onChange={(v) => set(i, "project", v)} placeholder="*" />
-            </div>
-            <div>
-              <span className="show-s-only dim" style={{ fontSize: 12 }}>Role</span>
-              <Select aria-label="Role" value={r.role} onChange={(v) => set(i, "role", v)} options={roleOptions.map((o) => ({ v: o.v, l: o.v[0].toUpperCase() + o.v.slice(1) }))} />
-            </div>
-            <button className="btn btn-q btn-sm" aria-label={`Remove ${r.who}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-              Remove
-            </button>
+      <div className="set-sec-h">
+        <h2>Roles</h2>
+        {rows && <span className="sec-count">{rows.length}</span>}
+        <button className="btn btn-s btn-sm press" disabled={!rows} onClick={() => setEdit({ i: -1, e: { who: "user:", server: "*", project: "*", role: "viewer" } })}>
+          {ic.plus}Add entry
+        </button>
+      </div>
+      <p>Each entry gives someone a role on a server and project. Someone with several entries gets the highest role that fits.</p>
+      <div className="role-legend">
+        {roleCards.map((rc) => (
+          <div className="role-card" key={rc.v}>
+            <span className={`rbadge ${rc.v}`}>{rc.l}</span>
+            <p>{rc.desc}</p>
           </div>
         ))}
-        <div className="roles-f">
-          <button className="btn btn-q btn-sm" onClick={() => setRows([...rows, { who: "user:", server: "*", project: "*", role: "viewer" }])}>
-            Add entry
-          </button>
-        </div>
       </div>
-      {bar.mounted && (
-        <div className={"hwbar" + (bar.leaving ? " leaving" : "")}>
-          {err ? <span className="bad">{err}</span> : <b>Unsaved role changes</b>}
-          <button className="btn btn-q btn-sm" onClick={() => (setRows(q.data?.access || []), setErr(""))}>
-            Discard
-          </button>
-          <button className="btn btn-p btn-sm press" disabled={!dirty} onClick={save}>
-            Save roles
-          </button>
-        </div>
-      )}
+      <Table<Row>
+        rows={rows?.map((e, i) => ({ ...e, i }))}
+        loading={!rows}
+        rowKey={(r) => String(r.i)}
+        onRow={(r) => setEdit({ i: r.i, e: r })}
+        empty="No entries yet."
+        initial={{ k: "who", asc: true }}
+        cols={[
+          {
+            k: "who",
+            label: "Who",
+            sort: (r) => r.who,
+            cell: (r) => {
+              const w = formatWho(r.who);
+              return (
+                <span className="who-cell">
+                  <span className="who-kind">{w.kind}</span>
+                  <span className={w.plain ? undefined : "mono"}>{w.name}</span>
+                </span>
+              );
+            },
+          },
+          {
+            k: "server",
+            label: "Server",
+            cls: "hide-s",
+            sort: (r) => r.server,
+            cell: (r) => (r.server === "*" ? <span className="dim">Every server</span> : <span className="scope-pill">{r.server}</span>),
+          },
+          {
+            k: "project",
+            label: "Project",
+            sort: (r) => r.project,
+            cell: (r) => (r.project === "*" ? <span className="dim">Every project</span> : <span className="scope-pill">{r.project}</span>),
+          },
+          { k: "role", label: "Role", sort: (r) => roleRank[r.role], cell: (r) => <span className={`rbadge ${r.role}`}>{roleLabel(r.role)}</span> },
+          {
+            k: "act",
+            label: "",
+            cls: "right",
+            cell: (r) => (
+              <span onClick={(e) => e.stopPropagation()}>
+                <Menu
+                  button={(p) => (
+                    <button className="btn btn-q ib btn-sm" aria-label={`Actions for ${r.who}`} {...p}>
+                      {ic.more}
+                    </button>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      <button onClick={() => (close(), setEdit({ i: r.i, e: r }))}>{ic.edit}Edit</button>
+                      <button className="danger" onClick={() => (close(), remove(r.i))}>
+                        {ic.trash}Remove
+                      </button>
+                    </>
+                  )}
+                </Menu>
+              </span>
+            ),
+          },
+        ]}
+      />
+      <RoleDialog edit={edit} rows={rows || []} onClose={() => setEdit(null)} />
     </section>
   );
 }
+
+const whoKinds = [
+  { v: "user", l: "Local user" },
+  { v: "sso", l: "Single sign-on user" },
+  { v: "group", l: "SSO group" },
+  { v: "*", l: "Everyone who can sign in" },
+];
+
+function RoleDialog({ edit, rows, onClose }: { edit: { i: number; e: AccessEntry } | null; rows: AccessEntry[]; onClose: () => void }) {
+  const app = useApp();
+  const users = useData<{ users: UiUser[] }>("ui-users", () => ui("/users"));
+  const [kind, setKind] = useState("user");
+  const [name, setName] = useState("");
+  const [server, setServer] = useState("*");
+  const [project, setProject] = useState("*");
+  const [role, setRole] = useState<RoleName>("viewer");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!edit) return;
+    const w = edit.e.who;
+    const k = w === "*" ? "*" : w.includes(":") ? w.slice(0, w.indexOf(":")) : "user";
+    setKind(whoKinds.some((x) => x.v === k) ? k : "user");
+    setName(w === "*" ? "" : w.slice(w.indexOf(":") + 1));
+    setServer(edit.e.server || "*");
+    setProject(edit.e.project || "*");
+    setRole(edit.e.role);
+    setErr("");
+  }, [edit]);
+  const isNew = edit?.i === -1;
+  const who = kind === "*" ? "*" : `${kind}:${name.trim()}`;
+  const admin = role === "admin";
+  const entry: AccessEntry = { who, server: admin ? "*" : server, project: admin ? "*" : project.trim() || "*", role };
+  const same = (a: AccessEntry, b: AccessEntry) => a.who === b.who && a.server === b.server && a.project === b.project && a.role === b.role;
+  const dup = rows.some((r, j) => j !== edit?.i && same(r, entry));
+  const unchanged = !!edit && !isNew && same(edit.e, entry);
+  const servers = ["*", ...app.servers.map((s) => s.name)];
+  const localNames = (users.data?.users || []).map((u) => u.username);
+  return (
+    <Dialog open={!!edit} onClose={onClose} size="sm" dirty={!unchanged && !isNew}>
+      {edit && (
+        <DlgForm
+          title={isNew ? "Add a role entry" : "Edit role entry"}
+          confirm={busy ? "Saving…" : isNew ? "Add entry" : "Save"}
+          disabled={busy || (kind !== "*" && !name.trim()) || dup || unchanged}
+          onClose={onClose}
+          onSubmit={async () => {
+            setBusy(true);
+            setErr("");
+            try {
+              await saveAccess(isNew ? [...rows, entry] : rows.map((r, j) => (j === edit.i ? entry : r)));
+              app.toast(isNew ? "Entry added" : "Entry saved");
+              onClose();
+            } catch (e: any) {
+              setErr(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Field label="Who">
+            <Select value={kind} onChange={setKind} options={whoKinds} />
+          </Field>
+          {kind === "user" && localNames.length > 0 ? (
+            <Field label="User">
+              <Select value={name} onChange={setName} options={[...(localNames.includes(name) ? [] : [{ v: name, l: name || "Pick a user" }]), ...localNames]} />
+            </Field>
+          ) : (
+            kind !== "*" && (
+              <Field label={kind === "group" ? "Group name" : kind === "sso" ? "Email or SSO name" : "Username"}>
+                <div className="field">
+                  <input className="mono" autoFocus value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+                </div>
+              </Field>
+            )
+          )}
+          <Field label="Role">
+            <Select value={role} onChange={(v) => setRole(v as RoleName)} options={roleOptions} />
+          </Field>
+          <Field label="Server" hint={admin ? "Admins have their role everywhere." : undefined}>
+            <Select disabled={admin} value={entry.server} onChange={setServer} options={servers.includes(entry.server) ? servers.map((s) => ({ v: s, l: s === "*" ? "Every server" : s })) : [...servers, entry.server]} />
+          </Field>
+          <Field label="Project" hint={admin ? undefined : "A project name, or * for every project."}>
+            <div className="field">
+              <input className="mono" disabled={admin} value={entry.project} onChange={(e) => setProject(e.target.value)} placeholder="*" />
+            </div>
+          </Field>
+          {dup && <div className="bad">This entry already exists.</div>}
+          {err && <div className="bad">{err}</div>}
+        </DlgForm>
+      )}
+    </Dialog>
+  );
+}
+
 
 export type UpdateInfo = {
   current: string;
@@ -670,6 +1154,7 @@ function About() {
         )}
         {u?.newer && !u.can_update && <p className="upd-note">{u.reason}</p>}
       </section>
+      {app.admin && <ExportSettings />}
       <section className="set-sec">
         <h2>About</h2>
         <p>
@@ -681,5 +1166,56 @@ function About() {
         </p>
       </section>
     </>
+  );
+}
+
+// A download of the UI's own settings, to set it up again after losing the machine it runs on.
+function ExportSettings() {
+  const app = useApp();
+  const [enc, setEnc] = useState(true);
+  const [pass, setPass] = useState(newPassphrase);
+  const [busy, setBusy] = useState(false);
+  const short = enc && pass.length < 12;
+  const download = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/ui/config-export", { method: "POST", headers: { "X-Incus-UI": "1", "Content-Type": "application/json" }, body: JSON.stringify({ passphrase: enc ? pass : "" }), credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || "incus-webui-settings.tar.gz";
+      const url = URL.createObjectURL(await res.blob());
+      saveFile(url, name);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      app.toast(enc ? "Saved. Keep the passphrase with it." : "Saved");
+    } catch (e) {
+      app.fail(e, "Couldn't export the settings.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="set-sec">
+      <h2>Back up this UI</h2>
+      <p>
+        Downloads the UI's own settings: servers and the certificate they trust, users, roles, backup targets, schedules and alerts. To bring them back, unpack the file into the data folder (<span className="mono">/var/lib/incus-webui</span>) while the UI is stopped. The file holds passwords and keys, so keep it safe.
+      </p>
+      <div className="set-form">
+        <div className="tgl-list">
+          <TglRow title="Encrypt the file" note={<>With age. Open it with <span className="mono">age -d</span> and this passphrase.</>} on={enc} onChange={setEnc} />
+        </div>
+        {enc && (
+          <Field label="Passphrase" hint={short ? "Use at least 12 characters." : undefined} bad={short}>
+            <div className="bk-pass">
+              <Input mono value={pass} onChange={setPass} bad={short} aria-label="Passphrase" />
+              <CopyBtn text={pass} />
+            </div>
+          </Field>
+        )}
+        <div>
+          <button className="btn btn-s press" disabled={busy || short} onClick={download}>
+            {busy ? "Preparing…" : "Download settings"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
