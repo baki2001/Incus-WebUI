@@ -549,22 +549,18 @@ button.acct:hover,button.acct[aria-expanded="true"]{background:var(--s2)}
 .usr-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--line)}
 .usr-row:first-of-type{border-top:0}
 .usr-row .av{width:34px;height:34px;font-size:12px}
-.usr-row .av.me{background:var(--accent-soft);color:var(--accent)}
 .usr-id{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
 .usr-name{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-weight:500;font-size:14px;line-height:1.25}
-.usr-you{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:500;background:var(--accent-soft);color:var(--accent)}
+.usr-you{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:500;background:var(--s2);color:var(--ink-2)}
 .usr-sec{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--ink-3)}
 .usr-sec-ok{display:inline-flex;align-items:center;gap:4px;color:var(--ink-2)}
 .usr-sec-ok i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
 .rbadge{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--s2);color:var(--ink-2);white-space:nowrap}
-.rbadge.admin{background:var(--accent-soft);color:var(--accent)}
-.rbadge.manager{background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info)}
-.rbadge.operator{background:color-mix(in srgb,var(--warn) 13%,transparent);color:var(--warn)}
-.rbadge.viewer{background:var(--s2);color:var(--ink-2)}
 .role-legend{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
 @media (max-width:780px){.role-legend{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:460px){.role-legend{grid-template-columns:minmax(0,1fr)}}
 .role-card{display:flex;flex-direction:column;gap:5px;padding:11px 13px;border-radius:var(--r-sm);background:var(--s1);box-shadow:var(--shadow)}
+.cust-sel{background:var(--accent-soft);color:var(--accent)}
 .role-card .rbadge{align-self:flex-start}
 .role-card p{margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.4}
 .who-cell{display:inline-flex;align-items:center;gap:8px;min-width:0}
