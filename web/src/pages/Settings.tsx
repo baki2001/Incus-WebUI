@@ -348,7 +348,7 @@ function Appearance() {
             <span className="cust-preview-lbl">Preview</span>
             <button type="button" className="btn btn-p btn-sm">Primary action</button>
             <button type="button" className="btn btn-s btn-sm">Secondary</button>
-            <span className="rbadge admin">Selected</span>
+            <span className="rbadge cust-sel">Selected</span>
             <span className="linkish" style={{ cursor: "default" }}>Sample link</span>
           </div>
         </div>
@@ -551,7 +551,7 @@ function Users() {
             const hasStrongAuth = x.totp || !!x.passkeys;
             return (
               <div className="usr-row" key={x.username}>
-                <span className={"av" + (me ? " me" : "")}>
+                <span className="av">
                   {x.username.replace(/@.*/, "").split(/[._\s-]+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                 </span>
                 <div className="usr-id">
